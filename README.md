@@ -58,6 +58,8 @@ KEEMAN_API_URL=https://api.example.org scripts/deploy.sh
 
 Run it as an account that owns the web root. The API server's user must not be able to write these files: whoever can replace the JavaScript can capture master passwords. Do not put a CDN or proxy that can change content in front of the web client.
 
+Without building: every [release](https://github.com/BeckerEnterprises/keeman-webclient/releases) has the built app (`keeman-webclient-<version>-dist.tar.gz`, folder `dist/` without `config.json`) and a container image. Copy `dist/` into the web root and add `config.json` as above; the web server then needs the same headers.
+
 The web server sets the security headers; `connect-src` names the API. With Caddy:
 
 ```caddyfile
@@ -92,6 +94,8 @@ The web client and the API must be on the same site (for example `app.example.or
 ### Container
 
 `Dockerfile` builds the app and serves it with Caddy on port 8080, without TLS, as a non-root user. The image sets the same security headers as above; `KEEMAN_API_HOST` fills `connect-src` and `config.json`:
+
+Or load the image of a release: `docker load -i keeman-webclient-<version>-image-linux-amd64.tar.gz` (or `podman load -i …`) names it `keeman-webclient:<version>` and `keeman-webclient:latest`.
 
 ```bash
 podman build -t keeman-webclient .                         # or docker build
