@@ -104,7 +104,8 @@ export function vaultWritable(state: VaultState): boolean {
     !state.rollback &&
     meta !== undefined &&
     !meta.readOnly &&
-    !meta.rollback
+    !meta.rollback &&
+    !meta.superseded
   );
 }
 
@@ -112,7 +113,12 @@ export function objectWritable(
   entry: ObjectEntry,
   allowInvalid = false,
 ): boolean {
-  return !entry.readOnly && !entry.rollback && (allowInvalid || !entry.invalid);
+  return (
+    !entry.readOnly &&
+    !entry.rollback &&
+    !entry.superseded &&
+    (allowInvalid || !entry.invalid)
+  );
 }
 
 function historyMaxItems(state: VaultState): number {

@@ -314,6 +314,8 @@ const en: typeof de = {
     rollback:
       "The server delivered an older version of this entry. It is read-only until you acknowledge the warning at the database.",
     newerSchema: "This entry comes from a newer version and is read-only here.",
+    superseded:
+      "Newer version corrupt: this is the last valid version, read-only. The corrupt one is in the list of corrupt objects of the database.",
     invalid: "This entry contains {count} invalid elements and is read-only.",
     removeInvalid: "Remove invalid elements",
     removeInvalidText:

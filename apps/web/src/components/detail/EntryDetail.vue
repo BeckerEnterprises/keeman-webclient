@@ -151,6 +151,13 @@ const ref_ = () => [{ kind: "entry" as const, id: props.entryId }];
     >
       {{ t("entry.newerSchema") }}
     </p>
+    <p
+      v-else-if="detail.summary.readOnly === 'superseded'"
+      class="notice notice-error"
+      data-test="detail-superseded"
+    >
+      {{ t("entry.superseded") }}
+    </p>
     <div
       v-else-if="detail.summary.readOnly === 'invalid'"
       class="notice notice-warning"

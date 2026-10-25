@@ -43,6 +43,8 @@ export interface ObjectEntry {
   rollback: boolean;
   /** An entry with invalid list elements: read-only until repaired. */
   invalid: boolean;
+  /** A newer version is corrupt: this is the last valid one, read-only. */
+  superseded?: boolean;
 }
 
 export interface CorruptEntry {
@@ -210,22 +212,28 @@ class Applier {
   readonly #state: VaultState;
   readonly #objects: Map<string, ObjectEntry>;
   readonly #corrupt: Map<string, CorruptEntry>;
+  /** Before a full sync: the objects of the state it replaces. */
+  readonly #previous: Map<string, ObjectEntry> | undefined;
 
   constructor(
     state: VaultState,
     marks: VaultMarks | undefined,
     objects: Map<string, ObjectEntry>,
     corrupt: Map<string, CorruptEntry>,
+    previous?: Map<string, ObjectEntry>,
   ) {
     this.#state = state;
     this.#marks = marks;
     this.#objects = objects;
     this.#corrupt = corrupt;
+    this.#previous = previous;
   }
 
   #revision(id: string): number {
-    return (
-      this.#objects.get(id)?.revision ?? this.#corrupt.get(id)?.revision ?? 0
+    // A superseded object keeps its old revision; the corrupt one is newer.
+    return Math.max(
+      this.#objects.get(id)?.revision ?? 0,
+      this.#corrupt.get(id)?.revision ?? 0,
     );
   }
 
@@ -237,8 +245,11 @@ class Applier {
     if (revision < this.#revision(id)) return;
     const mark = this.#marks?.obj[id];
     if (decoded.kind === "corrupt") {
-      // Corrupt objects never change marks.
-      this.#objects.delete(id);
+      // Corrupt objects never change marks. A valid version stays visible,
+      // read-only, so a corrupt update cannot make an object vanish.
+      const last = this.#objects.get(id) ?? this.#previous?.get(id);
+      if (last) this.#objects.set(id, { ...last, superseded: true });
+      else this.#objects.delete(id);
       this.#corrupt.set(id, decoded.entry);
       return;
     }
@@ -301,7 +312,7 @@ export async function pullVault(
   const full = async (): Promise<Applier> => {
     const objects = new Map<string, ObjectEntry>();
     const corrupt = new Map<string, CorruptEntry>();
-    const applier = new Applier(state, marks, objects, corrupt);
+    const applier = new Applier(state, marks, objects, corrupt, state.objects);
     state.rollbackDeletes.clear();
     const snapshot = await collect(context, state, 0, marks);
     // since=0 has no tombstones: a delta from the first page brings deletions.

@@ -112,7 +112,7 @@ export interface EntrySummary {
   readonly problem: "orphan" | undefined;
   readonly writable: boolean;
   /** `schema`: newer client; `invalid`: invalid list elements. */
-  readonly readOnly: "schema" | "invalid" | undefined;
+  readonly readOnly: "schema" | "superseded" | "invalid" | undefined;
   readonly invalid: number;
   readonly rollback: boolean;
   readonly hasPassword: boolean;
@@ -507,7 +507,7 @@ export class VaultProjection {
         inTrash: layout.inTrash.has(id),
         problem: kind === "root" && layout.missingRoot ? "missing" : problem,
         writable: writableObject(object),
-        readOnly: object?.readOnly ?? false,
+        readOnly: (object?.readOnly ?? false) || (object?.superseded ?? false),
         rollback: object?.rollback ?? false,
         modified: timestamp(group?.raw, "modified"),
       };
@@ -529,9 +529,11 @@ export class VaultProjection {
           : value[field];
       const readOnly = object?.readOnly
         ? "schema"
-        : value.invalid > 0
-          ? "invalid"
-          : undefined;
+        : object?.superseded
+          ? "superseded"
+          : value.invalid > 0
+            ? "invalid"
+            : undefined;
       const summary: EntrySummary = {
         id,
         vaultId: state.id,

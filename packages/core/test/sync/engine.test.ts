@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { AccountError } from "../../src/account/errors";
 import { toBase64Url } from "../../src/crypto/bytes";
+import { emptyDraft } from "../../src/model/entry";
 import type { SyncEngine } from "../../src/sync/engine";
 import { SyncError } from "../../src/sync/errors";
 import { inMemorySyncMarks, type SyncMarks } from "../../src/sync/marks";
@@ -398,6 +399,100 @@ describe("corrupt objects and tombstones", () => {
         if (o.id === id && o.data) o.data = flipped(o.data);
     };
     await b.engine.pull(a.vaultId);
+    expect(vault(b.engine, a.vaultId).corrupt).toEqual([
+      { id, type: "group", reason: "auth" },
+    ]);
+  });
+
+  it("keeps the last valid version, read-only, when an update is corrupt", async () => {
+    const a = await firstDevice();
+    const { id } = await add(a.engine, a.vaultId, "Gültig");
+    const entry = await a.engine.createEntry(a.vaultId, id, {
+      ...emptyDraft(),
+      title: "Mail",
+    });
+    const b = await secondDevice(a.server);
+    await a.engine.renameGroup(a.vaultId, id, "Kaputt");
+    const edit = a.engine.editEntry(a.vaultId, entry.id);
+    if (!edit) throw new Error("entry missing");
+    await a.engine.saveEntry(edit.base, { ...edit.draft, title: "Kaputt" });
+    const broken = new Set([id, entry.id]);
+    const tamper = (page: {
+      objects: { id: string; data: string | null }[];
+    }) => {
+      for (const o of page.objects)
+        if (broken.has(o.id) && o.data) o.data = flipped(o.data);
+    };
+    a.server.tamperChanges = tamper;
+    await b.engine.pull(a.vaultId);
+    const check = () => {
+      const view = vault(b.engine, a.vaultId);
+      expect(group(b.engine, a.vaultId, "Gültig")).toMatchObject({
+        id,
+        writable: false,
+      });
+      expect(view.entries.get(entry.id)).toMatchObject({
+        title: "Mail",
+        readOnly: "superseded",
+        writable: false,
+      });
+      expect(
+        Object.fromEntries(view.corrupt.map((c) => [c.id, c.reason])),
+      ).toEqual({ [id]: "auth", [entry.id]: "auth" });
+    };
+    check();
+    await expect(
+      b.engine.renameGroup(a.vaultId, id, "x"),
+    ).rejects.toMatchObject({ code: "read_only" });
+    await b.engine.pull(a.vaultId);
+
+    // A full sync after 410 keeps the version this device knew. The
+    // server only tampers with the pages device B gets.
+    a.server.tamperChanges = () => undefined;
+    await a.engine.renameGroup(a.vaultId, id, "Kaputt 2");
+    a.server.tamperChanges = tamper;
+    const server = a.server.vaults.get(a.vaultId);
+    if (server) server.horizon = server.revision;
+    await b.engine.pull(a.vaultId);
+    expect(a.server.log.some((r) => r.path.includes("since=0"))).toBe(true);
+    check();
+
+    // A newer valid version ends it.
+    a.server.tamperChanges = () => undefined;
+    await a.engine.renameGroup(a.vaultId, id, "Neu");
+    const again = a.engine.editEntry(a.vaultId, entry.id);
+    if (!again) throw new Error("entry missing");
+    await a.engine.saveEntry(again.base, { ...again.draft, title: "Neu" });
+    await b.engine.pull(a.vaultId);
+    const view = vault(b.engine, a.vaultId);
+    expect(group(b.engine, a.vaultId, "Neu")).toMatchObject({
+      id,
+      writable: true,
+    });
+    expect(view.entries.get(entry.id)).toMatchObject({
+      title: "Neu",
+      readOnly: undefined,
+      writable: true,
+    });
+    expect(view.corrupt).toEqual([]);
+    await b.engine.renameGroup(a.vaultId, id, "Wieder");
+  });
+
+  it("does not invent a version for an object it never saw valid", async () => {
+    const a = await firstDevice();
+    const { id } = await add(a.engine, a.vaultId, "Nie");
+    a.server.tamperChanges = (page) => {
+      for (const o of page.objects)
+        if (o.id === id && o.data) o.data = flipped(o.data);
+    };
+    const b = await secondDevice(a.server);
+    expect(group(b.engine, a.vaultId, "Nie")).toBeUndefined();
+    // A full sync after 410 does not bring back a version from nowhere.
+    await a.engine.renameGroup(a.vaultId, id, "Immer noch");
+    const server = a.server.vaults.get(a.vaultId);
+    if (server) server.horizon = server.revision;
+    await b.engine.pull(a.vaultId);
+    expect(groups(b.engine, a.vaultId)).toEqual([]);
     expect(vault(b.engine, a.vaultId).corrupt).toEqual([
       { id, type: "group", reason: "auth" },
     ]);

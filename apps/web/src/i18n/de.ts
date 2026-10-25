@@ -321,6 +321,8 @@ export default {
       "Der Server hat eine ältere Fassung dieses Eintrags geliefert. Er ist schreibgeschützt, bis du die Warnung an der Datenbank bestätigst.",
     newerSchema:
       "Dieser Eintrag stammt von einer neueren Version und ist hier schreibgeschützt.",
+    superseded:
+      "Neuere Fassung beschädigt: Angezeigt wird die letzte gültige Fassung, schreibgeschützt. Die beschädigte steht in der Liste der beschädigten Objekte der Datenbank.",
     invalid:
       "Dieser Eintrag enthält {count} ungültige Elemente und ist schreibgeschützt.",
     removeInvalid: "Ungültige Elemente entfernen",
