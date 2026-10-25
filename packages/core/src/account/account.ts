@@ -431,37 +431,41 @@ export class Account {
         const step = new SecondFactorLogin(
           outcome.challenge,
           keys.wrapKey.slice(),
-          this.#secondFactorSteps(),
+          this.#secondFactorSteps(kdf),
         );
         this.#pending.add(step);
         return { kind: "second_factor", step };
       }
-      const report = await this.#finishLogin(outcome.userId, keys.wrapKey);
+      const report = await this.#finishLogin(outcome.userId, keys.wrapKey, kdf);
       return { kind: "unlocked", report };
     } finally {
       wipe(keys.authKey, keys.wrapKey);
     }
   }
 
-  /** Loads the account, unwraps the keys and checks the key pair once there is a session. */
+  /**
+   * Loads the account, unwraps the keys and checks the key pair once there
+   * is a session; `kdf` are the `prelogin` parameters derived with.
+   */
   async #finishLogin(
     userId: string,
     wrapKey: Uint8Array,
+    kdf: KdfParams,
   ): Promise<UnlockReport> {
     const me = await this.#api.me();
     if (me.user_id !== userId) throw new AccountError("integrity");
-    const report = this.#unlockWith(me, wrapKey, true);
+    const report = this.#unlockWith(me, wrapKey, kdf, true);
     return this.#checkUserDataMarks(report);
   }
 
-  #secondFactorSteps(): SecondFactorSteps {
+  #secondFactorSteps(kdf: KdfParams): SecondFactorSteps {
     return {
       api: this.#api,
       now: this.#now,
       complete: (outcome, wrapKey) => {
         if (outcome.kind !== "session")
           return Promise.reject(new AccountError("integrity"));
-        return this.#finishLogin(outcome.userId, wrapKey);
+        return this.#finishLogin(outcome.userId, wrapKey, kdf);
       },
       release: (step) => {
         this.#pending.delete(step);
@@ -481,15 +485,24 @@ export class Account {
     const kdf = validKdf(me.kdf);
     const keys = await this.#derive(password, fromBase64Url(me.salt, 16), kdf);
     try {
-      const report = this.#unlockWith(me, keys.wrapKey, false);
+      const report = this.#unlockWith(me, keys.wrapKey, kdf, false);
       return await this.#checkUserDataMarks(report);
     } finally {
       wipe(keys.authKey, keys.wrapKey);
     }
   }
 
-  #unlockWith(me: Me, wrapKey: Uint8Array, afterLogin: boolean): UnlockReport {
-    const kdf = validKdf(me.kdf);
+  /**
+   * Unwraps with the key derived with `kdf`, which are also the parameters
+   * compared with the ones seen before: from `prelogin` after a login, from
+   * `GET /v1/me` when unlocking.
+   */
+  #unlockWith(
+    me: Me,
+    wrapKey: Uint8Array,
+    kdf: KdfParams,
+    afterLogin: boolean,
+  ): UnlockReport {
     const seen = this.#memory.get(me.user_id);
     const weaker =
       seen !== undefined &&
@@ -500,7 +513,9 @@ export class Account {
     } catch (error) {
       if (error instanceof CryptoError && error.code === "auth" && !afterLogin)
         throw new AccountError("wrong_password", weaker);
-      throw new AccountError("integrity");
+      // After a login with weaker parameters the server may have made
+      // them up: the error says so.
+      throw new AccountError("integrity", weaker);
     }
     this.#keys.unlock(unlocked.account);
     this.#userId = me.user_id;

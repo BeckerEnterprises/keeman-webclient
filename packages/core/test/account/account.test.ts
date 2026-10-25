@@ -10,7 +10,7 @@ import { ApiClient } from "../../src/api/client";
 import { ApiError, NetworkError } from "../../src/api/errors";
 import { toBase64Url } from "../../src/crypto/bytes";
 import { sodium } from "../../src/crypto/sodium";
-import { FakeServer, fastWorker } from "./fake-server";
+import { FakeServer, fastWorker, totpCode, totpStep } from "./fake-server";
 
 const PASSWORD = "correct horse battery staple";
 
@@ -261,6 +261,66 @@ describe("login and unlock", () => {
     const error = await expectAccountError(
       device.unlock("wrong password, sadly"),
       "wrong_password",
+    );
+    expect(error.possiblyManipulated).toBe(true);
+  });
+
+  it("compares the prelogin parameters it derived with after a login", async () => {
+    const { server, account } = await registered();
+    const userId = must(account.userId);
+    const seen = new Map([[userId, { ops: 3, mem: 67108864 }]]);
+    const memory: KdfMemory = {
+      get: (id) => seen.get(id),
+      set: (id, cost) => seen.set(id, cost),
+      forget: (id) => seen.delete(id),
+    };
+    // A lying server offers weak parameters and lets any key log in: the
+    // unwrap fails, and the error names the parameters as a possible cause.
+    server.tamperPrelogin = (answer) => {
+      answer.kdf = { alg: "argon2id13", ops: 2, mem: 33554432 };
+    };
+    server.acceptAnyAuthKey = true;
+    const lied = newAccount(server, memory);
+    const error = await expectAccountError(
+      lied.login(EMAIL, PASSWORD),
+      "integrity",
+    );
+    expect(error.possiblyManipulated).toBe(true);
+    expect(seen.get(userId)).toEqual({ ops: 3, mem: 67108864 });
+
+    // Weak parameters only in GET /v1/me, honest prelogin: no false warning,
+    // and what is remembered is what was derived with.
+    server.tamperPrelogin = () => undefined;
+    server.acceptAnyAuthKey = false;
+    server.tamperMe = (me) => {
+      me.kdf = { alg: "argon2id13", ops: 2, mem: 33554432 };
+    };
+    const honest = newAccount(server, memory);
+    const result = await honest.login(EMAIL, PASSWORD);
+    if (result.kind !== "unlocked") throw new Error("expected an unlock");
+    expect(result.report.kdfWeakerThanSeen).toBe(false);
+    expect(seen.get(userId)).toEqual({ ops: 3, mem: 67108864 });
+  });
+
+  it("compares the prelogin parameters also after a second factor", async () => {
+    const { server, account } = await registered();
+    const userId = must(account.userId);
+    const secret = server.enableTotp(EMAIL);
+    const seen = new Map([[userId, { ops: 3, mem: 67108864 }]]);
+    const memory: KdfMemory = {
+      get: (id) => seen.get(id),
+      set: (id, cost) => seen.set(id, cost),
+      forget: (id) => seen.delete(id),
+    };
+    server.tamperPrelogin = (answer) => {
+      answer.kdf = { alg: "argon2id13", ops: 2, mem: 33554432 };
+    };
+    server.acceptAnyAuthKey = true;
+    const result = await newAccount(server, memory).login(EMAIL, PASSWORD);
+    if (result.kind !== "second_factor") throw new Error("expected 2FA");
+    const error = await expectAccountError(
+      result.step.totp(totpCode(secret, totpStep(Date.now()))),
+      "integrity",
     );
     expect(error.possiblyManipulated).toBe(true);
   });

@@ -204,6 +204,11 @@ export class FakeServer {
   openRegistration = false;
   /** Change a `GET /v1/me` response before it is sent. */
   tamperMe: (me: Record<string, unknown>) => void = () => undefined;
+  /** Change a `prelogin` answer before it is sent. */
+  tamperPrelogin: (answer: { kdf: unknown; salt: string }) => void = () =>
+    undefined;
+  /** A lying server: logs in with any auth key. */
+  acceptAnyAuthKey = false;
   readonly vaults = new Map<string, VaultRecord>();
   /** Stored idempotent answers: user + key → endpoint, body, response. */
   readonly idempotency = new Map<
@@ -707,10 +712,12 @@ export class FakeServer {
       });
     if (method === "POST" && path === "/v1/auth/prelogin") {
       const user = this.userByEmail(data.email as string);
-      return reply(200, {
+      const answer = {
         kdf: user?.kdf ?? { alg: "argon2id13", ops: 3, mem: 67108864 },
         salt: user?.salt ?? toBase64Url(new Uint8Array(16)),
-      });
+      };
+      this.tamperPrelogin(answer);
+      return reply(200, answer);
     }
     if (method === "POST" && path === "/v1/auth/register") {
       const existing = this.users.get(data.user_id as string);
@@ -753,7 +760,7 @@ export class FakeServer {
     }
     if (method === "POST" && path === "/v1/auth/login") {
       const user = this.userByEmail(data.email as string);
-      if (!user || user.auth_key !== data.auth_key)
+      if (!user || (user.auth_key !== data.auth_key && !this.acceptAnyAuthKey))
         return problem(401, "invalid_credentials");
       if (this.#hasFactor(user))
         return this.#challenge(
