@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { readKdbxInWorker, type KdbxFile } from "@keeman/core";
 import type { WorkerLike } from "@keeman/core/argon2-worker";
 import { handleKdbxMessage } from "@keeman/core/kdbx-worker";
@@ -29,7 +30,7 @@ const FIXTURES = new URL(
   import.meta.url,
 );
 const fixture = (name: string): string =>
-  new URL(`${name}.kdbx`, FIXTURES).pathname;
+  fileURLToPath(new URL(`${name}.kdbx`, FIXTURES));
 const keepassxc =
   spawnSync("keepassxc-cli", ["--version"], { encoding: "utf8" }).status === 0;
 const TWOFISH = [

@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { crc32, deflateSync } from "node:zlib";
 import * as kdbxweb from "kdbxweb";
 import { afterAll, describe, expect, it } from "vitest";
@@ -228,7 +229,7 @@ describe.skipIf(!available)("keepassxc-cli as independent check", () => {
   ])("reads %s like we do", async (name) => {
     const ours = await readFixture(name);
     const theirs = keepassxcRoot(
-      new URL(`${name}.kdbx`, FIXTURES).pathname,
+      fileURLToPath(new URL(`${name}.kdbx`, FIXTURES)),
       "test",
     );
     expectSame(ours.root, theirs);
