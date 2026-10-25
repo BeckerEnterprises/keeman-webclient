@@ -89,6 +89,18 @@ app.example.org {
 
 The web client and the API must be on the same site (for example `app.example.org` and `api.example.org`), because the refresh cookie is `SameSite=Strict`.
 
+### Container
+
+`Dockerfile` builds the app and serves it with Caddy on port 8080, without TLS, as a non-root user. The image sets the same security headers as above; `KEEMAN_API_HOST` fills `connect-src` and `config.json`:
+
+```bash
+podman build -t keeman-webclient .                         # or docker build
+podman run -d -e KEEMAN_API_HOST=api.example.org -p 127.0.0.1:8080:8080 keeman-webclient
+scripts/check-image.sh                                     # builds, starts and checks the headers
+```
+
+Put a reverse proxy with TLS in front. The server repository has a compose example that runs the API, this image and Caddy together.
+
 The source links (AGPL §13) are build constants in `apps/web/src/build-info.ts`. If you run a modified version for others, point them at your own repositories.
 
 ## License

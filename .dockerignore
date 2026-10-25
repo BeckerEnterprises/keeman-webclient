@@ -1,0 +1,8 @@
+# Sources and lockfile only; dependencies are installed inside the image.
+**/node_modules
+**/dist
+**/coverage
+**/test-results
+**/playwright-report
+.git
+apps/web/public/config.json

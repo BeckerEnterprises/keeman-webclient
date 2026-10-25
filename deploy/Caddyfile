@@ -1,0 +1,38 @@
+# Caddy configuration of the web client image: static files on :8080, the
+# security headers of apps/web/csp.ts, and config.json from KEEMAN_API_HOST.
+{
+	admin off
+	auto_https off
+}
+
+:8080 {
+	root * /srv
+	encode zstd gzip
+
+	header {
+		Content-Security-Policy "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://{$KEEMAN_API_HOST} wss://{$KEEMAN_API_HOST}; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'"
+		Strict-Transport-Security "max-age=63072000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), publickey-credentials-get=(self), publickey-credentials-create=(self)"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-origin"
+	}
+
+	# "header" runs before "try_files": no-cache for everything but /assets/*,
+	# otherwise deep links could get a stale index.html after an update.
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+	@notassets not path /assets/*
+	header @notassets Cache-Control "no-cache"
+
+	handle /config.json {
+		header Content-Type "application/json"
+		respond `{ "apiUrl": "https://{$KEEMAN_API_HOST}" }` 200
+	}
+
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+}

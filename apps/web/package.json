@@ -20,12 +20,12 @@
     "@zxcvbn-ts/language-de": "4.1.1",
     "@zxcvbn-ts/language-en": "4.1.1",
     "jsqr": "1.4.0",
-    "lucide": "1.58.0",
+    "lucide": "1.59.0",
     "pinia": "4.1.0",
     "qrcode-generator": "2.0.4",
     "valibot": "1.5.0",
     "vue": "3.5.44",
-    "vue-i18n": "11.4.14",
+    "vue-i18n": "11.4.16",
     "vue-router": "5.4.0"
   },
   "devDependencies": {
