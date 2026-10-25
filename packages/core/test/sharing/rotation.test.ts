@@ -132,6 +132,7 @@ describe("removing a member", () => {
       vaultKeyVersion: 2,
       keyStatus: "ok",
       rollback: false,
+      keyRollback: false,
     });
     // The server plays back the state before the rotation: Bob still holds
     // the old key, and with it Carol could read what he writes.
@@ -149,6 +150,7 @@ describe("removing a member", () => {
     expect(vault(bob.engine, vaultId)).toMatchObject({
       vaultKeyVersion: 1,
       rollback: true,
+      keyRollback: true,
       writable: false,
     });
     const batches = posts(server, "/batch");

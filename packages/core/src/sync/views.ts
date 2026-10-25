@@ -192,6 +192,8 @@ export interface VaultView {
   readonly writable: boolean;
   /** The server delivered older data than seen before. */
   readonly rollback: boolean;
+  /** The rollback includes an older key version (a removed member could read new writes). */
+  readonly keyRollback: boolean;
   readonly corrupt: readonly CorruptObjectView[];
   readonly rootGroupId: string | undefined;
   readonly recycleBinGroupId: string | null;
@@ -623,6 +625,7 @@ export class VaultProjection {
           : "ok",
       writable,
       rollback,
+      keyRollback: state.summary.vault_key_version < state.keyFloor,
       corrupt:
         previous && JSON.stringify(previous.corrupt) === JSON.stringify(corrupt)
           ? previous.corrupt

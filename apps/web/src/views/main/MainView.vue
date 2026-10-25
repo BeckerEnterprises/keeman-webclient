@@ -859,6 +859,9 @@ function back(): void {
       data-test="vault-rollback"
     >
       <p>{{ t("vaults.rollback") }}</p>
+      <p v-if="vault?.keyRollback" data-test="vault-key-rollback">
+        {{ t("vaults.keyRollback") }}
+      </p>
       <button
         type="button"
         class="small"

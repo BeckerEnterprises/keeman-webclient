@@ -177,6 +177,8 @@ const en: typeof de = {
     moveUp: "Move up",
     moveDown: "Move down",
     corrupt: "Corrupt objects: {count}",
+    keyRollback:
+      "This includes an older key version of the database: removed members could read what would be written now. Confirm only if the server was restored from a backup.",
     rollback:
       "The server delivered older data than last seen on this device. The database is read-only until you confirm. This can be an error or an attack on the server.",
     status: {

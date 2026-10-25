@@ -182,6 +182,8 @@ export default {
     moveUp: "Nach oben",
     moveDown: "Nach unten",
     corrupt: "Beschädigte Objekte: {count}",
+    keyRollback:
+      "Darunter ist eine ältere Schlüsselversion der Datenbank: Was jetzt geschrieben würde, könnten entfernte Mitglieder lesen. Bestätige nur, wenn der Server aus einer Sicherung wiederhergestellt wurde.",
     rollback:
       "Der Server hat ältere Daten geliefert als zuletzt auf diesem Gerät gesehen. Die Datenbank ist schreibgeschützt, bis du bestätigst. Das kann ein Fehler oder ein Angriff auf den Server sein.",
     status: {
