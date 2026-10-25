@@ -69,7 +69,7 @@ export function toUiError(error: unknown): UiError {
         instance,
         retryAfter: error.details.retryAfter ?? 60,
       };
-    // 507: the vault owner's attachment quota.
+    // 507: the storage quota of the vault's owner; final, never retried.
     if (error.code === "quota_exceeded")
       return { key: "quota_exceeded", instance };
     if (error.status >= 500) return { key: "server", instance };

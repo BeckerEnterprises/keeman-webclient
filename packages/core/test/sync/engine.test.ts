@@ -145,6 +145,23 @@ describe("first vault and the vault list", () => {
       .filter((r) => r.method === "POST");
     expect(new Set(bodies.slice(-4).map((r) => r.body)).size).toBe(1);
   });
+  it("reports a full quota on creation without offering the same request again", async () => {
+    const { engine, server } = await firstDevice();
+    const before = server.vaults.size;
+    const posts = () =>
+      server.requests("/v1/vaults").filter((r) => r.method === "POST").length;
+    const sent = posts();
+    server.failures.set("/v1/vaults", [
+      { status: 507, code: "quota_exceeded" },
+    ]);
+    const error = await engine
+      .createVault({ ...NAMES, name: "Voll" })
+      .catch((e: unknown) => e);
+    expect(error).toMatchObject({ status: 507, code: "quota_exceeded" });
+    expect(error).not.toBeInstanceOf(SyncError);
+    expect(server.vaults.size).toBe(before);
+    expect(posts()).toBe(sent + 1);
+  });
 });
 
 describe("syncing two devices", () => {
@@ -323,6 +340,16 @@ describe("syncing two devices", () => {
       .slice(-4)
       .map((r) => r.body);
     expect(new Set(bodies).size).toBe(1);
+    // A full quota is final: no retry, neither automatic nor offered.
+    const sent = a.server.requests(path).length;
+    a.server.failures.set(path, [{ status: 507, code: "quota_exceeded" }]);
+    const full = await a.engine
+      .renameGroup(a.vaultId, id, "Z")
+      .catch((e: unknown) => e);
+    expect(full).toMatchObject({ status: 507, code: "quota_exceeded" });
+    expect(full).not.toBeInstanceOf(SyncError);
+    expect(a.server.requests(path)).toHaveLength(sent + 1);
+    expect(group(a.engine, a.vaultId, "Y")).toBeDefined();
     a.server.failures.set(path, [{ status: 409, code: "stale_key_version" }]);
     await expect(
       a.engine.renameGroup(a.vaultId, id, "Z"),

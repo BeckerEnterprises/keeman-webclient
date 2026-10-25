@@ -1098,7 +1098,7 @@ const en: typeof de = {
     attachment_incomplete:
       "The upload is incomplete. Please add the file again.",
     quota_exceeded:
-      "The storage for attachments is used up (quota of the database owner).",
+      "The storage is used up (quota of the database owner). Deleting data frees space again.",
     contacts_self: "That is your own account.",
     already_member: "This account is already a member or invited.",
     user_not_found: "There is no account with this e-mail address.",

@@ -1137,7 +1137,7 @@ export default {
     attachment_incomplete:
       "Der Upload ist unvollständig. Bitte die Datei erneut hinzufügen.",
     quota_exceeded:
-      "Der Speicherplatz für Anhänge ist erschöpft (Kontingent der Datenbank-Eigentümerin bzw. des Eigentümers).",
+      "Der Speicherplatz ist erschöpft (Kontingent der Datenbank-Eigentümerin bzw. des Eigentümers). Löschen schafft wieder Platz.",
     contacts_self: "Das ist dein eigenes Konto.",
     already_member: "Dieses Konto ist schon Mitglied oder eingeladen.",
     user_not_found: "Zu dieser E-Mail-Adresse gibt es kein Konto.",

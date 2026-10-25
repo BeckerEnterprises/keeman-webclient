@@ -2696,6 +2696,7 @@ export interface operations {
                 };
             };
             422: components["responses"]["IdempotencyKeyReused"];
+            507: components["responses"]["QuotaExceeded"];
             default: components["responses"]["Problem"];
         };
     };
@@ -3085,6 +3086,7 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["RotationInvalid"];
             422: components["responses"]["IdempotencyKeyReused"];
+            507: components["responses"]["QuotaExceeded"];
             default: components["responses"]["Problem"];
         };
     };
@@ -3142,6 +3144,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            507: components["responses"]["QuotaExceeded"];
             default: components["responses"]["Problem"];
         };
     };
@@ -3232,6 +3235,7 @@ export interface operations {
             };
             413: components["responses"]["PayloadTooLarge"];
             422: components["responses"]["IdempotencyKeyReused"];
+            507: components["responses"]["QuotaExceeded"];
             default: components["responses"]["Problem"];
         };
     };

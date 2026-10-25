@@ -87,10 +87,12 @@ const SIZE_LIMITS: Record<ObjectType, number> = {
   icon: 64 * 1024,
 };
 
+/** Worth sending again unchanged; `507 quota_exceeded` does not pass by waiting. */
 export function isTransient(error: unknown): boolean {
   return (
     (error instanceof NetworkError && error.reason !== "response") ||
-    (error instanceof ApiError && (error.status >= 500 || error.status === 408))
+    (error instanceof ApiError &&
+      ((error.status >= 500 && error.status !== 507) || error.status === 408))
   );
 }
 
