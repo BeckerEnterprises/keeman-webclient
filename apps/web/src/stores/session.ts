@@ -78,6 +78,18 @@ function endSession(): void {
 
 let autoLock: AutoLock | undefined;
 
+/**
+ * Raised whenever this tab locks, logs out or starts over. An unlock, login
+ * or second factor answered later belongs to an operation that no longer
+ * counts: its result is dropped.
+ */
+let generation = 0;
+
+/** Throws `locked` if the tab locked or logged out since `started`. */
+function stillCurrent(started: number): void {
+  if (started !== generation) throw new AccountError("locked");
+}
+
 interface SessionState {
   phase: Phase;
   fatal: FatalKind | undefined;
@@ -128,6 +140,7 @@ export const useSessionStore = defineStore("session", {
     /** Startup: server config, then refresh with the cookie. */
     async start(): Promise<void> {
       const { api } = useServices();
+      generation += 1;
       this.phase = "starting";
       this.fatal = undefined;
       try {
@@ -169,9 +182,11 @@ export const useSessionStore = defineStore("session", {
     ): Promise<"unlocked" | "second_factor"> {
       const { account } = useServices();
       this.endSecondFactor();
+      const started = generation;
       const result = await this.guardIntegrity(() =>
         account.login(email, password),
       );
+      stillCurrent(started);
       if (result.kind === "second_factor") {
         this.beginSecondFactor(result.step);
         return "second_factor";
@@ -220,8 +235,10 @@ export const useSessionStore = defineStore("session", {
     ): Promise<void> {
       const step = secondFactorStep;
       if (!step) throw new AccountError("challenge_expired");
+      const started = generation;
       try {
         const report = await this.guardIntegrity(() => run(step));
+        stillCurrent(started);
         this.endSecondFactor();
         this.finishLogin(report);
       } catch (error) {
@@ -249,10 +266,12 @@ export const useSessionStore = defineStore("session", {
 
     async unlock(password: string): Promise<void> {
       const { account } = useServices();
+      const started = generation;
       try {
         const report = await this.guardIntegrity(() =>
           account.unlock(password),
         );
+        stillCurrent(started);
         this.applyUnlocked(report);
       } catch (error) {
         if (error instanceof ApiError && error.code === "session_invalid") {
@@ -276,9 +295,13 @@ export const useSessionStore = defineStore("session", {
       }
     },
 
-    /** After login, unlock or a finished registration. */
+    /**
+     * After login, unlock or a finished registration or recovery; never
+     * "unlocked" while the core is not.
+     */
     applyUnlocked(report?: UnlockReport): void {
       const { account } = useServices();
+      if (!account.isUnlocked) throw new AccountError("locked");
       this.email = account.email;
       this.phase = "unlocked";
       this.notice = undefined;
@@ -379,6 +402,7 @@ export const useSessionStore = defineStore("session", {
     /** Locks this tab; a manual lock also locks the other tabs. */
     lock(broadcast = true): void {
       const { account, tabs } = useServices();
+      generation += 1;
       autoLock?.stop();
       this.endSecondFactor();
       account.lock();
@@ -392,6 +416,7 @@ export const useSessionStore = defineStore("session", {
     /** Wipes locally first, then revokes the session. */
     async logout(broadcast = true): Promise<void> {
       const { account, tabs } = useServices();
+      generation += 1;
       autoLock?.stop();
       this.endSecondFactor();
       useVaultsStore().detach();
@@ -414,6 +439,7 @@ export const useSessionStore = defineStore("session", {
     /** Another tab logged out; it already told the server. */
     loggedOutElsewhere(): void {
       const { account, api } = useServices();
+      generation += 1;
       autoLock?.stop();
       this.endSecondFactor();
       account.lock();
@@ -428,6 +454,7 @@ export const useSessionStore = defineStore("session", {
     /** The session ended elsewhere (revoked, expired). */
     expire(): void {
       const { account, api } = useServices();
+      generation += 1;
       autoLock?.stop();
       this.endSecondFactor();
       account.lock();

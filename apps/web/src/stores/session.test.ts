@@ -1,0 +1,111 @@
+import { SETTING_DEFAULTS, type UnlockReport } from "@keeman/core";
+import { createPinia, setActivePinia } from "pinia";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useSessionStore } from "./session";
+
+// The store against a stand-in for the core: what matters is which answer
+// the store takes over, not how the core derives keys.
+
+const REPORT: UnlockReport = {
+  kdfWeakerThanSeen: false,
+  kdfBelowDefault: false,
+  recoveryKeyUnconfirmed: false,
+  userDataCorrupt: false,
+  userDataReadOnly: false,
+  userDataRollback: false,
+};
+
+const account = {
+  isUnlocked: false,
+  email: "alice@example.com",
+  userId: "0192f000-0000-7000-8000-000000000001",
+  kdf: undefined,
+  settings: { ...SETTING_DEFAULTS },
+  recoveryKeyConfirmed: true,
+  userDataState: undefined,
+  userDataRollback: false,
+  contacts: [],
+  ownFingerprint: undefined,
+  contactsWritable: false,
+  unlock: vi.fn<(password: string) => Promise<UnlockReport>>(),
+  lock: vi.fn(() => {
+    account.isUnlocked = false;
+  }),
+  startSync: vi.fn(() => ({
+    snapshot: {},
+    subscribe: () => () => undefined,
+  })),
+};
+
+vi.mock("../services", () => ({
+  useServices: () => ({
+    account,
+    api: { setAccessToken: vi.fn() },
+    tabs: { send: vi.fn() },
+  }),
+  browserSocket: vi.fn(),
+}));
+
+/** An unlock that answers only when the test says so. */
+function heldUnlock(): (report: UnlockReport) => void {
+  let answer!: (report: UnlockReport) => void;
+  account.unlock.mockImplementationOnce(
+    () =>
+      new Promise<UnlockReport>((resolve) => {
+        answer = resolve;
+      }),
+  );
+  return (report) => {
+    answer(report);
+  };
+}
+
+beforeEach(() => {
+  setActivePinia(createPinia());
+  account.isUnlocked = false;
+  account.unlock.mockReset();
+});
+
+describe("session store", () => {
+  it("unlocks with the answer of the core", async () => {
+    const session = useSessionStore();
+    session.phase = "locked";
+    account.unlock.mockImplementationOnce(() => {
+      account.isUnlocked = true;
+      return Promise.resolve(REPORT);
+    });
+    await session.unlock("password");
+    expect(session.phase).toBe("unlocked");
+    session.lock(false);
+    expect(session.phase).toBe("locked");
+  });
+
+  it("stays locked when a lock overtakes an unlock", async () => {
+    const session = useSessionStore();
+    session.phase = "locked";
+    const answer = heldUnlock();
+    const unlocking = session.unlock("password");
+    // As when another tab sends `lock` while the derivation runs.
+    session.lock(false);
+    // Even a core that took the late answer does not unlock the view.
+    account.isUnlocked = true;
+    answer(REPORT);
+    await expect(unlocking).rejects.toMatchObject({ code: "locked" });
+    expect(session.phase).toBe("locked");
+    expect(account.startSync).not.toHaveBeenCalled();
+  });
+
+  it("never shows unlocked while the core is locked", async () => {
+    const session = useSessionStore();
+    session.phase = "locked";
+    account.unlock.mockResolvedValueOnce(REPORT);
+    await expect(session.unlock("password")).rejects.toMatchObject({
+      code: "locked",
+    });
+    expect(session.phase).toBe("locked");
+    expect(() => {
+      session.applyUnlocked();
+    }).toThrow();
+    expect(session.phase).toBe("locked");
+  });
+});
