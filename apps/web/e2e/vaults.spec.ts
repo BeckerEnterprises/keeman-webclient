@@ -170,36 +170,31 @@ test.describe("databases", () => {
 test.describe("synchronisation", () => {
   test("two browsers see each other's changes within 2 seconds", async ({
     page,
-    browser,
+    otherContext: other,
   }) => {
     const account = await createAccountWithVault("twobrowsers");
     await nodeGroup(account.device, account.vaultId, "Alpha");
-    const other = await browser.newContext();
     const second = await other.newPage();
-    try {
-      await loginViaUi(page, account);
-      await loginViaUi(second, account);
-      await waitOnline(page);
-      await waitOnline(second);
-      await expect(treeRow(second, "Alpha")).toBeVisible();
+    await loginViaUi(page, account);
+    await loginViaUi(second, account);
+    await waitOnline(page);
+    await waitOnline(second);
+    await expect(treeRow(second, "Alpha")).toBeVisible();
 
-      await rename(page, "Alpha", "Beta");
-      await expect(treeRow(page, "Beta")).toBeVisible();
-      await expect(treeRow(second, "Beta")).toBeVisible({ timeout: 2000 });
+    await rename(page, "Alpha", "Beta");
+    await expect(treeRow(page, "Beta")).toBeVisible();
+    await expect(treeRow(second, "Beta")).toBeVisible({ timeout: 2000 });
 
-      // Another device as writer.
-      await nodeGroup(account.device, account.vaultId, "Gamma");
-      await expect(treeRow(second, "Gamma")).toBeVisible({ timeout: 2000 });
-      await expect(treeRow(page, "Gamma")).toBeVisible({ timeout: 2000 });
+    // Another device as writer.
+    await nodeGroup(account.device, account.vaultId, "Gamma");
+    await expect(treeRow(second, "Gamma")).toBeVisible({ timeout: 2000 });
+    await expect(treeRow(page, "Gamma")).toBeVisible({ timeout: 2000 });
 
-      // Changes while offline arrive after reconnecting.
-      await other.setOffline(true);
-      await nodeGroup(account.device, account.vaultId, "Delta");
-      await other.setOffline(false);
-      await expect(treeRow(second, "Delta")).toBeVisible({ timeout: 15_000 });
-    } finally {
-      await other.close();
-    }
+    // Changes while offline arrive after reconnecting.
+    await other.setOffline(true);
+    await nodeGroup(account.device, account.vaultId, "Delta");
+    await other.setOffline(false);
+    await expect(treeRow(second, "Delta")).toBeVisible({ timeout: 15_000 });
   });
 
   test("conflicts keep both changes or report the discarded one", async ({

@@ -102,6 +102,42 @@ describe("AEAD envelope", () => {
     expectCryptoError(() => openKey(key, bytesEnvelope, label), "format");
   });
 
+  it("binds every wrapped key to its purpose, account, vault and version", () => {
+    const credential = toBase64Url(tv("credential", 16));
+    const labels = {
+      userKey: aad.userKey(IDS.user),
+      recovery: aad.recovery(IDS.user),
+      prf: aad.prf(IDS.user, credential),
+      privateKey: aad.privateKey(IDS.user),
+      vaultKey: aad.vaultKey(IDS.vault, IDS.user, 1),
+    };
+    const others = {
+      userKey: [aad.userKey(IDS.other)],
+      recovery: [aad.recovery(IDS.other)],
+      prf: [
+        aad.prf(IDS.other, credential),
+        aad.prf(IDS.user, toBase64Url(tv("other-credential", 16))),
+      ],
+      privateKey: [aad.privateKey(IDS.other)],
+      vaultKey: [
+        aad.vaultKey(IDS.vault, IDS.other, 1),
+        aad.vaultKey(IDS.object, IDS.user, 1),
+        aad.vaultKey(IDS.vault, IDS.user, 2),
+      ],
+    };
+    const raw = tv("raw", 32);
+    for (const [purpose, right] of Object.entries(labels)) {
+      const envelope = sealKey(labelRandomness(), key, raw, right);
+      expect(openKey(key, envelope, right)).toEqual(raw);
+      const wrong = [
+        ...Object.values(labels).filter((l) => l !== right),
+        ...others[purpose as keyof typeof others],
+      ];
+      for (const label of wrong)
+        expectCryptoError(() => openKey(key, envelope, label), "auth");
+    }
+  });
+
   it("pads JSON and checks padding and encoding", () => {
     const value = { schema: 1, seq: 1, title: "Grüße" };
     const envelope = sealJson(labelRandomness(), key, value, label);

@@ -9,7 +9,7 @@ import { toBase64Url } from "../../src/crypto/bytes";
 import { sodium } from "../../src/crypto/sodium";
 import { AccountError } from "../../src/account/errors";
 import { FakeServer } from "../account/fake-server";
-import { rootOf, vault } from "../sync/devices";
+import { NAMES, PASSWORD, rootOf, vault } from "../sync/devices";
 import { owner, person, posts, share } from "./people";
 
 const attackerKey = () => toBase64Url(sodium().crypto_box_keypair().publicKey);
@@ -221,27 +221,38 @@ describe("invitations", () => {
   it("refuses an invitation whose sender's key changed", async () => {
     const alice = await owner();
     const bob = await person(alice.server, "bob@example.com");
-    const other = await owner(alice.server, "carol@example.com");
+    // Bob knows Alice from an earlier share; she invites him again.
     await share(alice, bob, alice.vaultId);
-    // Bob knows Alice; the server now names another key for her.
-    const candidate = await other.engine.lookupUser("bob@example.com");
-    await other.account.verifyContact(candidate);
-    await other.engine.invite(other.vaultId, candidate);
-    alice.server.tamperPublicKey = (user) => {
-      if (user.email === "carol@example.com") return;
-      user.public_key = attackerKey();
-    };
-    await bob.engine.refresh();
-    const invitation = bob.engine.snapshot.invitations.find(
-      (i) => i.vaultId === other.vaultId,
+    const second = await alice.engine.createVault({
+      ...NAMES,
+      name: "Zweite",
+    });
+    await alice.engine.invite(
+      second,
+      await alice.engine.lookupUser("bob@example.com"),
     );
-    expect(invitation?.sender?.status).toBe("unverified");
-    // Carol is unverified for Bob; the forged Alice key would be "changed".
-    const forgedAlice = await bob.engine.members(alice.vaultId);
-    expect(
-      forgedAlice.find((m) => m.email === "alice@example.com")?.candidate
-        .status,
-    ).toBe("verified");
+    // The server now names another key for Alice.
+    alice.server.tamperPublicKey = (user) => {
+      if (user.email === "alice@example.com") user.public_key = attackerKey();
+    };
+    // A session keeps the keys it loaded; the next one asks the server again.
+    bob.account.lock();
+    await bob.account.unlock(PASSWORD);
+    const engine = bob.account.startSync();
+    await engine.refresh();
+    const invitation = engine.snapshot.invitations.find(
+      (i) => i.vaultId === second,
+    );
+    expect(invitation?.sender?.status).toBe("changed");
+    expect(invitation?.sender?.fingerprint).not.toBe(
+      alice.account.ownFingerprint,
+    );
+    expect(invitation?.vaultName).toBeUndefined();
+    const accepted = posts(alice.server, "/accept");
+    await expect(engine.acceptInvitation(second)).rejects.toMatchObject({
+      code: "unverified",
+    });
+    expect(posts(alice.server, "/accept")).toBe(accepted);
   });
 
   it("declines, withdraws and repeats lost answers", async () => {

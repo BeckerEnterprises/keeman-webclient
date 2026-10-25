@@ -10,7 +10,7 @@ import { expect, test } from "./fixtures";
 
 test.describe("account pages", () => {
   test("changes the password and logs out other devices", async ({
-    browser,
+    otherContext,
     page,
     guard,
   }) => {
@@ -18,7 +18,6 @@ test.describe("account pages", () => {
     const next = strongPassword();
     guard.secrets.push(account.password, next);
     await loginViaUi(page, account);
-    const otherContext = await browser.newContext({ locale: "de-DE" });
     const other = await otherContext.newPage();
     await loginViaUi(other, account);
 
@@ -45,7 +44,6 @@ test.describe("account pages", () => {
 
     await other.reload();
     await expect(other.getByTestId("login")).toBeVisible();
-    await otherContext.close();
 
     const device = await nodeAccount();
     await expect(
@@ -55,12 +53,11 @@ test.describe("account pages", () => {
   });
 
   test("raises the KDF parameters without logging out others", async ({
-    browser,
+    otherContext,
     page,
   }) => {
     const account = await createAccount("kdf");
     await loginViaUi(page, account);
-    const otherContext = await browser.newContext({ locale: "de-DE" });
     const other = await otherContext.newPage();
     await loginViaUi(other, account);
 
@@ -83,7 +80,6 @@ test.describe("account pages", () => {
     await other.reload();
     await unlockViaUi(other, account.password);
     await expect(other.getByTestId("main-view")).toBeVisible();
-    await otherContext.close();
   });
 
   test("creates a new recovery key", async ({ page, guard }) => {
@@ -108,10 +104,9 @@ test.describe("account pages", () => {
     ).toBeVisible();
   });
 
-  test("lists and revokes sessions", async ({ browser, page }) => {
+  test("lists and revokes sessions", async ({ otherContext, page }) => {
     const account = await createAccount("sessions");
     await loginViaUi(page, account);
-    const otherContext = await browser.newContext({ locale: "de-DE" });
     const other = await otherContext.newPage();
     await loginViaUi(other, account);
     const device = await nodeAccount();
@@ -134,7 +129,6 @@ test.describe("account pages", () => {
     await expect(page.getByTestId("session")).toHaveCount(1);
     await other.reload();
     await expect(other.getByTestId("login")).toBeVisible();
-    await otherContext.close();
   });
 
   test("keeps settings and merges them with another device", async ({

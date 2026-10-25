@@ -26,7 +26,7 @@ interface Guard {
 
 declare global {
   interface Window {
-    __cspViolations?: string[];
+    __keemanCspViolation?: (text: string) => Promise<void>;
   }
 }
 
@@ -39,9 +39,14 @@ async function watchContext(
   guard: Guard,
 ): Promise<() => Promise<void>> {
   const foreign: string[] = [];
+  // Violations go straight to the test, so reloaded and closed pages count too.
+  const violations: string[] = [];
+  await context.exposeBinding("__keemanCspViolation", (_source, text) => {
+    violations.push(String(text));
+  });
   await context.addInitScript(() => {
     document.addEventListener("securitypolicyviolation", (event) => {
-      (window.__cspViolations ??= []).push(
+      void window.__keemanCspViolation?.(
         `${event.violatedDirective} ${event.blockedURI}`,
       );
     });
@@ -104,7 +109,6 @@ async function watchContext(
           const databases =
             "databases" in indexedDB ? await indexedDB.databases() : [];
           return {
-            violations: window.__cspViolations ?? [],
             local,
             session: sessionStorage.length,
             databases: databases.map((db) => db.name),
@@ -114,7 +118,6 @@ async function watchContext(
         })
         .catch(() => undefined);
       if (!state) continue;
-      expect(state.violations, "CSP violations").toEqual([]);
       for (const key of Object.keys(state.local))
         expect(ALLOWED_STORAGE_KEYS, `localStorage key ${key}`).toContain(key);
       const stored = Object.values(state.local).join("\n");
@@ -125,6 +128,7 @@ async function watchContext(
       expect(state.caches, "Cache Storage").toEqual([]);
       expect(state.workers, "service workers").toBe(0);
     }
+    expect(violations, "CSP violations").toEqual([]);
     expect(foreign, "requests to other hosts").toEqual([]);
   };
 }
