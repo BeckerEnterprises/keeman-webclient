@@ -9,6 +9,9 @@ All notable changes to this project are documented here. The format follows [Kee
 - A server can no longer roll back the vault key version unnoticed: the device remembers the highest key version of each database, makes the database read-only with a warning when the server delivers a lower one, and never encrypts with an older key.
 - Placeholders have work limits: one value resolves at most 1000 references and produces at most 1,048,576 characters. Beyond that it stays unresolved with a note ("Too many references"), so a prepared entry cannot freeze the tab.
 - Auto-lock in Firefox and Safari: when the browser refuses to clear the clipboard, the next click or key in the tab clears it, also on the lock screen.
+- A new vault key after a rotation is taken without asking only from an owner this device has seen while it held the current key; otherwise the user confirms that the sender really is an owner. A server can no longer pass off the key box of a removed member, who is still a verified contact, as a new key version.
+- Reading placeholders and URL templates takes linear time: a value with many `{` before one `}` no longer freezes list views.
+- At login the key derivation parameters actually used (from `prelogin`) are compared with the ones seen before, also after a second factor; a failing unlock after weaker parameters mentions manipulated parameters.
 
 ### Fixed
 
