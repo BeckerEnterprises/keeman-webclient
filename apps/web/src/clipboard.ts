@@ -25,16 +25,23 @@ function clearOnAction(): void {
   );
 }
 
+/** The write was refused: clear on the next key or click in this tab. */
+function clearOnNextAction(): void {
+  if (!waiting) {
+    waiting = true;
+    window.addEventListener("pointerdown", clearOnAction, true);
+    window.addEventListener("keydown", clearOnAction, true);
+  }
+  useToastStore().show("clipboard.clearOnAction", {}, 8000);
+}
+
 async function clearNow(): Promise<void> {
   timer = undefined;
   try {
     await navigator.clipboard.writeText("");
     useToastStore().show("clipboard.cleared");
   } catch {
-    waiting = true;
-    window.addEventListener("pointerdown", clearOnAction, true);
-    window.addEventListener("keydown", clearOnAction, true);
-    useToastStore().show("clipboard.clearOnAction", {}, 8000);
+    clearOnNextAction();
   }
 }
 
@@ -77,11 +84,14 @@ export function copyInEvent(
   schedule(clearSeconds);
 }
 
-/** On lock and logout: clear what is still pending, as far as allowed. */
+/**
+ * On lock and logout: clear what is still pending, as far as allowed.
+ * A refused write keeps the next key or click as the fallback, also on
+ * the lock or sign-in screen.
+ */
 export function clearPendingClipboard(): void {
   if (timer === undefined && !waiting) return;
   if (timer !== undefined) clearTimeout(timer);
   timer = undefined;
-  stopWaiting();
-  void navigator.clipboard.writeText("").catch(() => undefined);
+  void navigator.clipboard.writeText("").then(stopWaiting, clearOnNextAction);
 }

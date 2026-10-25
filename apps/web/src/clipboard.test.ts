@@ -57,6 +57,31 @@ describe("clipboard", () => {
     expect(useToastStore().toasts.at(-1)?.key).toBe("clipboard.failed");
   });
 
+  it("falls back to the next action when clearing on lock is refused", async () => {
+    await copySecret("geheim", 30);
+    writeText.mockRejectedValueOnce(new DOMException("no", "NotAllowedError"));
+    clearPendingClipboard();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useToastStore().toasts.at(-1)?.key).toBe("clipboard.clearOnAction");
+    // The timer is gone; the next click on the lock screen clears.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(writeText).toHaveBeenCalledTimes(2);
+    window.dispatchEvent(new Event("pointerdown"));
+    expect(writeText).toHaveBeenCalledTimes(3);
+    expect(writeText).toHaveBeenLastCalledWith("");
+
+    // Already waiting when the lock comes: a refused write keeps waiting.
+    await copySecret("geheim", 5);
+    writeText.mockRejectedValueOnce(new DOMException("no", "NotAllowedError"));
+    await vi.advanceTimersByTimeAsync(5_000);
+    writeText.mockRejectedValueOnce(new DOMException("no", "NotAllowedError"));
+    clearPendingClipboard();
+    await vi.advanceTimersByTimeAsync(0);
+    writeText.mockClear();
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "a" }));
+    expect(writeText).toHaveBeenCalledWith("");
+  });
+
   it("copies through the copy event and clears pending values on lock", () => {
     const setData = vi.fn();
     const event = new Event("copy", { cancelable: true }) as ClipboardEvent;
