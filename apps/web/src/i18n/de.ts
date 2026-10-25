@@ -328,6 +328,8 @@ export default {
     refWarning: {
       cycle: "Zirkelbezug: Ein Verweis führt im Kreis und bleibt stehen.",
       missing: "Ein Verweis zeigt auf keinen Eintrag dieser Datenbank.",
+      too_complex:
+        "Zu viele Verweise: Der Wert erscheint wie gespeichert, ohne sie aufzulösen.",
     },
   },
   totp: {
@@ -357,6 +359,8 @@ export default {
       invalid_host:
         "Ein Wert im Hostnamen enthält Leerzeichen oder Trennzeichen einer URL.",
       invalid_url: "Die aufgelöste URL ist ungültig und wird nicht geöffnet.",
+      too_complex:
+        "Zu viele Verweise: Die URL wird nicht aufgelöst und nicht geöffnet.",
       scheme_forbidden:
         "Dieses Schema wird aus Sicherheitsgründen nie geöffnet. Kopieren geht trotzdem.",
       scheme_not_allowed:

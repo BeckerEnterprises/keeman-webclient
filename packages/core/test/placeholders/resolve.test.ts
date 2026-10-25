@@ -425,3 +425,79 @@ describe("checkScheme", () => {
       expect(checkScheme(value, all), value).toBe("scheme_forbidden");
   });
 });
+
+describe("limits", () => {
+  const D = "0192b3a4-0000-7000-8000-00000000000d";
+  /** A → B, B refers `fan` times to C, C `fan` times to D. */
+  function fanOut(fan: number, a: Partial<PlaceholderEntry>) {
+    return lookup({
+      [A]: a,
+      [B]: { title: ref("T", C).repeat(fan) },
+      [C]: { title: ref("T", D).repeat(fan) },
+      [D]: { title: "x" },
+    });
+  }
+
+  it("resolves up to 1000 references", () => {
+    // 1 + 31 + 31 × 31 = 993 references.
+    const result = resolveText(A, "title", fanOut(31, { title: ref("T", B) }));
+    expect(result.value).toBe("x".repeat(31 * 31));
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("leaves a value with more references unresolved, quickly", () => {
+    const stored = ref("T", B);
+    const started = performance.now();
+    const result = resolveText(A, "title", fanOut(32, { title: stored }));
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(result).toEqual({
+      value: stored,
+      display: stored,
+      secret: false,
+      refs: true,
+      warnings: ["too_complex"],
+    });
+    // Secret values stay masked; list views fall back the same way.
+    const password = resolveText(
+      A,
+      "password",
+      fanOut(32, { password: stored }),
+    );
+    expect(password).toMatchObject({
+      value: stored,
+      display: MASK,
+      secret: true,
+    });
+    const listed = resolveText(A, "title", fanOut(32, { title: stored }), {
+      restricted: true,
+    });
+    expect(listed.warnings).toEqual(["too_complex"]);
+  });
+
+  it("stops at more than 1 048 576 characters of text", () => {
+    const big = "y".repeat(600_000);
+    const stored = ref("N", B) + ref("N", B);
+    const result = resolveText(
+      A,
+      "notes",
+      lookup({ [A]: { notes: stored }, [B]: { notes: big } }),
+    );
+    expect(result.value).toBe(stored);
+    expect(result.warnings).toEqual(["too_complex"]);
+    // One copy fits.
+    const once = resolveText(
+      A,
+      "notes",
+      lookup({ [A]: { notes: ref("N", B) }, [B]: { notes: big } }),
+    );
+    expect(once.value).toBe(big);
+  });
+
+  it("does not resolve such a URL", () => {
+    const result = resolveUrl(
+      A,
+      fanOut(32, { url: `https://x.example/${ref("T", B)}` }),
+    );
+    expect(result).toEqual({ ok: false, error: "too_complex", warnings: [] });
+  });
+});

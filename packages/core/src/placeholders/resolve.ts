@@ -27,8 +27,12 @@ export interface PlaceholderLookup {
   entry(id: string): PlaceholderEntry | undefined;
 }
 
-export type PlaceholderWarning = "cycle" | "missing";
-export type UrlError = "placeholder_in_scheme" | "invalid_host" | "invalid_url";
+export type PlaceholderWarning = "cycle" | "missing" | "too_complex";
+export type UrlError =
+  | "placeholder_in_scheme"
+  | "invalid_host"
+  | "invalid_url"
+  | "too_complex";
 export type SchemeProblem = "scheme_forbidden" | "scheme_not_allowed";
 export type TextField = StandardField | { custom: number };
 
@@ -63,7 +67,13 @@ export const FORBIDDEN_SCHEMES: readonly string[] = [
 ];
 
 const MAX_DEPTH = 10;
+/** Limits of one resolution, so that a prepared entry cannot freeze the client. */
+const MAX_REFS = 1000;
+const MAX_CHARS = 1_048_576;
 const MASK = "••••••";
+
+/** Thrown when a resolution exceeds a limit; caught at the entry points. */
+class TooComplex extends Error {}
 
 interface Part {
   text: string;
@@ -81,6 +91,12 @@ interface Context {
   warnings: Set<PlaceholderWarning>;
   /** List views: only T, U and A without secrets or notes. */
   restricted: boolean;
+  /** `{REF}` inserted so far, with all levels. */
+  refs: number;
+  /** Characters of text taken into the result so far. */
+  chars: number;
+  /** Tokens of the values used, by `<entry>|<field>`. */
+  tokens: Map<string, Token[]>;
 }
 
 type UrlParts = { ok: true; parts: Part[] } | { ok: false; error: UrlError };
@@ -91,6 +107,22 @@ function fold(text: string): string {
 
 function plain(text: string): Part {
   return { text, secret: false, notes: false };
+}
+
+/** Text taken into the result: counted against the limit. */
+function piece(context: Context, text: string): Part {
+  context.chars += text.length;
+  if (context.chars > MAX_CHARS) throw new TooComplex();
+  return plain(text);
+}
+
+function tokensOf(context: Context, key: string, text: string): Token[] {
+  let tokens = context.tokens.get(key);
+  if (!tokens) {
+    tokens = tokenize(text);
+    context.tokens.set(key, tokens);
+  }
+  return tokens;
 }
 
 /** An empty value keeps its origin, too. */
@@ -128,12 +160,12 @@ function within<T>(context: Context, key: string, run: () => T): T | undefined {
   }
 }
 
-/** A stored value: only `{REF}` is resolved. */
-function textParts(text: string, context: Context): Part[] {
-  return tokenize(text).flatMap((token) => {
-    if (token.kind === "text") return [plain(token.text)];
+/** A stored value (`key`: `<entry>|<field>`): only `{REF}` is resolved. */
+function textParts(text: string, context: Context, key: string): Part[] {
+  return tokensOf(context, key, text).flatMap((token) => {
+    if (token.kind === "text") return [piece(context, token.text)];
     const parts = token.kind === "ref" ? refParts(token, context) : undefined;
-    return parts ?? [plain(token.raw)];
+    return parts ?? [piece(context, token.raw)];
   });
 }
 
@@ -154,11 +186,13 @@ function refParts(
     return undefined;
   }
   const field = REF_FIELDS[token.field];
+  context.refs++;
+  if (context.refs > MAX_REFS) throw new TooComplex();
   context.depth++;
   try {
     return within(context, `${token.id}|${field}`, () => {
       if (token.field === "A") return referencedUrl(token.id, target, context);
-      const parts = textParts(target[field], context);
+      const parts = textParts(target[field], context, `${token.id}|${field}`);
       if (token.field === "P") return mark(parts, "secret");
       return token.field === "N" ? mark(parts, "notes") : parts;
     });
@@ -200,7 +234,11 @@ function valueParts(
   if (token.kind === "ref") return refParts(token, context);
   if (token.kind === "field") {
     return within(context, `${entryId}|${token.field}`, () => {
-      const parts = textParts(entry[token.field], context);
+      const parts = textParts(
+        entry[token.field],
+        context,
+        `${entryId}|${token.field}`,
+      );
       if (token.field === "password") return mark(parts, "secret");
       return token.field === "notes" ? mark(parts, "notes") : parts;
     });
@@ -212,7 +250,7 @@ function valueParts(
     return undefined;
   }
   return within(context, `${entryId}|S:${name}`, () => {
-    const parts = textParts(field.value, context);
+    const parts = textParts(field.value, context, `${entryId}|S:${name}`);
     return field.protected ? mark(parts, "secret") : parts;
   });
 }
@@ -232,13 +270,13 @@ function urlParts(
   if (singleValue !== undefined) {
     parts = hasScheme(join(singleValue))
       ? singleValue
-      : [plain("https://"), ...singleValue];
+      : [piece(context, "https://"), ...singleValue];
   } else {
     const split = layout(itemsOf(tokens));
     if (typeof split === "string") return { ok: false, error: split };
     for (const [index, item] of split.items.entries()) {
       if ("literal" in item) {
-        parts.push(plain(item.literal));
+        parts.push(piece(context, item.literal));
         continue;
       }
       const value =
@@ -246,7 +284,7 @@ function urlParts(
           ? undefined // the single placeholder stays
           : valueParts(item.token, entryId, entry, context);
       const position = split.positions[index] ?? "path";
-      if (value === undefined) parts.push(plain(item.token.raw));
+      if (value === undefined) parts.push(piece(context, item.token.raw));
       else if (position === "host" && !validHost(join(value)))
         return { ok: false, error: "invalid_host" };
       else {
@@ -268,7 +306,16 @@ function urlParts(
 }
 
 function contextFor(lookup: PlaceholderLookup, restricted: boolean): Context {
-  return { lookup, stack: [], depth: 0, warnings: new Set(), restricted };
+  return {
+    lookup,
+    stack: [],
+    depth: 0,
+    warnings: new Set(),
+    restricted,
+    refs: 0,
+    chars: 0,
+    tokens: new Map(),
+  };
 }
 
 function warningsOf(context: Context): PlaceholderWarning[] {
@@ -292,18 +339,34 @@ export function resolveText(
     typeof field === "object" ? (custom?.value ?? "") : (entry?.[field] ?? "");
   const secret = field === "password" || custom?.protected === true;
   const context = contextFor(lookup, options.restricted ?? false);
-  context.stack.push(
+  const key =
     typeof field === "object"
       ? `${entryId}|S:${fold(custom?.name ?? "")}`
-      : `${entryId}|${field}`,
-  );
-  let parts = text.includes("{") ? textParts(text, context) : [plain(text)];
+      : `${entryId}|${field}`;
+  context.stack.push(key);
+  const refs = tokenize(text).some((t) => t.kind === "ref");
+  let parts: Part[];
+  try {
+    parts = text.includes("{")
+      ? textParts(text, context, key)
+      : [piece(context, text)];
+  } catch (error) {
+    if (!(error instanceof TooComplex)) throw error;
+    // Too many references: the stored value, unresolved.
+    return {
+      value: text,
+      display: secret ? MASK : text,
+      secret,
+      refs,
+      warnings: ["too_complex"],
+    };
+  }
   if (secret) parts = mark(parts, "secret");
   return {
     value: join(parts),
     display: display(parts),
     secret: parts.some((p) => p.secret),
-    refs: tokenize(text).some((t) => t.kind === "ref"),
+    refs,
     warnings: warningsOf(context),
   };
 }
@@ -317,7 +380,13 @@ export function resolveUrl(
   if (!entry) return { ok: false, error: "invalid_url", warnings: [] };
   const context = contextFor(lookup, false);
   context.stack.push(`${entryId}|url`);
-  const result = urlParts(entryId, entry, context);
+  let result: UrlParts;
+  try {
+    result = urlParts(entryId, entry, context);
+  } catch (error) {
+    if (!(error instanceof TooComplex)) throw error;
+    return { ok: false, error: "too_complex", warnings: [] };
+  }
   const warnings = warningsOf(context);
   if (!result.ok) return { ok: false, error: result.error, warnings };
   return {

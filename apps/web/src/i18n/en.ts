@@ -320,6 +320,8 @@ const en: typeof de = {
     refWarning: {
       cycle: "Circular reference: a reference leads back to itself and stays.",
       missing: "A reference points to no entry of this database.",
+      too_complex:
+        "Too many references: the value is shown as stored, without resolving them.",
     },
   },
   totp: {
@@ -346,6 +348,8 @@ const en: typeof de = {
       invalid_host:
         "A value in the host name contains spaces or separators of a URL.",
       invalid_url: "The resolved URL is invalid and is not opened.",
+      too_complex:
+        "Too many references: the URL is not resolved and not opened.",
       scheme_forbidden:
         "This scheme is never opened, for security. Copying still works.",
       scheme_not_allowed:
