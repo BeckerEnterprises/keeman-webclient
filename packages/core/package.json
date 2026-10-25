@@ -1,0 +1,31 @@
+{
+  "name": "@keeman/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "KeeMan client core: crypto, data model, sync and API client. No Vue, no DOM.",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./argon2-worker": "./src/crypto/argon2-worker.ts",
+    "./kdbx-worker": "./src/kdbx/file/worker.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.src.json",
+    "test": "vitest run --coverage",
+    "test:keepassxc": "KEEMAN_REQUIRE_KEEPASSXC=1 vitest run test/kdbx/keepassxc.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "@vitest/coverage-v8": "5.0.5",
+    "typescript": "6.0.3",
+    "vitest": "5.0.5"
+  },
+  "dependencies": {
+    "fractional-indexing": "4.0.0",
+    "hash-wasm": "4.12.0",
+    "kdbxweb": "2.1.1",
+    "libsodium-wrappers-sumo": "0.8.4",
+    "valibot": "1.5.0"
+  }
+}

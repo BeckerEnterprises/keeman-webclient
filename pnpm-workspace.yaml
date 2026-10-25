@@ -1,0 +1,22 @@
+packages:
+  - packages/*
+  - apps/*
+
+# Supply-chain hardening: only install package versions that have been public
+# for at least 7 days, and refuse versions whose publishing trust level dropped.
+minimumReleaseAge: 10080
+# Security fixes are taken at once (GHSA-834v-8h66-3h79, happy-dom).
+minimumReleaseAgeExclude:
+  - happy-dom@21.0.4
+trustPolicy: no-downgrade
+
+# Dependency install scripts are blocked unless reviewed and listed here.
+allowBuilds: {}
+
+overrides:
+  # kdbxweb 2.1.1 asks for ^0.7.4; the 0.7 line has unfixed advisories. The 0.8
+  # LTS line keeps the API kdbxweb uses (DOMParser, XMLSerializer).
+  "kdbxweb>@xmldom/xmldom": 0.8.15
+
+patchedDependencies:
+  kdbxweb@2.1.1: patches/kdbxweb@2.1.1.patch

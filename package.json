@@ -1,0 +1,28 @@
+{
+  "name": "keeman-webclient",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "packageManager": "pnpm@12.13.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm audit --audit-level high",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.12.0",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-vue": "10.11.1",
+    "globals": "17.13.0",
+    "prettier": "3.9.10",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "8.71.2"
+  }
+}

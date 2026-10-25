@@ -1,0 +1,391 @@
+/**
+ * Sharing: two accounts share a database and edit it, a
+ * removed member reads nothing new, a substituted public key is detected on
+ * both sides, a database over 20 MiB gets a new key, and declining,
+ * withdrawing, roles and leaving work. Test data only.
+ */
+import { generateKeyPairSync } from "node:crypto";
+import { emptyDraft, type SyncEngine } from "@keeman/core";
+import type { Page } from "@playwright/test";
+import {
+  createAccount,
+  createAccountWithVault,
+  entryRow,
+  loginViaUi,
+  nodeDevice,
+  openAccount,
+  openDatabases,
+  openVault,
+  rootOf,
+  unlockViaUi,
+  type NodeDevice,
+} from "./helpers";
+import { expect, test } from "./fixtures";
+
+/** An X25519 public key nobody verified, as the server could slip it in. */
+function attackerKey(): string {
+  const { publicKey } = generateKeyPairSync("x25519");
+  const der = publicKey.export({ format: "der", type: "spki" });
+  return der.subarray(der.length - 32).toString("base64url");
+}
+
+async function openDatabasePage(page: Page, vaultId: string): Promise<void> {
+  await openDatabases(page);
+  await page
+    .locator(`[data-test=vault][data-vault-id="${vaultId}"]`)
+    .getByTestId("vault-settings")
+    .click();
+  await expect(page.getByTestId("database-view")).toBeVisible();
+}
+
+/** The host verifies and invites, the guest verifies and accepts (Node). */
+async function shareNode(
+  host: NodeDevice,
+  guest: NodeDevice,
+  guestEmail: string,
+  vaultId: string,
+): Promise<void> {
+  const candidate = await host.engine.lookupUser(guestEmail);
+  if (candidate.status !== "verified")
+    await host.account.verifyContact(candidate);
+  await host.engine.invite(vaultId, candidate);
+  await guest.engine.refresh();
+  const sender = guest.engine.snapshot.invitations.find(
+    (i) => i.vaultId === vaultId,
+  )?.sender;
+  if (!sender) throw new Error("invitation missing");
+  if (sender.status !== "verified") await guest.account.verifyContact(sender);
+  await guest.engine.acceptInvitation(vaultId);
+}
+
+function view(engine: SyncEngine, vaultId: string) {
+  const found = engine.snapshot.vaults.find((v) => v.id === vaultId);
+  if (!found) throw new Error("vault missing");
+  return found;
+}
+
+test.describe("sharing", () => {
+  test("two accounts share a database and edit it together", async ({
+    page,
+    otherContext,
+    guard,
+  }) => {
+    const alice = await createAccountWithVault("share-a");
+    const bob = await createAccount("share-b");
+    guard.secrets.push(alice.password, bob.password);
+    const second = await otherContext.newPage();
+    await loginViaUi(second, bob);
+    await openAccount(second, "contacts");
+    const bobFingerprint =
+      (await second.getByTestId("own-fingerprint").textContent())?.trim() ?? "";
+    expect(bobFingerprint).toMatch(/^([0-9A-F]{4} ){9}[0-9A-F]{4}$/);
+
+    await loginViaUi(page, alice);
+    await openAccount(page, "contacts");
+    const aliceFingerprint =
+      (await page.getByTestId("own-fingerprint").textContent())?.trim() ?? "";
+    await openDatabasePage(page, alice.vaultId);
+    await page.getByTestId("invite-email").fill(bob.email);
+    await page.getByTestId("invite-submit").click();
+    const dialog = page.getByTestId("fingerprint-dialog");
+    await expect(dialog.getByTestId("fingerprint-other")).toHaveText(
+      bobFingerprint,
+    );
+    await expect(dialog.getByTestId("fingerprint-own")).toHaveText(
+      aliceFingerprint,
+    );
+    await dialog.getByTestId("fingerprint-confirm").click();
+    await expect(page.getByTestId("members-invited")).toBeVisible();
+    await expect(page.getByTestId("member")).toHaveCount(2);
+
+    // Bob compares Alice's fingerprint and accepts in the banner.
+    const banner = second.getByTestId("banner-invitation");
+    await expect(banner).toContainText(alice.email);
+    await expect(banner).toContainText("Persönlich");
+    await banner.getByTestId("invitation-accept").click();
+    const check = second.getByTestId("fingerprint-dialog");
+    await expect(check.getByTestId("fingerprint-other")).toHaveText(
+      aliceFingerprint,
+    );
+    await check.getByTestId("fingerprint-confirm").click();
+    await expect(banner).toHaveCount(0);
+    await second.getByTestId("nav-entries").click();
+    await openVault(second, "Persönlich");
+
+    // Alice adds an entry; Bob sees it within 2 seconds.
+    await page.getByTestId("nav-entries").click();
+    await openVault(page, "Persönlich");
+    await page.getByTestId("new-entry").click();
+    await page.getByTestId("editor-title").fill("Gemeinsam");
+    await page.getByTestId("editor-save").click();
+    await expect(entryRow(second, "Gemeinsam")).toBeVisible({ timeout: 2000 });
+
+    // Both edit at the same time, different fields: both changes stay.
+    await page.getByTestId("entry-detail").getByTestId("detail-edit").click();
+    await entryRow(second, "Gemeinsam").click();
+    await second.getByTestId("entry-detail").getByTestId("detail-edit").click();
+    await second.getByTestId("editor-username").fill("bob-user");
+    await second.getByTestId("editor-save").click();
+    await expect(
+      second.getByTestId("entry-detail").getByTestId("detail-username-value"),
+    ).toHaveText("bob-user");
+    await page.getByTestId("editor-url").fill("https://example.com/gemeinsam");
+    await page.getByTestId("editor-save").click();
+    const detail = page.getByTestId("entry-detail");
+    await expect(detail.getByTestId("detail-username-value")).toHaveText(
+      "bob-user",
+      { timeout: 2000 },
+    );
+    await expect(
+      second.getByTestId("entry-detail").getByTestId("detail-url"),
+    ).toContainText("example.com/gemeinsam", { timeout: 2000 });
+    // "By whom" shows the contact's address.
+    await expect(second.getByTestId("entry-detail")).toContainText(alice.email);
+  });
+
+  test("a removed member reads nothing new; verified members get the key", async ({
+    page,
+    otherContext,
+  }) => {
+    test.slow();
+    const alice = await createAccountWithVault("rot-a");
+    const bob = await createAccount("rot-b");
+    const carol = await createAccount("rot-c");
+    const dave = await createAccount("rot-d");
+    const [bobDevice, carolDevice, daveDevice] = await Promise.all([
+      nodeDevice(bob),
+      nodeDevice(carol),
+      nodeDevice(dave),
+    ]);
+    for (const [device, email] of [
+      [bobDevice, bob.email],
+      [carolDevice, carol.email],
+      [daveDevice, dave.email],
+    ] as const)
+      await shareNode(alice.device, device, email, alice.vaultId);
+    // Dave no longer counts Alice as verified.
+    await daveDevice.account.removeContact(alice.device.account.userId ?? "");
+    // What Carol's device saw before her removal, for a lying server later.
+    const carolList = await carolDevice.api.vaults();
+
+    await loginViaUi(page, alice);
+    await openDatabasePage(page, alice.vaultId);
+    await page
+      .getByTestId("member")
+      .filter({ hasText: carol.email })
+      .getByTestId("member-remove")
+      .click();
+    const rotation = page.getByTestId("rotation-dialog");
+    await expect(rotation.getByTestId("rotation-recipient")).toHaveCount(3);
+    await rotation.getByTestId("rotation-run").click();
+    await expect(rotation.getByTestId("rotation-done")).toBeVisible({
+      timeout: 60_000,
+    });
+    await rotation.getByTestId("rotation-close").click();
+    await expect(page.getByTestId("member")).toHaveCount(3);
+
+    // Bob verified Alice: the new key is taken without asking; Dave waits.
+    await bobDevice.engine.refresh();
+    expect(view(bobDevice.engine, alice.vaultId).keyStatus).toBe("ok");
+    await daveDevice.engine.refresh();
+    expect(view(daveDevice.engine, alice.vaultId).keyStatus).toBe("pending");
+    // Carol has lost the database.
+    await expect(
+      carolDevice.api.changes(alice.vaultId, 0),
+    ).rejects.toMatchObject({ status: 404 });
+
+    // Alice writes after the renewal.
+    await alice.device.engine.refresh();
+    await alice.device.engine.createEntry(
+      alice.vaultId,
+      rootOf(alice.device, alice.vaultId),
+      { ...emptyDraft(), title: "Nach der Erneuerung" },
+    );
+    await bobDevice.engine.pull(alice.vaultId);
+    expect(
+      [...view(bobDevice.engine, alice.vaultId).entries.values()].map(
+        (e) => e.title,
+      ),
+    ).toContain("Nach der Erneuerung");
+
+    // A lying server keeps Carol in the database and serves Alice's data:
+    // nothing decrypts, the new title never appears.
+    const second = await otherContext.newPage();
+    await second.routeWebSocket(/\/v1\/events$/, () => undefined);
+    await second.route("**/v1/vaults", (route) =>
+      route.fulfill({ json: { vaults: carolList } }),
+    );
+    await second.route(
+      `**/v1/vaults/${alice.vaultId}/changes**`,
+      async (route) => {
+        const url = new URL(route.request().url());
+        const page_ = await alice.device.api.changes(
+          alice.vaultId,
+          Number(url.searchParams.get("since")),
+          url.searchParams.get("cursor") ?? undefined,
+        );
+        await route.fulfill({ json: page_ });
+      },
+    );
+    await loginViaUi(second, carol);
+    await openDatabasePage(second, alice.vaultId);
+    await expect(second.getByTestId("corrupt-list")).toBeVisible();
+    await expect(second.getByTestId("corrupt").first()).toContainText(
+      "Schlüssel fehlt",
+    );
+    await expect(second.getByText("Nach der Erneuerung")).toHaveCount(0);
+  });
+
+  test("a substituted public key is detected on both sides", async ({
+    page,
+    otherContext,
+  }) => {
+    const alice = await createAccountWithVault("forge-a");
+    const bob = await createAccount("forge-b");
+    const bobDevice = await nodeDevice(bob);
+    const invites: string[] = [];
+    page.on("request", (request) => {
+      if (request.method() === "POST" && request.url().endsWith("/members"))
+        invites.push(request.url());
+    });
+    // The server names a wrong key for Bob: the fingerprint is not his.
+    await page.route("**/v1/users/lookup", async (route) => {
+      const response = await route.fetch();
+      const body = (await response.json()) as Record<string, unknown>;
+      body.public_key = attackerKey();
+      await route.fulfill({ response, json: body });
+    });
+    await loginViaUi(page, alice);
+    await openDatabasePage(page, alice.vaultId);
+    await page.getByTestId("invite-email").fill(bob.email);
+    await page.getByTestId("invite-submit").click();
+    const dialog = page.getByTestId("fingerprint-dialog");
+    await expect(dialog.getByTestId("fingerprint-other")).not.toHaveText(
+      bobDevice.account.ownFingerprint ?? "",
+    );
+    await dialog.getByTestId("fingerprint-cancel").click();
+    expect(invites).toEqual([]);
+    await expect(page.getByTestId("member")).toHaveCount(1);
+    await page.unroute("**/v1/users/lookup");
+
+    // A wrong "own" key from the server ends in the integrity screen.
+    await page.route("**/v1/me", async (route) => {
+      const response = await route.fetch();
+      const body = (await response.json()) as Record<string, unknown>;
+      body.public_key = attackerKey();
+      await route.fulfill({ response, json: body });
+    });
+    await page.getByTestId("lock").click();
+    await unlockViaUi(page, alice.password);
+    await expect(page.getByText("Daten passen nicht zusammen")).toBeVisible();
+
+    // Bob knows Alice; the server substitutes her key on his side.
+    const aliceCandidate = await bobDevice.engine.lookupUser(alice.email);
+    await bobDevice.account.verifyContact(aliceCandidate);
+    const bobCandidate = await alice.device.engine.lookupUser(bob.email);
+    await alice.device.account.verifyContact(bobCandidate);
+    await alice.device.engine.invite(alice.vaultId, bobCandidate);
+    const second = await otherContext.newPage();
+    const accepts: string[] = [];
+    second.on("request", (request) => {
+      if (request.method() === "POST" && request.url().endsWith("/accept"))
+        accepts.push(request.url());
+    });
+    await second.route("**/v1/users/*/public-key", async (route) => {
+      const response = await route.fetch();
+      const body = (await response.json()) as Record<string, unknown>;
+      body.public_key = attackerKey();
+      await route.fulfill({ response, json: body });
+    });
+    await loginViaUi(second, bob);
+    const banner = second.getByTestId("banner-invitation");
+    await banner.getByTestId("invitation-accept").click();
+    const check = second.getByTestId("fingerprint-dialog");
+    await expect(check.getByTestId("fingerprint-warning")).toBeVisible();
+    await expect(check.getByTestId("fingerprint-other")).not.toHaveText(
+      aliceCandidate.fingerprint,
+    );
+    // Confirming anyway does not help: the box never opens.
+    await check.getByTestId("fingerprint-confirm").click();
+    await expect(second.getByTestId("error")).toContainText("nicht angenommen");
+    expect(accepts).toEqual([]);
+  });
+
+  test("renews the key of a database over 20 MiB", async ({ page }) => {
+    test.setTimeout(300_000);
+    const alice = await createAccountWithVault("big-a");
+    const bob = await createAccount("big-b");
+    const bobDevice = await nodeDevice(bob);
+    await shareNode(alice.device, bobDevice, bob.email, alice.vaultId);
+    const notes = "x".repeat(950_000);
+    for (let i = 0; i < 22; i++)
+      await alice.device.engine.createEntry(
+        alice.vaultId,
+        rootOf(alice.device, alice.vaultId),
+        {
+          ...emptyDraft(),
+          title: `Groß ${String(i)}`,
+          notes: `${notes}${String(i)}`,
+        },
+      );
+    await loginViaUi(page, alice);
+    await openDatabasePage(page, alice.vaultId);
+    await page.getByTestId("rotation-open").click();
+    const rotation = page.getByTestId("rotation-dialog");
+    await rotation.getByTestId("rotation-run").click();
+    await expect(rotation.getByTestId("rotation-done")).toBeVisible({
+      timeout: 240_000,
+    });
+    await bobDevice.engine.refresh();
+    expect(view(bobDevice.engine, alice.vaultId)).toMatchObject({
+      keyStatus: "ok",
+      vaultKeyVersion: 2,
+    });
+    expect(view(bobDevice.engine, alice.vaultId).entries.size).toBe(22);
+  });
+
+  test("declining, withdrawing, roles and leaving", async ({ page }) => {
+    const alice = await createAccountWithVault("roles-a");
+    const bob = await createAccount("roles-b");
+    const carol = await createAccount("roles-c");
+    const dave = await createAccount("roles-d");
+    const [bobDevice, daveDevice] = await Promise.all([
+      nodeDevice(bob),
+      nodeDevice(dave),
+    ]);
+    for (const email of [bob.email, carol.email]) {
+      const candidate = await alice.device.engine.lookupUser(email);
+      await alice.device.account.verifyContact(candidate);
+      await alice.device.engine.invite(alice.vaultId, candidate);
+    }
+    await shareNode(alice.device, daveDevice, dave.email, alice.vaultId);
+    await bobDevice.engine.refresh();
+    await bobDevice.engine.declineInvitation(alice.vaultId);
+
+    await loginViaUi(page, alice);
+    await openDatabasePage(page, alice.vaultId);
+    const members = page.getByTestId("member");
+    await expect(members).toHaveCount(3);
+    await members
+      .filter({ hasText: carol.email })
+      .getByTestId("member-withdraw")
+      .click();
+    await expect(members).toHaveCount(2);
+    const daveRow = members.filter({ hasText: dave.email });
+    await daveRow.getByTestId("member-role-toggle").click();
+    await expect(daveRow.getByTestId("member-role")).toHaveText("Eigentümer");
+    await daveDevice.engine.refresh();
+    expect(view(daveDevice.engine, alice.vaultId).role).toBe("owner");
+
+    // Dave leaves: Alice is asked to renew the key.
+    await daveDevice.engine.leaveVault(alice.vaultId);
+    await expect(page.getByTestId("banner-rotation-required")).toBeVisible();
+    await expect(page.getByTestId("members-rotation-required")).toBeVisible();
+    await page.getByTestId("rotation-open").click();
+    const rotation = page.getByTestId("rotation-dialog");
+    await rotation.getByTestId("rotation-run").click();
+    await expect(rotation.getByTestId("rotation-done")).toBeVisible();
+    await rotation.getByTestId("rotation-close").click();
+    await expect(page.getByTestId("banner-rotation-required")).toHaveCount(0);
+  });
+});

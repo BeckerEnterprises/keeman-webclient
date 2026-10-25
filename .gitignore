@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+apps/web/public/config.json
+test-results/
+playwright-report/
+.env
+.env.*

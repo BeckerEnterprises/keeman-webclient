@@ -1,0 +1,147 @@
+{
+  "vectors": "recovery-key",
+  "format_version": 1,
+  "generator": "@keeman/core 0.1.0, libsodium-wrappers-sumo 0.8.4",
+  "cases": [
+    {
+      "id": "format-tv",
+      "kind": "format",
+      "recovery_key_hex": "eb06ec71bc2e14c37afb4a92409aaf3f3aed2390b3f40e8d66af9bff3eda962e",
+      "expected": {
+        "base32": "5MDOY4N4FYKMG6X3JKJEBGVPH45O2I4QWP2A5DLGV6N76PW2SYXA",
+        "checksum": "5HER",
+        "display": "5MDO Y4N4 FYKM G6X3 JKJE BGVP H45O 2I4Q WP2A 5DLG V6N7 6PW2 SYXA 5HER",
+        "recovery_auth_key_hex": "68fb2fa1a30f6535edf3e508d386c2cbebbab41c065112dc70e3752c1ff23554",
+        "recovery_wrap_key_hex": "c8913d55e94b9f9722d1941cce3c65e6c350db1ae4b9532d356ed3827fde68cc"
+      }
+    },
+    {
+      "id": "format-all-zero",
+      "kind": "format",
+      "recovery_key_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "expected": {
+        "base32": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "checksum": "I7J4",
+        "display": "AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA I7J4",
+        "recovery_auth_key_hex": "5e50c4363f25da8090573c65a0ec4ea7bf4fc530b9a7d583bf79bd024415628a",
+        "recovery_wrap_key_hex": "d803e240956d03aa4fafbaa7423bed86a07af0358678bec15b9dbe7110414445"
+      }
+    },
+    {
+      "id": "format-all-ff",
+      "kind": "format",
+      "recovery_key_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "expected": {
+        "base32": "777777777777777777777777777777777777777777777777777Q",
+        "checksum": "RBOP",
+        "display": "7777 7777 7777 7777 7777 7777 7777 7777 7777 7777 7777 7777 777Q RBOP",
+        "recovery_auth_key_hex": "82cb0ee97ceae0e41d079fac26279d29119b96ea56ca4092324acd8589626f36",
+        "recovery_wrap_key_hex": "e5b17a4e21d6b5e17dd3f0c8e5fe03f8a32f93a998c9f336278d95e5cad1240c"
+      }
+    },
+    {
+      "id": "parse-display",
+      "kind": "parse",
+      "input": "5MDO Y4N4 FYKM G6X3 JKJE BGVP H45O 2I4Q WP2A 5DLG V6N7 6PW2 SYXA 5HER",
+      "expected": {
+        "recovery_key_hex": "eb06ec71bc2e14c37afb4a92409aaf3f3aed2390b3f40e8d66af9bff3eda962e"
+      }
+    },
+    {
+      "id": "parse-lowercase",
+      "kind": "parse",
+      "input": "5mdo y4n4 fykm g6x3 jkje bgvp h45o 2i4q wp2a 5dlg v6n7 6pw2 syxa 5her",
+      "expected": {
+        "recovery_key_hex": "eb06ec71bc2e14c37afb4a92409aaf3f3aed2390b3f40e8d66af9bff3eda962e"
+      }
+    },
+    {
+      "id": "parse-compact",
+      "kind": "parse",
+      "input": "5MDOY4N4FYKMG6X3JKJEBGVPH45O2I4QWP2A5DLGV6N76PW2SYXA5HER",
+      "expected": {
+        "recovery_key_hex": "eb06ec71bc2e14c37afb4a92409aaf3f3aed2390b3f40e8d66af9bff3eda962e"
+      }
+    },
+    {
+      "id": "parse-hyphens",
+      "kind": "parse",
+      "input": "5MDO-Y4N4-FYKM-G6X3-JKJE-BGVP-H45O-2I4Q-WP2A-5DLG-V6N7-6PW2-SYXA-5HER",
+      "expected": {
+        "recovery_key_hex": "eb06ec71bc2e14c37afb4a92409aaf3f3aed2390b3f40e8d66af9bff3eda962e"
+      }
+    },
+    {
+      "id": "parse-line-breaks-and-tabs",
+      "kind": "parse",
+      "input": "5MDOY4N4FYKMG6X3JKJEBGVPH45O\r\n2I4QWP2A5DLG\tV6N76PW2SYXA5HER",
+      "expected": {
+        "recovery_key_hex": "eb06ec71bc2e14c37afb4a92409aaf3f3aed2390b3f40e8d66af9bff3eda962e"
+      }
+    },
+    {
+      "id": "parse-invalid-typo",
+      "kind": "parse",
+      "input": "AMDOY4N4FYKMG6X3JKJEBGVPH45O2I4QWP2A5DLGV6N76PW2SYXA5HER",
+      "expected": {
+        "error": "validation"
+      }
+    },
+    {
+      "id": "parse-invalid-too-short",
+      "kind": "parse",
+      "input": "5MDOY4N4FYKMG6X3JKJEBGVPH45O2I4QWP2A5DLGV6N76PW2SYXA5HE",
+      "expected": {
+        "error": "validation"
+      }
+    },
+    {
+      "id": "parse-invalid-too-long",
+      "kind": "parse",
+      "input": "5MDOY4N4FYKMG6X3JKJEBGVPH45O2I4QWP2A5DLGV6N76PW2SYXA5HERA",
+      "expected": {
+        "error": "validation"
+      }
+    },
+    {
+      "id": "parse-invalid-digit-1",
+      "kind": "parse",
+      "input": "1MDOY4N4FYKMG6X3JKJEBGVPH45O2I4QWP2A5DLGV6N76PW2SYXA5HER",
+      "expected": {
+        "error": "validation"
+      }
+    },
+    {
+      "id": "parse-invalid-sharp-s",
+      "kind": "parse",
+      "input": "ßDOY4N4FYKMG6X3JKJEBGVPH45O2I4QWP2A5DLGV6N76PW2SYXA5HER",
+      "expected": {
+        "error": "validation"
+      }
+    },
+    {
+      "id": "parse-invalid-long-s",
+      "kind": "parse",
+      "input": "ſMDOY4N4FYKMG6X3JKJEBGVPH45O2I4QWP2A5DLGV6N76PW2SYXA5HER",
+      "expected": {
+        "error": "validation"
+      }
+    },
+    {
+      "id": "parse-invalid-non-canonical-fill-bits",
+      "kind": "parse",
+      "input": "5MDOY4N4FYKMG6X3JKJEBGVPH45O2I4QWP2A5DLGV6N76PW2SYXB5HER",
+      "expected": {
+        "error": "validation"
+      }
+    },
+    {
+      "id": "parse-invalid-missing-checksum",
+      "kind": "parse",
+      "input": "5MDOY4N4FYKMG6X3JKJEBGVPH45O2I4QWP2A5DLGV6N76PW2SYXA",
+      "expected": {
+        "error": "validation"
+      }
+    }
+  ]
+}

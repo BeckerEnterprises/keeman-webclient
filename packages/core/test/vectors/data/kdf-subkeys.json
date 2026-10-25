@@ -1,0 +1,75 @@
+{
+  "vectors": "kdf-subkeys",
+  "format_version": 1,
+  "generator": "@keeman/core 0.1.0, libsodium-wrappers-sumo 0.8.4",
+  "cases": [
+    {
+      "id": "keeman01-1",
+      "kind": "subkey",
+      "key_hex": "b28c14410afe078e8e295de77e2218ecc31de40734874ef4b32278e8af6484cd",
+      "context": "keeman01",
+      "subkey_id": 1,
+      "expected": {
+        "subkey_hex": "44e80ebc05a885688ab42dca8fd502b60335cd1029dd21ae980f1011486fa00b"
+      }
+    },
+    {
+      "id": "keeman01-2",
+      "kind": "subkey",
+      "key_hex": "b28c14410afe078e8e295de77e2218ecc31de40734874ef4b32278e8af6484cd",
+      "context": "keeman01",
+      "subkey_id": 2,
+      "expected": {
+        "subkey_hex": "19305a990c1682733028f4b9bad9fda619b3e983e55b530fabb4ce85a776ec07"
+      }
+    },
+    {
+      "id": "keemanRK-1",
+      "kind": "subkey",
+      "key_hex": "b28c14410afe078e8e295de77e2218ecc31de40734874ef4b32278e8af6484cd",
+      "context": "keemanRK",
+      "subkey_id": 1,
+      "expected": {
+        "subkey_hex": "63486e61a5ae946aac82c0e597b4d671261ea88d48b811472397b37d6f09c474"
+      }
+    },
+    {
+      "id": "keemanRK-2",
+      "kind": "subkey",
+      "key_hex": "b28c14410afe078e8e295de77e2218ecc31de40734874ef4b32278e8af6484cd",
+      "context": "keemanRK",
+      "subkey_id": 2,
+      "expected": {
+        "subkey_hex": "6ed82fbca6028fdbbc5d29e670eef4e1ccb779a7b10005063e6d37822d6cd45d"
+      }
+    },
+    {
+      "id": "keemanPF-1",
+      "kind": "subkey",
+      "key_hex": "b28c14410afe078e8e295de77e2218ecc31de40734874ef4b32278e8af6484cd",
+      "context": "keemanPF",
+      "subkey_id": 1,
+      "expected": {
+        "subkey_hex": "e84cdebc30e4b75d8848f381c47ce4a26740642919fb0067390be08d359a37ec"
+      }
+    },
+    {
+      "id": "keeman01-258",
+      "kind": "subkey",
+      "key_hex": "b28c14410afe078e8e295de77e2218ecc31de40734874ef4b32278e8af6484cd",
+      "context": "keeman01",
+      "subkey_id": 258,
+      "expected": {
+        "subkey_hex": "ca9fcfffaceac1dc8794d79b8ec9e735361de5acb0933ad65a4fa3d85aa399f5"
+      }
+    },
+    {
+      "id": "prf-eval-first",
+      "kind": "prf_eval_first",
+      "input": "keeman:v1:prf-unlock",
+      "expected": {
+        "hash_hex": "133161de60aa6a85fd4a72537cba2610e1c31aa71a584dc1b2e0553bf7199a14"
+      }
+    }
+  ]
+}

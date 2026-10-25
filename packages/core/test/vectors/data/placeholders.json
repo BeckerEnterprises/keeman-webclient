@@ -1,0 +1,1274 @@
+{
+  "vectors": "placeholders",
+  "format_version": 1,
+  "generator": "@keeman/core 0.1.0, libsodium-wrappers-sumo 0.8.4",
+  "cases": [
+    {
+      "id": "plain",
+      "description": "A URL without placeholders stays as typed, after trimming",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": "  https://example.com/login?a=b#top \n"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "https://example.com/login?a=b#top",
+        "display": "https://example.com/login?a=b#top",
+        "secret": false,
+        "warnings": [],
+        "open": null
+      }
+    },
+    {
+      "id": "all-positions",
+      "description": "Values with special characters in host, port, path, query and fragment",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "title": "Grüße & # ? / @ %",
+          "username": "alex@example.com/x",
+          "password": "p& # ? / @ %w",
+          "url": "https://{S:Host}:8443/a b/{USERNAME}?pw={PASSWORD}&x={S:Q}#{TITLE}",
+          "fields": [
+            {
+              "name": "Host",
+              "value": "203.0.113.10",
+              "protected": false
+            },
+            {
+              "name": "Q",
+              "value": "a & # ? / @ %=",
+              "protected": false
+            }
+          ]
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "https://203.0.113.10:8443/a b/alex@example.com/x?pw=p%26%20%23%20%3F%20%2F%20%40%20%25w&x=a%20%26%20%23%20%3F%20%2F%20%40%20%25%3D#Gr%C3%BC%C3%9Fe%20%26%20%23%20%3F%20%2F%20%40%20%25",
+        "display": "https://203.0.113.10:8443/a b/alex@example.com/x?pw=••••••&x=a%20%26%20%23%20%3F%20%2F%20%40%20%25%3D#Gr%C3%BC%C3%9Fe%20%26%20%23%20%3F%20%2F%20%40%20%25",
+        "secret": true,
+        "warnings": [],
+        "open": null
+      }
+    },
+    {
+      "id": "userinfo",
+      "description": "User info ends at the last `@` of the authority",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "username": "a:b@c",
+          "password": "p& # ? / @ %",
+          "url": "https://{USERNAME}:{PASSWORD}@{S:Host}:{S:Port}/",
+          "fields": [
+            {
+              "name": "Host",
+              "value": "example.com",
+              "protected": false
+            },
+            {
+              "name": "Port",
+              "value": "8443",
+              "protected": false
+            }
+          ]
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "https://a%3Ab%40c:p%26%20%23%20%3F%20%2F%20%40%20%25@example.com:8443/",
+        "display": "https://a%3Ab%40c:••••••@example.com:8443/",
+        "secret": true,
+        "warnings": [],
+        "open": null
+      }
+    },
+    {
+      "id": "path-slashes",
+      "description": "Slashes, colons and `@` stay in the path",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": "https://example.com/files/{S:Path}",
+          "fields": [
+            {
+              "name": "Path",
+              "value": "a/b:c@d e& # ? / @ %f",
+              "protected": false
+            }
+          ]
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "https://example.com/files/a/b:c@d%20e%26%20%23%20%3F%20/%20@%20%25f",
+        "display": "https://example.com/files/a/b:c@d%20e%26%20%23%20%3F%20/%20@%20%25f",
+        "secret": false,
+        "warnings": [],
+        "open": null
+      }
+    },
+    {
+      "id": "fragment-question-mark",
+      "description": "A `?` after the `#` belongs to the fragment",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "username": "u& # ? / @ %",
+          "url": "https://example.com/#a?{USERNAME}"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "https://example.com/#a?u%26%20%23%20%3F%20%2F%20%40%20%25",
+        "display": "https://example.com/#a?u%26%20%23%20%3F%20%2F%20%40%20%25",
+        "secret": false,
+        "warnings": [],
+        "open": null
+      }
+    },
+    {
+      "id": "ipv6-host",
+      "description": "Host values are inserted raw",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": "https://[{S:Host}]:8443/",
+          "fields": [
+            {
+              "name": "Host",
+              "value": "2001:db8::1",
+              "protected": false
+            }
+          ]
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "https://[2001:db8::1]:8443/",
+        "display": "https://[2001:db8::1]:8443/",
+        "secret": false,
+        "warnings": [],
+        "open": null
+      }
+    },
+    {
+      "id": "host-slash",
+      "description": "Host value `evil.example/x` is rejected",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": "https://{S:Host}/login",
+          "fields": [
+            {
+              "name": "Host",
+              "value": "evil.example/x",
+              "protected": false
+            }
+          ]
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "error": "invalid_host",
+        "warnings": []
+      }
+    },
+    {
+      "id": "host-space",
+      "description": "Host value `a b` is rejected",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": "https://{S:Host}/login",
+          "fields": [
+            {
+              "name": "Host",
+              "value": "a b",
+              "protected": false
+            }
+          ]
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "error": "invalid_host",
+        "warnings": []
+      }
+    },
+    {
+      "id": "host-at",
+      "description": "Host value `user@evil.example` is rejected",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": "https://{S:Host}/login",
+          "fields": [
+            {
+              "name": "Host",
+              "value": "user@evil.example",
+              "protected": false
+            }
+          ]
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "error": "invalid_host",
+        "warnings": []
+      }
+    },
+    {
+      "id": "host-hash",
+      "description": "Host value `a#b` is rejected",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": "https://{S:Host}/login",
+          "fields": [
+            {
+              "name": "Host",
+              "value": "a#b",
+              "protected": false
+            }
+          ]
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "error": "invalid_host",
+        "warnings": []
+      }
+    },
+    {
+      "id": "no-scheme",
+      "description": "Without a scheme, `https://` comes first",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "username": "alex",
+          "url": "example.com/{USERNAME}"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "https://example.com/alex",
+        "display": "https://example.com/alex",
+        "secret": false,
+        "warnings": [],
+        "open": null
+      }
+    },
+    {
+      "id": "no-scheme-port",
+      "description": "`example.com:8080` is a host with port, no scheme",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": "example.com:8080/x"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "https://example.com:8080/x",
+        "display": "https://example.com:8080/x",
+        "secret": false,
+        "warnings": [],
+        "open": null
+      }
+    },
+    {
+      "id": "no-scheme-placeholder-host",
+      "description": "A placeholder at the start is the host",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "title": "a b",
+          "url": "{S:Host}/path?{TITLE}",
+          "fields": [
+            {
+              "name": "Host",
+              "value": "203.0.113.10",
+              "protected": false
+            }
+          ]
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "https://203.0.113.10/path?a%20b",
+        "display": "https://203.0.113.10/path?a%20b",
+        "secret": false,
+        "warnings": [],
+        "open": null
+      }
+    },
+    {
+      "id": "mailto",
+      "description": "`mailto:` before a placeholder is a scheme; no `//`: path",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "username": "a b@example.com",
+          "url": "mailto:{USERNAME}"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "mailto:a%20b@example.com",
+        "display": "mailto:a%20b@example.com",
+        "secret": false,
+        "warnings": [],
+        "open": "scheme_not_allowed"
+      }
+    },
+    {
+      "id": "ssh-not-allowed",
+      "description": "`ssh` is not in the default list",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "username": "root",
+          "url": "ssh://{USERNAME}@203.0.113.10:22"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "ssh://root@203.0.113.10:22",
+        "display": "ssh://root@203.0.113.10:22",
+        "secret": false,
+        "warnings": [],
+        "open": "scheme_not_allowed"
+      }
+    },
+    {
+      "id": "ssh-allowed",
+      "description": "`ssh` after extending the list",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "username": "root",
+          "url": "ssh://{USERNAME}@203.0.113.10:22"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "allowed_schemes": [
+        "http",
+        "https",
+        "ssh"
+      ],
+      "expected": {
+        "url": "ssh://root@203.0.113.10:22",
+        "display": "ssh://root@203.0.113.10:22",
+        "secret": false,
+        "warnings": [],
+        "open": null
+      }
+    },
+    {
+      "id": "single-placeholder",
+      "description": "A single placeholder is taken unencoded",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": "{S:Link}",
+          "fields": [
+            {
+              "name": "Link",
+              "value": "https://x.example/?a=b c&d#e",
+              "protected": false
+            }
+          ]
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "https://x.example/?a=b c&d#e",
+        "display": "https://x.example/?a=b c&d#e",
+        "secret": false,
+        "warnings": [],
+        "open": null
+      }
+    },
+    {
+      "id": "single-placeholder-no-scheme",
+      "description": "… and gets `https://` if needed",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": " {s:link} ",
+          "fields": [
+            {
+              "name": "Link",
+              "value": "x.example/a b",
+              "protected": false
+            }
+          ]
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "https://x.example/a b",
+        "display": "https://x.example/a b",
+        "secret": false,
+        "warnings": [],
+        "open": null
+      }
+    },
+    {
+      "id": "single-placeholder-javascript",
+      "description": "A `javascript:` value is resolved, but never opened",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": "{S:Link}",
+          "fields": [
+            {
+              "name": "Link",
+              "value": "javascript:alert(document.cookie)",
+              "protected": false
+            }
+          ]
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "allowed_schemes": [
+        "http",
+        "https",
+        "javascript"
+      ],
+      "expected": {
+        "url": "javascript:alert(document.cookie)",
+        "display": "javascript:alert(document.cookie)",
+        "secret": false,
+        "warnings": [],
+        "open": "scheme_forbidden"
+      }
+    },
+    {
+      "id": "data-template",
+      "description": "`data:` is forbidden",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "title": "<b>x</b>",
+          "url": "data:text/html,{TITLE}"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "data:text/html,%3Cb%3Ex%3C/b%3E",
+        "display": "data:text/html,%3Cb%3Ex%3C/b%3E",
+        "secret": false,
+        "warnings": [],
+        "open": "scheme_forbidden"
+      }
+    },
+    {
+      "id": "case-insensitive",
+      "description": "Placeholders and schemes ignore case",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "username": "Alex",
+          "url": "HTTPS://{s:HOST}/{username}/{S:strasse}",
+          "fields": [
+            {
+              "name": "host",
+              "value": "example.com",
+              "protected": false
+            },
+            {
+              "name": "Straße",
+              "value": "1 a",
+              "protected": false
+            }
+          ]
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "HTTPS://example.com/Alex/1%20a",
+        "display": "HTTPS://example.com/Alex/1%20a",
+        "secret": false,
+        "warnings": [],
+        "open": null
+      }
+    },
+    {
+      "id": "first-field-wins",
+      "description": "With duplicate names the first field counts",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": "https://{S:Host}/",
+          "fields": [
+            {
+              "name": "Host",
+              "value": "first.example",
+              "protected": false
+            },
+            {
+              "name": "HOST",
+              "value": "second.example",
+              "protected": false
+            }
+          ]
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "https://first.example/",
+        "display": "https://first.example/",
+        "secret": false,
+        "warnings": [],
+        "open": null
+      }
+    },
+    {
+      "id": "unknown",
+      "description": "Unknown placeholders and stray braces stay",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "username": "d",
+          "url": "https://example.com/{{USERNAME}}{FOO}{S:Nope}"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "https://example.com/{d}{FOO}{S:Nope}",
+        "display": "https://example.com/{d}{FOO}{S:Nope}",
+        "secret": false,
+        "warnings": [
+          "missing"
+        ],
+        "open": null
+      }
+    },
+    {
+      "id": "url-cycle",
+      "description": "`{URL}` in the URL is a cycle",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": "https://example.com/{URL}"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "https://example.com/{URL}",
+        "display": "https://example.com/{URL}",
+        "secret": false,
+        "warnings": [
+          "cycle"
+        ],
+        "open": null
+      }
+    },
+    {
+      "id": "notes",
+      "description": "Notes are encoded, not secret",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "notes": "a&b\nc",
+          "url": "https://example.com/?n={NOTES}"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "https://example.com/?n=a%26b%0Ac",
+        "display": "https://example.com/?n=a%26b%0Ac",
+        "secret": false,
+        "warnings": [],
+        "open": null
+      }
+    },
+    {
+      "id": "secret-run",
+      "description": "Adjacent secret parts are masked once",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "password": "pw",
+          "url": "https://example.com/?k={PASSWORD}{S:Pin}&x=1",
+          "fields": [
+            {
+              "name": "Pin",
+              "value": "1234",
+              "protected": true
+            }
+          ]
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "https://example.com/?k=pw1234&x=1",
+        "display": "https://example.com/?k=••••••&x=1",
+        "secret": true,
+        "warnings": [],
+        "open": null
+      }
+    },
+    {
+      "id": "empty-password",
+      "description": "An empty password is still secret",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": "https://example.com/?pw={PASSWORD}"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "https://example.com/?pw=",
+        "display": "https://example.com/?pw=••••••",
+        "secret": true,
+        "warnings": [],
+        "open": null
+      }
+    },
+    {
+      "id": "ref-url-whole",
+      "description": "`{REF:A}` alone: the target's URL in its context",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": "{REF:A@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e02": {
+          "username": "bob",
+          "url": "https://b.example/{USERNAME}"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "https://b.example/bob",
+        "display": "https://b.example/bob",
+        "secret": false,
+        "warnings": [],
+        "open": null
+      }
+    },
+    {
+      "id": "ref-url-secret",
+      "description": "A secret `{REF:A}` is masked as a whole",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": "https://a.example/?next={REF:A@I:0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e02}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e02": {
+          "password": "pw",
+          "url": "b.example/{PASSWORD}"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "https://a.example/?next=https%3A%2F%2Fb.example%2Fpw",
+        "display": "https://a.example/?next=••••••",
+        "secret": true,
+        "warnings": [],
+        "open": null
+      }
+    },
+    {
+      "id": "ref-username-path",
+      "description": "`{REF:U}` in the path",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": "https://a.example/{REF:U@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e02": {
+          "username": "x/y z"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "https://a.example/x/y%20z",
+        "display": "https://a.example/x/y%20z",
+        "secret": false,
+        "warnings": [],
+        "open": null
+      }
+    },
+    {
+      "id": "ref-missing",
+      "description": "A REF to an unknown entry stays",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": "https://a.example/{REF:U@I:0192B3A45C6D7E8F9A0B1C2D3E4F5EFF}"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "url": "https://a.example/{REF:U@I:0192B3A45C6D7E8F9A0B1C2D3E4F5EFF}",
+        "display": "https://a.example/{REF:U@I:0192B3A45C6D7E8F9A0B1C2D3E4F5EFF}",
+        "secret": false,
+        "warnings": [
+          "missing"
+        ],
+        "open": null
+      }
+    },
+    {
+      "id": "ref-url-cycle",
+      "description": "A → B → A over `{REF:A}`",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": "{REF:A@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e02": {
+          "url": "{REF:A@I:0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01}"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "error": "invalid_url",
+        "warnings": [
+          "cycle",
+          "missing"
+        ]
+      }
+    },
+    {
+      "id": "placeholder-in-scheme",
+      "description": "The scheme must be text",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": "{S:Proto}://example.com",
+          "fields": [
+            {
+              "name": "Proto",
+              "value": "https",
+              "protected": false
+            }
+          ]
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "error": "placeholder_in_scheme",
+        "warnings": []
+      }
+    },
+    {
+      "id": "placeholder-before-scheme-text",
+      "description": "Any `://` after a placeholder",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "title": "example.com",
+          "url": "{TITLE}/x?to=https://y"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "error": "placeholder_in_scheme",
+        "warnings": []
+      }
+    },
+    {
+      "id": "invalid-port",
+      "description": "A port value that is not a number",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": "https://example.com:{S:Port}/",
+          "fields": [
+            {
+              "name": "Port",
+              "value": "80a",
+              "protected": false
+            }
+          ]
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "error": "invalid_url",
+        "warnings": []
+      }
+    },
+    {
+      "id": "empty",
+      "description": "An empty template is no URL",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": " "
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "error": "invalid_url",
+        "warnings": []
+      }
+    },
+    {
+      "id": "lone-surrogate",
+      "description": "Values that are not valid Unicode",
+      "kind": "url",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "username": "\ud800",
+          "url": "https://example.com/?u={USERNAME}"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "expected": {
+        "error": "invalid_url",
+        "warnings": []
+      }
+    },
+    {
+      "id": "ref-chain",
+      "description": "REF over two entries",
+      "kind": "text",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "username": "{REF:U@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02} (copy)"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e02": {
+          "username": "{REF:U@I:0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e03}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e03": {
+          "username": "carol"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "field": "username",
+      "restricted": false,
+      "expected": {
+        "value": "carol (copy)",
+        "display": "carol (copy)",
+        "secret": false,
+        "refs": true,
+        "warnings": []
+      }
+    },
+    {
+      "id": "ref-password",
+      "description": "`{REF:P}` is secret",
+      "kind": "text",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "username": "{REF:P@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e02": {
+          "password": "s& # ? / @ %"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "field": "username",
+      "restricted": false,
+      "expected": {
+        "value": "s& # ? / @ %",
+        "display": "••••••",
+        "secret": true,
+        "refs": true,
+        "warnings": []
+      }
+    },
+    {
+      "id": "password-field",
+      "description": "The password field is secret",
+      "kind": "text",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "password": "x{REF:U@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e02": {
+          "username": "bob"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "field": "password",
+      "restricted": false,
+      "expected": {
+        "value": "xbob",
+        "display": "••••••",
+        "secret": true,
+        "refs": true,
+        "warnings": []
+      }
+    },
+    {
+      "id": "protected-field",
+      "description": "Protected fields are secret",
+      "kind": "text",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "fields": [
+            {
+              "name": "Pin",
+              "value": "{REF:T@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}",
+              "protected": true
+            }
+          ]
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e02": {
+          "title": "1234"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "field": {
+        "custom": 0
+      },
+      "restricted": false,
+      "expected": {
+        "value": "1234",
+        "display": "••••••",
+        "secret": true,
+        "refs": true,
+        "warnings": []
+      }
+    },
+    {
+      "id": "ref-notes-url",
+      "description": "`{REF:N}` and `{REF:A}` in a field",
+      "kind": "text",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "fields": [
+            {
+              "name": "Info",
+              "value": "{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02} {REF:A@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}",
+              "protected": false
+            }
+          ]
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e02": {
+          "notes": "line 1\nline 2",
+          "url": "b.example"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "field": {
+        "custom": 0
+      },
+      "restricted": false,
+      "expected": {
+        "value": "line 1\nline 2 https://b.example",
+        "display": "line 1\nline 2 https://b.example",
+        "secret": false,
+        "refs": true,
+        "warnings": []
+      }
+    },
+    {
+      "id": "lowercase-ref",
+      "description": "REF ignores case, also in the ID",
+      "kind": "text",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "title": "{ref:t@i:0192b3a45c6d7e8f9a0b1c2d3e4f5e02}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e02": {
+          "title": "Bee"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "field": "title",
+      "restricted": false,
+      "expected": {
+        "value": "Bee",
+        "display": "Bee",
+        "secret": false,
+        "refs": true,
+        "warnings": []
+      }
+    },
+    {
+      "id": "other-placeholders",
+      "description": "Only REF is resolved in values",
+      "kind": "text",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "notes": "{USERNAME} {REF:T@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}",
+          "username": "u"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e02": {
+          "title": "{PASSWORD}"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "field": "notes",
+      "restricted": false,
+      "expected": {
+        "value": "{USERNAME} {PASSWORD}",
+        "display": "{USERNAME} {PASSWORD}",
+        "secret": false,
+        "refs": true,
+        "warnings": []
+      }
+    },
+    {
+      "id": "missing-and-cycle",
+      "description": "Missing targets and cycles stay",
+      "kind": "text",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B1C2D3E4F5EFF}/{REF:T@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e02": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E01}"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "field": "title",
+      "restricted": false,
+      "expected": {
+        "value": "{REF:T@I:0192B3A45C6D7E8F9A0B1C2D3E4F5EFF}/{REF:T@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E01}",
+        "display": "{REF:T@I:0192B3A45C6D7E8F9A0B1C2D3E4F5EFF}/{REF:T@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E01}",
+        "secret": false,
+        "refs": true,
+        "warnings": [
+          "cycle",
+          "missing"
+        ]
+      }
+    },
+    {
+      "id": "no-refs",
+      "description": "Text without REF",
+      "kind": "text",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "title": "{x} {TITLE}"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "field": "title",
+      "restricted": false,
+      "expected": {
+        "value": "{x} {TITLE}",
+        "display": "{x} {TITLE}",
+        "secret": false,
+        "refs": false,
+        "warnings": []
+      }
+    },
+    {
+      "id": "depth-10",
+      "description": "10 nested references",
+      "kind": "text",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000000}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-000000000000": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000001}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-000000000001": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000002}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-000000000002": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000003}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-000000000003": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000004}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-000000000004": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000005}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-000000000005": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000006}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-000000000006": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000007}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-000000000007": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000008}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-000000000008": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000009}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-000000000009": {
+          "title": "end"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "field": "title",
+      "restricted": false,
+      "expected": {
+        "value": "end",
+        "display": "end",
+        "secret": false,
+        "refs": true,
+        "warnings": []
+      }
+    },
+    {
+      "id": "depth-11",
+      "description": "11 nested references",
+      "kind": "text",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000000}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-000000000000": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000001}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-000000000001": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000002}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-000000000002": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000003}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-000000000003": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000004}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-000000000004": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000005}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-000000000005": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000006}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-000000000006": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000007}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-000000000007": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000008}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-000000000008": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000009}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-000000000009": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000010}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-000000000010": {
+          "title": "end"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "field": "title",
+      "restricted": false,
+      "expected": {
+        "value": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000010}",
+        "display": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000010}",
+        "secret": false,
+        "refs": true,
+        "warnings": [
+          "cycle"
+        ]
+      }
+    },
+    {
+      "id": "list-title",
+      "description": "Lists resolve only T, U and A",
+      "kind": "text",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "title": "{REF:T@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}|{REF:U@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}|{REF:P@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}|{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}|{REF:A@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e02": {
+          "title": "t",
+          "username": "u",
+          "password": "p",
+          "notes": "n",
+          "url": "https://b.example/{USERNAME}"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "field": "title",
+      "restricted": true,
+      "expected": {
+        "value": "t|u|{REF:P@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}|{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}|https://b.example/u",
+        "display": "t|u|{REF:P@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}|{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}|https://b.example/u",
+        "secret": false,
+        "refs": true,
+        "warnings": []
+      }
+    },
+    {
+      "id": "list-url-secret",
+      "description": "Lists keep an A that is secret",
+      "kind": "text",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": "{REF:A@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e02": {
+          "title": "t",
+          "username": "u",
+          "password": "p",
+          "notes": "n",
+          "url": "https://b.example/{PASSWORD}"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "field": "url",
+      "restricted": true,
+      "expected": {
+        "value": "{REF:A@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}",
+        "display": "{REF:A@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}",
+        "secret": false,
+        "refs": true,
+        "warnings": []
+      }
+    },
+    {
+      "id": "list-url-notes",
+      "description": "Lists keep an A that uses notes",
+      "kind": "text",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "url": "{REF:A@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e02": {
+          "title": "t",
+          "username": "u",
+          "password": "p",
+          "notes": "n",
+          "url": "https://b.example/{REF:N@I:0192b3a45c6d7e8f9a0b1c2d3e4f5e02}"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "field": "url",
+      "restricted": true,
+      "expected": {
+        "value": "{REF:A@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}",
+        "display": "{REF:A@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}",
+        "secret": false,
+        "refs": true,
+        "warnings": []
+      }
+    },
+    {
+      "id": "detail-url-notes",
+      "description": "The detail resolves the same A",
+      "kind": "text",
+      "entries": {
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01": {
+          "username": "{REF:A@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}"
+        },
+        "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e02": {
+          "title": "t",
+          "username": "u",
+          "password": "p",
+          "notes": "n",
+          "url": "https://b.example/{NOTES}"
+        }
+      },
+      "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
+      "field": "username",
+      "restricted": false,
+      "expected": {
+        "value": "https://b.example/n",
+        "display": "https://b.example/n",
+        "secret": false,
+        "refs": true,
+        "warnings": []
+      }
+    }
+  ]
+}

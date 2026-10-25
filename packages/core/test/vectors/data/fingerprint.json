@@ -1,0 +1,39 @@
+{
+  "vectors": "fingerprint",
+  "format_version": 1,
+  "generator": "@keeman/core 0.1.0, libsodium-wrappers-sumo 0.8.4",
+  "cases": [
+    {
+      "id": "alice",
+      "public_key_hex": "eb37e02d15f4bf6201ace34a6553773e67fa23c33d9b125b529977e361176d6c",
+      "expected": {
+        "fingerprint_hex": "072EFC2573579BA4CDAD41D9E6E18051803E8520C5C43864CEEA78EE14974A01",
+        "display": "072E FC25 7357 9BA4 CDAD 41D9 E6E1 8051 803E 8520"
+      }
+    },
+    {
+      "id": "bob",
+      "public_key_hex": "8a4e83f509464ed1f71f39377b243dfb571d0efef01c6844326e38b2b8a89c71",
+      "expected": {
+        "fingerprint_hex": "D5471658BB4876F2E4D8368A45FC8A0D57C970CBD39F6D84A2B1EF47106DCF27",
+        "display": "D547 1658 BB48 76F2 E4D8 368A 45FC 8A0D 57C9 70CB"
+      }
+    },
+    {
+      "id": "zero",
+      "public_key_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "expected": {
+        "fingerprint_hex": "38D0C2F9AA3E79B26227B969CEE9AD179DD5B0A98F22296B0696B0A675C121D2",
+        "display": "38D0 C2F9 AA3E 79B2 6227 B969 CEE9 AD17 9DD5 B0A9"
+      }
+    },
+    {
+      "id": "alice-bit-255-set",
+      "public_key_hex": "eb37e02d15f4bf6201ace34a6553773e67fa23c33d9b125b529977e361176dec",
+      "expected": {
+        "fingerprint_hex": "3D2DA2F235CBAF36FD52B83D22BFE80930154ED423A173EFA5924C18561B8514",
+        "display": "3D2D A2F2 35CB AF36 FD52 B83D 22BF E809 3015 4ED4"
+      }
+    }
+  ]
+}

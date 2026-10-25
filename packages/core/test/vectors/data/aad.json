@@ -1,0 +1,177 @@
+{
+  "vectors": "aad",
+  "format_version": 1,
+  "generator": "@keeman/core 0.1.0, libsodium-wrappers-sumo 0.8.4",
+  "cases": [
+    {
+      "id": "user-key",
+      "template": "user-key",
+      "params": {
+        "user_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01"
+      },
+      "expected": {
+        "aad": "keeman:v1:user-key:0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01"
+      }
+    },
+    {
+      "id": "recovery",
+      "template": "recovery",
+      "params": {
+        "user_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01"
+      },
+      "expected": {
+        "aad": "keeman:v1:recovery:0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01"
+      }
+    },
+    {
+      "id": "prf",
+      "template": "prf",
+      "params": {
+        "user_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
+        "credential_id": "CiqNW4WyP6S29tHYJhM8PA"
+      },
+      "expected": {
+        "aad": "keeman:v1:prf:0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01:CiqNW4WyP6S29tHYJhM8PA"
+      }
+    },
+    {
+      "id": "private-key",
+      "template": "private-key",
+      "params": {
+        "user_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01"
+      },
+      "expected": {
+        "aad": "keeman:v1:private-key:0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01"
+      }
+    },
+    {
+      "id": "user-data",
+      "template": "user-data",
+      "params": {
+        "user_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01"
+      },
+      "expected": {
+        "aad": "keeman:v1:user-data:0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01"
+      }
+    },
+    {
+      "id": "vault-key",
+      "template": "vault-key",
+      "params": {
+        "vault_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01",
+        "user_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
+        "key_version": 3
+      },
+      "expected": {
+        "aad": "keeman:v1:vault-key:0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01:0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01:3"
+      }
+    },
+    {
+      "id": "object",
+      "template": "object",
+      "params": {
+        "vault_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01",
+        "object_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5c01",
+        "type": "entry",
+        "key_version": 3
+      },
+      "expected": {
+        "aad": "keeman:v1:object:0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01:0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5c01:entry:3"
+      }
+    },
+    {
+      "id": "attachment",
+      "template": "attachment",
+      "params": {
+        "attachment_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5d01"
+      },
+      "expected": {
+        "aad": "keeman:v1:attachment:0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5d01"
+      }
+    },
+    {
+      "id": "invalid-uppercase-id",
+      "template": "user-key",
+      "params": {
+        "user_id": "0192B3A4-5C6D-7E8F-9A0B-1C2D3E4F5A01"
+      },
+      "expected": {
+        "error": "validation"
+      }
+    },
+    {
+      "id": "invalid-key-version-0",
+      "template": "vault-key",
+      "params": {
+        "vault_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01",
+        "user_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
+        "key_version": 0
+      },
+      "expected": {
+        "error": "validation"
+      }
+    },
+    {
+      "id": "invalid-key-version-negative",
+      "template": "vault-key",
+      "params": {
+        "vault_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01",
+        "user_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
+        "key_version": -1
+      },
+      "expected": {
+        "error": "validation"
+      }
+    },
+    {
+      "id": "invalid-key-version-fraction",
+      "template": "object",
+      "params": {
+        "vault_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01",
+        "object_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5c01",
+        "type": "entry",
+        "key_version": 1.5
+      },
+      "expected": {
+        "error": "validation"
+      }
+    },
+    {
+      "id": "invalid-key-version-string",
+      "template": "object",
+      "params": {
+        "vault_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01",
+        "object_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5c01",
+        "type": "entry",
+        "key_version": "3"
+      },
+      "expected": {
+        "error": "validation"
+      }
+    },
+    {
+      "id": "invalid-unknown-type",
+      "template": "object",
+      "params": {
+        "vault_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01",
+        "object_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5c01",
+        "type": "note",
+        "key_version": 3
+      },
+      "expected": {
+        "error": "validation"
+      }
+    },
+    {
+      "id": "invalid-credential-id-padded",
+      "template": "prf",
+      "params": {
+        "user_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
+        "credential_id": "AQI="
+      },
+      "expected": {
+        "error": "validation"
+      }
+    }
+  ]
+}

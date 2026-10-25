@@ -1,0 +1,5 @@
+pnpm-lock.yaml
+packages/core/src/api/openapi.gen.ts
+# Copies of the shared test data; changed only by the sync from the API contract
+packages/core/test/vectors/data/
+packages/core/test/model/icons.json
