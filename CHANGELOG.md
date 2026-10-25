@@ -12,11 +12,15 @@ All notable changes to this project are documented here. The format follows [Kee
 - A new vault key after a rotation is taken without asking only from an owner this device has seen while it held the current key; otherwise the user confirms that the sender really is an owner. A server can no longer pass off the key box of a removed member, who is still a verified contact, as a new key version.
 - Reading placeholders and URL templates takes linear time: a value with many `{` before one `}` no longer freezes list views.
 - At login the key derivation parameters actually used (from `prelogin`) are compared with the ones seen before, also after a second factor; a failing unlock after weaker parameters mentions manipulated parameters.
+- Locking (by hand, by the timer or from another tab), logging out and switching accounts end an unlock, login, second factor, recovery or registration still waiting for an answer: it takes over no keys and the view stays locked. Before, a late answer could unlock the tab again, and a lock during a second factor or recovery ended in a false integrity error.
+- The sync engine uses the keys of the current unlock only; a task of a stopped engine never adds a key to a later unlock.
+- An attachment is read only up to the server's upload limit, whatever size its entry states, and a download stops beyond the largest blob that size allows; a KDBX export keeps at most 1 GiB of attachments and names the rest in its report. A member can no longer exhaust another member's memory with small attachments that unpack big.
 
 ### Fixed
 
 - A corrupt update no longer hides an entry or group: the last valid version stays visible, read-only and marked.
 - A full storage quota (`507`) is reported at once instead of being offered for a retry, and the message covers all data, not only attachments.
+- The build check and the KeePassXC reference tests work in folders with spaces in their path.
 
 ## [0.1.0] - 2026-10-25
 
