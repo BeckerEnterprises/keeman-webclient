@@ -29,10 +29,7 @@ export interface PlaceholderLookup {
 
 export type PlaceholderWarning = "cycle" | "missing" | "too_complex";
 export type UrlError =
-  | "placeholder_in_scheme"
-  | "invalid_host"
-  | "invalid_url"
-  | "too_complex";
+  "placeholder_in_scheme" | "invalid_host" | "invalid_url" | "too_complex";
 export type SchemeProblem = "scheme_forbidden" | "scheme_not_allowed";
 export type TextField = StandardField | { custom: number };
 

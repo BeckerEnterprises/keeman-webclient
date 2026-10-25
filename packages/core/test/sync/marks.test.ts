@@ -164,9 +164,8 @@ describe("stored marks", () => {
     });
     // "Understood" replaces it, also with none at all.
     await marks.replaceVault(user, VAULT, { rev: 4, obj: {} });
-    expect(JSON.parse(store.text ?? "").users[user].vaults[VAULT]).toEqual({
-      rev: 4,
-      obj: {},
+    expect(parse(store.text).users[user]).toEqual({
+      vaults: { [VAULT]: { rev: 4, obj: {} } },
     });
     // Data written before the key version existed stays valid.
     store.text = JSON.stringify({
