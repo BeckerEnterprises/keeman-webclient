@@ -3446,6 +3446,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            429: components["responses"]["TooManyRequests"];
             default: components["responses"]["Problem"];
         };
     };
