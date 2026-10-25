@@ -44,12 +44,26 @@ export function grantName(
   }
 }
 
-/** Accepts the invitation (`invitation`) or the pending key (`key`). */
+/**
+ * Who may send a pending key: the owners this device remembers, or anyone
+ * once the user confirmed that the sender really is an owner.
+ */
+export interface KeySenders {
+  owners: readonly string[];
+  confirmed: boolean;
+}
+
+/**
+ * Accepts the invitation (`invitation`) or the pending key (`key`, from a
+ * known owner or with the user's confirmation, so a server cannot pass off
+ * the box of a removed member as a new key version).
+ */
 export async function acceptGrant(
   ctx: SharingContext,
   kind: "invitation" | "key",
   summary: VaultSummary,
   sender: Candidate,
+  senders?: KeySenders,
 ): Promise<void> {
   const vaultId = summary.vault_id;
   const grant =
@@ -60,6 +74,12 @@ export async function acceptGrant(
     statusNow(sender, ctx.contacts()) !== "verified"
   )
     throw new SyncError("unverified");
+  if (
+    kind === "key" &&
+    !senders?.confirmed &&
+    !senders?.owners.includes(sender.userId)
+  )
+    throw new SyncError("unknown_owner");
   let accepted: KeyGrantAcceptance;
   try {
     accepted = ctx.keys.useUserKey((userKey) =>

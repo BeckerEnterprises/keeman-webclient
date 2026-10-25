@@ -311,6 +311,72 @@ test.describe("sharing", () => {
     expect(accepts).toEqual([]);
   });
 
+  test("a new key from a sender not known as owner asks first", async ({
+    page,
+  }) => {
+    test.slow();
+    const alice = await createAccountWithVault("owner-a");
+    const bob = await createAccount("owner-b");
+    const carol = await createAccount("owner-c");
+    const [bobDevice, carolDevice] = await Promise.all([
+      nodeDevice(bob),
+      nodeDevice(carol),
+    ]);
+    await shareNode(alice.device, bobDevice, bob.email, alice.vaultId);
+    await shareNode(alice.device, carolDevice, carol.email, alice.vaultId);
+    // Carol is a verified contact of everyone, but not an owner.
+    await bobDevice.account.verifyContact(
+      await bobDevice.engine.lookupUser(carol.email),
+    );
+    for (const email of [alice.email, bob.email])
+      await carolDevice.account.verifyContact(
+        await carolDevice.engine.lookupUser(email),
+      );
+    // Bob's browser remembers Alice as the only owner and hears no events.
+    await page.routeWebSocket(/\/v1\/events$/, () => undefined);
+    await loginViaUi(page, bob);
+    await openVault(page, "Persönlich");
+    await expect(page.getByTestId("new-group")).toBeEnabled();
+
+    // Meanwhile Carol becomes owner and renews the key: to Bob's browser
+    // the key comes from an account it never saw as owner, as would the
+    // box of a removed member that a lying server passes off as new.
+    const carolId = carolDevice.account.userId ?? "";
+    await alice.device.engine.refresh();
+    await alice.device.engine.setMemberRole(alice.vaultId, carolId, "owner");
+    await carolDevice.engine.refresh();
+    const review = await carolDevice.engine.prepareRotation(alice.vaultId);
+    await carolDevice.engine.runRotation(review, {
+      remove: [],
+      dropCorrupt: false,
+    });
+
+    const accepted: string[] = [];
+    page.on("request", (request) => {
+      if (
+        request.method() === "POST" &&
+        request.url().endsWith(`/v1/vaults/${alice.vaultId}/key`)
+      )
+        accepted.push(request.url());
+    });
+    await page.reload();
+    await unlockViaUi(page, bob.password);
+    const banner = page.getByTestId("banner-pending-key");
+    await expect(banner).toBeVisible();
+    await banner.getByTestId("pending-key-check").click();
+    await expect(page.getByTestId("confirm-text")).toContainText(carol.email);
+    await page.getByTestId("confirm-no").click();
+    // Without the confirmation the key is not taken.
+    await expect(banner).toBeVisible();
+    expect(accepted).toEqual([]);
+    await banner.getByTestId("pending-key-check").click();
+    await page.getByTestId("confirm-yes").click();
+    await expect(banner).toHaveCount(0);
+    expect(accepted).toHaveLength(1);
+    await openVault(page, "Persönlich");
+    await expect(page.getByTestId("new-group")).toBeEnabled();
+  });
+
   test("renews the key of a database over 20 MiB", async ({ page }) => {
     test.setTimeout(300_000);
     const alice = await createAccountWithVault("big-a");

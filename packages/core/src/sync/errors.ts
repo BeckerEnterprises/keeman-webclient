@@ -31,6 +31,8 @@ export type SyncErrorCode =
   | "cancelled"
   /** The account is not a verified contact. */
   | "unverified"
+  /** The sender of a pending key is not a known owner; confirm first. */
+  | "unknown_owner"
   /** The own account cannot be invited. */
   | "self"
   /** An invitation or pending key fails the checks of its key box. */

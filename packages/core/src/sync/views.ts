@@ -206,6 +206,8 @@ export interface VaultView {
   readonly keyStatus: "ok" | "pending" | "missing" | "invalid";
   /** The sender of a pending key, for the fingerprint dialog. */
   readonly pendingSender: Candidate | undefined;
+  /** Why the pending key waits for the user. */
+  readonly pendingReason: "unverified" | "unknown_owner" | undefined;
   /** A member left; owners renew the key. */
   readonly rotationRequired: boolean;
   readonly created: string;
@@ -641,6 +643,7 @@ export class VaultProjection {
       memberKeyVersion: state.summary.member_key_version,
       keyStatus: state.keyStatus,
       pendingSender: state.pendingSender,
+      pendingReason: state.pendingReason,
       rotationRequired: state.summary.rotation_required,
       created: state.summary.created,
       error: state.error,

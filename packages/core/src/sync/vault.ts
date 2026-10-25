@@ -75,6 +75,8 @@ export class VaultState {
   keyStatus: "ok" | "pending" | "missing" | "invalid" = "ok";
   /** The sender of a pending key, for the fingerprint dialog. */
   pendingSender: Candidate | undefined = undefined;
+  /** Why a pending key waits: an unverified sender or not a known owner. */
+  pendingReason: "unverified" | "unknown_owner" | undefined = undefined;
   /** Last completely seen revision. */
   since = 0;
   synced = false;
@@ -364,11 +366,15 @@ export async function acknowledgeRollback(
     obj[entry.id] = objectMark(entry.seq, false);
     entry.rollback = false;
   }
+  // The delivered key version becomes the mark too; the owners stay.
+  const kv = state.summary.vault_key_version;
   await context.marks.replaceVault(context.userId, state.id, {
     rev: state.since,
+    kv,
+    ...(current?.ow ? { ow: current.ow } : {}),
     obj,
   });
   state.rollback = false;
-  state.keyFloor = state.summary.vault_key_version;
+  state.keyFloor = kv;
   state.rollbackDeletes.clear();
 }

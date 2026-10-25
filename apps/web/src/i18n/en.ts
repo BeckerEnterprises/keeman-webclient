@@ -975,6 +975,10 @@ const en: typeof de = {
     decline: "Decline",
     keyText: "A new key for “{name}” from {email} waits for your verification.",
     keyCheck: "Verify",
+    ownerTitle: "Sender is not a known owner",
+    ownerText:
+      "The new key for “{name}” comes from {email}. On this device, this account is not yet known as an owner of the database. Accept it only if it really is an owner (for example, recently promoted); otherwise a removed member might read new entries.",
+    ownerAccept: "Accept",
     keyInvalid:
       "The new key for “{name}” is invalid and was not accepted. This may be an error or an attack on the server.",
     rotationRequired: "A member left “{name}”. Renew the key.",
@@ -1112,6 +1116,8 @@ const en: typeof de = {
     rotation_incomplete: "The members changed. Please review again.",
     sync_unverified:
       "This account is not a verified contact. Compare the fingerprints first.",
+    sync_unknown_owner:
+      "The sender is not known as an owner on this device. Confirm the new key first.",
     sync_self: "You cannot invite yourself.",
     sync_key_box_invalid:
       "The key could not be opened or checked and was not accepted. This may be an error or an attack on the server.",

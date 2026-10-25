@@ -162,6 +162,95 @@ describe("removing a member", () => {
     expect(posts(server, "/batch")).toBe(batches);
   });
 
+  it("asks before taking a key from a sender not known as owner", async () => {
+    const { server, alice, bob, carol, vaultId } = await team();
+    const carolId = carol.account.userId ?? "";
+    // Carol is a verified contact of everyone, but only Alice is an owner
+    // as far as Bob knows.
+    await bob.account.verifyContact(await bob.engine.lookupUser(carol.email));
+    for (const other of [alice, bob])
+      await carol.account.verifyContact(
+        await carol.engine.lookupUser(other.email),
+      );
+    const bobId = bob.account.userId ?? "";
+    expect((await bob.marks.read(bobId)).vaults[vaultId]?.ow).toEqual([
+      alice.account.userId,
+    ]);
+    // Bob does not sync while Carol is made owner and renews the key: to
+    // him the key comes from an account he has never seen as owner, as
+    // would the box of a removed member that a server passes off as new.
+    await alice.engine.setMemberRole(vaultId, carolId, "owner");
+    await carol.engine.refresh();
+    await rotate(carol, vaultId);
+    const accepted = posts(server, "/key");
+    await bob.engine.refresh();
+    expect(vault(bob.engine, vaultId)).toMatchObject({
+      vaultKeyVersion: 2,
+      keyStatus: "pending",
+      pendingReason: "unknown_owner",
+      writable: false,
+    });
+    expect(vault(bob.engine, vaultId).pendingSender?.userId).toBe(carolId);
+    expect(posts(server, "/key")).toBe(accepted);
+    await expect(bob.engine.acceptPendingKey(vaultId)).rejects.toMatchObject({
+      code: "unknown_owner",
+    });
+    expect(posts(server, "/key")).toBe(accepted);
+    // Confirmed by the user, the key is taken, and Carol is an owner now.
+    await bob.engine.acceptPendingKey(vaultId, { confirmOwner: true });
+    expect(vault(bob.engine, vaultId)).toMatchObject({
+      keyStatus: "ok",
+      writable: true,
+    });
+    expect(
+      [...((await bob.marks.read(bobId)).vaults[vaultId]?.ow ?? [])].sort(),
+    ).toEqual([alice.account.userId, carolId].sort());
+  });
+
+  it("takes a key without asking from an owner promoted while the key was current", async () => {
+    const { alice, bob, carol, vaultId } = await team();
+    const carolId = carol.account.userId ?? "";
+    await bob.account.verifyContact(await bob.engine.lookupUser(carol.email));
+    for (const other of [alice, bob])
+      await carol.account.verifyContact(
+        await carol.engine.lookupUser(other.email),
+      );
+    await alice.engine.setMemberRole(vaultId, carolId, "owner");
+    await bob.engine.refresh();
+    await carol.engine.refresh();
+    await rotate(carol, vaultId);
+    await bob.engine.refresh();
+    expect(vault(bob.engine, vaultId)).toMatchObject({
+      vaultKeyVersion: 2,
+      keyStatus: "ok",
+      pendingReason: undefined,
+    });
+  });
+
+  it('keeps the owners and takes the delivered key version on "understood"', async () => {
+    const { server, alice, bob, carol, vaultId } = await team();
+    const bobId = bob.account.userId ?? "";
+    const oldKey = server.vaults.get(vaultId)?.members.get(bobId)?.key_wrapped;
+    await rotate(alice, vaultId, [carol.account.userId ?? ""]);
+    await bob.engine.refresh();
+    server.tamperVaults = (list) => {
+      for (const summary of list)
+        if (summary.vault_id === vaultId)
+          Object.assign(summary, {
+            vault_key_version: 1,
+            member_key_version: 1,
+            key_wrapped: oldKey,
+            pending_key: null,
+          });
+    };
+    await bob.engine.refresh();
+    await bob.engine.acknowledgeRollback(vaultId);
+    expect((await bob.marks.read(bobId)).vaults[vaultId]).toMatchObject({
+      kv: 1,
+      ow: [alice.account.userId],
+    });
+  });
+
   it("keeps a removed member from reading new or changed objects", async () => {
     const { server, alice, carol, vaultId } = await team();
     const before = server.vaults

@@ -1003,6 +1003,10 @@ export default {
     keyText:
       "Ein neuer Schlüssel für „{name}“ von {email} wartet auf deine Prüfung.",
     keyCheck: "Prüfen",
+    ownerTitle: "Absender ist kein bekannter Eigentümer",
+    ownerText:
+      "Der neue Schlüssel für „{name}“ kommt von {email}. Dieses Konto ist auf diesem Gerät bisher nicht als Eigentümer der Datenbank bekannt. Nimm ihn nur an, wenn es wirklich Eigentümer ist (zum Beispiel kürzlich befördert); sonst könnte ein entferntes Mitglied neue Einträge lesen.",
+    ownerAccept: "Annehmen",
     keyInvalid:
       "Der neue Schlüssel für „{name}“ ist ungültig und wurde nicht angenommen. Das kann ein Fehler oder ein Angriff auf den Server sein.",
     rotationRequired:
@@ -1153,6 +1157,8 @@ export default {
       "Die Mitglieder haben sich geändert. Bitte erneut prüfen.",
     sync_unverified:
       "Dieses Konto ist kein verifizierter Kontakt. Vergleiche zuerst die Fingerprints.",
+    sync_unknown_owner:
+      "Der Absender ist auf diesem Gerät nicht als Eigentümer bekannt. Bestätige den neuen Schlüssel zuerst.",
     sync_self: "Dich selbst kannst du nicht einladen.",
     sync_key_box_invalid:
       "Der Schlüssel ließ sich nicht öffnen oder prüfen und wurde nicht angenommen. Das kann ein Fehler oder ein Angriff auf den Server sein.",

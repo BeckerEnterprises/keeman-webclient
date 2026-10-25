@@ -1,15 +1,17 @@
 <script setup lang="ts">
 /**
  * Sharing notices after unlocking: invitations with accept
- * and decline, new keys waiting for a verification, invalid keys and the
- * owner's prompt to renew the key after a member left.
+ * and decline, new keys waiting for a verification (of the sender, or that
+ * the sender really is an owner), invalid keys and the owner's prompt to
+ * renew the key after a member left.
  */
-import type { Candidate } from "@keeman/core";
+import { SyncError, type Candidate } from "@keeman/core";
 import { computed, ref, shallowRef } from "vue";
 import { useI18n } from "vue-i18n";
 import { toUiError, type UiError } from "../../errors";
 import { useVaultsStore } from "../../stores/vaults";
 import ErrorNotice from "../ErrorNotice.vue";
+import ConfirmDialog from "../dialogs/ConfirmDialog.vue";
 import FingerprintDialog from "./FingerprintDialog.vue";
 
 const { t } = useI18n();
@@ -21,6 +23,8 @@ const checking = shallowRef<{
   purpose: "accept" | "key";
   then: () => Promise<void>;
 }>();
+/** A pending key whose sender is not a known owner: the user decides. */
+const owner = shallowRef<{ vaultId: string; name: string; email: string }>();
 
 const invitations = computed(() => vaults.snapshot?.invitations ?? []);
 const pendingKeys = computed(() =>
@@ -51,12 +55,33 @@ function accept(vaultId: string, sender: Candidate | undefined): void {
   else checking.value = { candidate: sender, purpose: "accept", then };
 }
 
-function checkKey(vaultId: string, sender: Candidate): void {
-  checking.value = {
-    candidate: sender,
-    purpose: "key",
-    then: () => vaults.engine().acceptPendingKey(vaultId),
-  };
+async function acceptKey(
+  vaultId: string,
+  name: string,
+  sender: Candidate,
+): Promise<void> {
+  try {
+    await vaults.engine().acceptPendingKey(vaultId);
+  } catch (caught) {
+    if (!(caught instanceof SyncError && caught.code === "unknown_owner"))
+      throw caught;
+    owner.value = { vaultId, name, email: sender.email };
+  }
+}
+
+function checkKey(vaultId: string, name: string, sender: Candidate): void {
+  const then = () => acceptKey(vaultId, name, sender);
+  if (sender.status === "verified") void run(then);
+  else checking.value = { candidate: sender, purpose: "key", then };
+}
+
+function confirmOwner(): void {
+  const current = owner.value;
+  owner.value = undefined;
+  if (current)
+    void run(() =>
+      vaults.engine().acceptPendingKey(current.vaultId, { confirmOwner: true }),
+    );
 }
 
 function verified(): void {
@@ -125,7 +150,13 @@ function verified(): void {
       class="small"
       :disabled="busy"
       data-test="pending-key-check"
-      @click="checkKey(vault.id, vault.pendingSender)"
+      @click="
+        checkKey(
+          vault.id,
+          vault.name ?? t('invitation.unknownName'),
+          vault.pendingSender,
+        )
+      "
     >
       {{ t("invitation.keyCheck") }}
     </button>
@@ -164,5 +195,15 @@ function verified(): void {
     :purpose="checking.purpose"
     @verified="verified"
     @close="checking = undefined"
+  />
+  <ConfirmDialog
+    v-if="owner"
+    :title="t('invitation.ownerTitle')"
+    :text="t('invitation.ownerText', { name: owner.name, email: owner.email })"
+    :confirm="t('invitation.ownerAccept')"
+    danger
+    :busy="busy"
+    @confirm="confirmOwner"
+    @close="owner = undefined"
   />
 </template>

@@ -1,8 +1,8 @@
 /**
  * High-water marks for the rollback detection: per vault
- * the highest revision and key version, per object the highest `seq`
- * (negative for a tombstone), per account revision and `seq` of `user_data`. Only IDs and
- * counters, nothing secret.
+ * the highest revision and key version and the owners, per object the
+ * highest `seq` (negative for a tombstone), per account revision and `seq`
+ * of `user_data`. Only IDs and counters, nothing secret.
  */
 import * as v from "valibot";
 import { UUID_PATTERN } from "../crypto/uuid";
@@ -14,6 +14,11 @@ export interface VaultMarks {
    * server is a rollback (a removed member might read what is written).
    */
   kv?: number;
+  /**
+   * Owners seen while this device held the current key; only their
+   * pending keys are accepted without asking. Replaced, never merged.
+   */
+  ow?: string[];
   /** Object ID → `seq`; negative: a tombstone with this `seq`. */
   obj: Record<string, number>;
 }
@@ -36,6 +41,12 @@ export interface SyncMarks {
     marks: VaultMarks,
   ): Promise<boolean>;
   replaceUserData(userId: string, ud: [number, number]): Promise<boolean>;
+  /** Replaces the owners of a vault. */
+  rememberOwners(
+    userId: string,
+    vaultId: string,
+    owners: readonly string[],
+  ): Promise<boolean>;
   forgetVault(userId: string, vaultId: string): Promise<boolean>;
   forgetUser(userId: string): Promise<boolean>;
 }
@@ -74,7 +85,10 @@ function emptyMarks(): UserMarks {
   return { vaults: {} };
 }
 
-/** Per-entry maximum of two mark sets. */
+/**
+ * Per-entry maximum of two mark sets. Owners are not a maximum: those of
+ * `a` win, so stored owners come before the ones in memory.
+ */
 export function mergeMarks(a: UserMarks, b: UserMarks): UserMarks {
   const result: UserMarks = { vaults: {} };
   if (a.ud || b.ud) {
@@ -92,9 +106,11 @@ export function mergeMarks(a: UserMarks, b: UserMarks): UserMarks {
     for (const [objectId, mark] of Object.entries(right?.obj ?? {}))
       obj[objectId] = higherMark(obj[objectId], mark);
     const kv = Math.max(left?.kv ?? 0, right?.kv ?? 0);
+    const ow = left?.ow ?? right?.ow;
     result.vaults[id] = {
       rev: Math.max(left?.rev ?? 0, right?.rev ?? 0),
       ...(kv > 0 ? { kv } : {}),
+      ...(ow ? { ow: [...ow] } : {}),
       obj,
     };
   }
@@ -109,8 +125,22 @@ function copyVault(marks: VaultMarks): VaultMarks {
   return {
     rev: marks.rev,
     ...(marks.kv !== undefined ? { kv: marks.kv } : {}),
+    ...(marks.ow !== undefined ? { ow: [...marks.ow] } : {}),
     obj: { ...marks.obj },
   };
+}
+
+function withOwners(
+  marks: UserMarks,
+  vaultId: string,
+  owners: readonly string[],
+): UserMarks {
+  const next = copy(marks);
+  next.vaults[vaultId] = {
+    ...(next.vaults[vaultId] ?? { rev: 0, obj: {} }),
+    ow: [...owners],
+  };
+  return next;
 }
 
 /** Marks kept in memory only (tests, and the fallback without storage). */
@@ -133,6 +163,10 @@ export function inMemorySyncMarks(): SyncMarks {
       const current = get(userId);
       current.ud = [ud[0], ud[1]];
       users.set(userId, current);
+      return Promise.resolve(true);
+    },
+    rememberOwners: (userId, vaultId, owners) => {
+      users.set(userId, withOwners(get(userId), vaultId, owners));
       return Promise.resolve(true);
     },
     forgetVault: (userId, vaultId) => {
@@ -171,6 +205,7 @@ const StoredSchema = v.object({
         v.object({
           rev: Counter,
           kv: v.optional(Counter),
+          ow: v.optional(v.array(Id)),
           obj: v.record(Id, ObjectMark),
         }),
       ),
@@ -262,6 +297,12 @@ export function storedSyncMarks(store: MarksStore, lock: MarksLock): SyncMarks {
         ...copy(current ?? emptyMarks()),
         ud,
       }));
+    },
+    async rememberOwners(userId, vaultId, owners) {
+      await memory.rememberOwners(userId, vaultId, owners);
+      return update(userId, (current) =>
+        withOwners(current ?? emptyMarks(), vaultId, owners),
+      );
     },
     async forgetVault(userId, vaultId) {
       await memory.forgetVault(userId, vaultId);

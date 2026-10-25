@@ -4,7 +4,12 @@
  * status; owners invite verified contacts, withdraw invitations, change
  * roles, remove members and renew the key; everyone may leave.
  */
-import type { Candidate, MemberView, VaultView } from "@keeman/core";
+import {
+  SyncError,
+  type Candidate,
+  type MemberView,
+  type VaultView,
+} from "@keeman/core";
 import { computed, onMounted, ref, shallowRef, toRaw, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
@@ -35,7 +40,9 @@ type Dialog =
       then: () => Promise<void>;
     }
   | { kind: "rotation"; remove?: string }
-  | { kind: "leave" };
+  | { kind: "leave" }
+  /** The sender of a pending key is not a known owner. */
+  | { kind: "owner"; email: string };
 const dialog = shallowRef<Dialog>();
 
 const owner = computed(() => props.vault.role === "owner");
@@ -86,15 +93,34 @@ function invite(): Promise<void> {
   });
 }
 
+async function acceptKey(sender: Candidate): Promise<void> {
+  try {
+    await vaults.engine().acceptPendingKey(props.vault.id);
+  } catch (caught) {
+    if (!(caught instanceof SyncError && caught.code === "unknown_owner"))
+      throw caught;
+    dialog.value = { kind: "owner", email: sender.email };
+  }
+}
+
 function checkKey(): void {
   const sender = props.vault.pendingSender;
   if (!sender) return;
-  dialog.value = {
-    kind: "fingerprint",
-    candidate: sender,
-    purpose: "key",
-    then: () => vaults.engine().acceptPendingKey(props.vault.id),
-  };
+  if (sender.status === "verified") void run(() => acceptKey(sender));
+  else
+    dialog.value = {
+      kind: "fingerprint",
+      candidate: sender,
+      purpose: "key",
+      then: () => acceptKey(sender),
+    };
+}
+
+function confirmOwner(): void {
+  dialog.value = undefined;
+  void run(() =>
+    vaults.engine().acceptPendingKey(props.vault.id, { confirmOwner: true }),
+  );
 }
 
 function verified(): void {
@@ -301,6 +327,21 @@ onMounted(() => void load());
       :vault-id="vault.id"
       :remove="dialog.remove"
       @done="load"
+      @close="dialog = undefined"
+    />
+    <ConfirmDialog
+      v-if="dialog?.kind === 'owner'"
+      :title="t('invitation.ownerTitle')"
+      :text="
+        t('invitation.ownerText', {
+          name: vault.name ?? t('invitation.unknownName'),
+          email: dialog.email,
+        })
+      "
+      :confirm="t('invitation.ownerAccept')"
+      danger
+      :busy="busy"
+      @confirm="confirmOwner"
       @close="dialog = undefined"
     />
     <ConfirmDialog

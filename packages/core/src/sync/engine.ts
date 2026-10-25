@@ -313,6 +313,8 @@ export class SyncEngine {
           track(await marks.replaceVault(userId, id, m)),
         replaceUserData: async (userId, ud) =>
           track(await marks.replaceUserData(userId, ud)),
+        rememberOwners: async (userId, id, owners) =>
+          track(await marks.rememberOwners(userId, id, owners)),
         forgetVault: (userId, id) => marks.forgetVault(userId, id),
         forgetUser: (userId) => marks.forgetUser(userId),
       },
@@ -600,18 +602,29 @@ export class SyncEngine {
     await this.refresh();
   }
 
-  /** Accepts a pending key after the sender was verified. */
-  async acceptPendingKey(vaultId: string): Promise<void> {
+  /**
+   * Accepts a pending key after the sender was verified; a sender who is
+   * not a known owner needs `confirmOwner` (the user's confirmation).
+   */
+  async acceptPendingKey(
+    vaultId: string,
+    options: { confirmOwner?: boolean } = {},
+  ): Promise<void> {
     const state = this.#state(vaultId);
     const pending = state.summary.pending_key;
     if (!pending) throw new SyncError("not_found");
     const user = await this.#publicUser(pending.sender_id);
     if (!user) throw new SyncError("unverified");
+    const marks = await this.#access.marks.read(this.#access.userId);
     await acceptGrant(
       this.#access,
       "key",
       state.summary,
       this.#candidate(user),
+      {
+        owners: marks.vaults[vaultId]?.ow ?? [],
+        confirmed: options.confirmOwner === true,
+      },
     );
     await this.refresh();
   }
@@ -1994,7 +2007,16 @@ export class SyncEngine {
       )
         state.rollback = true;
     }
-    for (const state of this.#states.values()) await this.#checkKey(state);
+    for (const state of this.#states.values())
+      await this.#checkKey(state, marks.vaults[state.id]?.ow ?? []);
+    if (this.#isStopped()) return;
+    // Only with the current key: owners shown next to a pending key could
+    // be made up for exactly that key.
+    await Promise.all(
+      [...this.#states.values()]
+        .filter((s) => s.keyStatus === "ok" && s.summary.pending_key === null)
+        .map((s) => this.#rememberOwners(s)),
+    );
     if (this.#isStopped()) return;
     this.#loaded = true;
     this.#emit();
@@ -2048,12 +2070,37 @@ export class SyncEngine {
   }
 
   /**
-   * The key of the current version: a pending key from a
-   * verified contact is accepted without asking, otherwise the vault waits.
+   * Remembers the owners of a vault whose current key this device holds:
+   * only the own account if it is the only member, else the active owners
+   * of the member list. A failed request keeps the remembered ones.
    */
-  async #checkKey(state: VaultState): Promise<void> {
+  async #rememberOwners(state: VaultState): Promise<void> {
+    const { summary } = state;
+    const access = this.#access;
+    let owners: string[];
+    if (summary.member_count <= 1) {
+      owners = summary.role === "owner" ? [access.userId] : [];
+    } else {
+      try {
+        owners = (await access.api.members(state.id))
+          .filter((m) => m.role === "owner" && m.state === "active")
+          .map((m) => m.user_id);
+      } catch {
+        return;
+      }
+    }
+    await this.#context.marks.rememberOwners(access.userId, state.id, owners);
+  }
+
+  /**
+   * The key of the current version: a pending key from a verified contact
+   * who is a remembered owner is accepted without asking, otherwise the
+   * vault waits for the user.
+   */
+  async #checkKey(state: VaultState, owners: readonly string[]): Promise<void> {
     const summary = state.summary;
     state.pendingSender = undefined;
+    state.pendingReason = undefined;
     if (this.#access.keys.hasVaultKey(state.id, summary.vault_key_version)) {
       state.keyStatus = "ok";
       return;
@@ -2069,13 +2116,18 @@ export class SyncEngine {
       return;
     }
     const sender = this.#candidate(user);
-    if (sender.status !== "verified") {
+    if (sender.status !== "verified" || !owners.includes(sender.userId)) {
       state.keyStatus = "pending";
       state.pendingSender = sender;
+      state.pendingReason =
+        sender.status !== "verified" ? "unverified" : "unknown_owner";
       return;
     }
     try {
-      await acceptGrant(this.#access, "key", summary, sender);
+      await acceptGrant(this.#access, "key", summary, sender, {
+        owners,
+        confirmed: false,
+      });
       state.keyStatus = "ok";
       state.summary = {
         ...summary,

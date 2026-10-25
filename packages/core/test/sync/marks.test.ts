@@ -176,6 +176,48 @@ describe("stored marks", () => {
     expect((await fresh.read(user)).vaults[VAULT]).toEqual({ rev: 7, obj: {} });
   });
 
+  it("replaces the owners, keeps them through raises and reads older data without them", async () => {
+    const store = memoryStore();
+    const marks = storedSyncMarks(store, (task) => Promise.resolve(task()));
+    const user = U(1);
+    await marks.rememberOwners(user, VAULT, [U(2), U(3)]);
+    await marks.raise(user, { vaults: { [VAULT]: { rev: 5, obj: {} } } });
+    expect((await marks.read(user)).vaults[VAULT]).toEqual({
+      rev: 5,
+      ow: [U(2), U(3)],
+      obj: {},
+    });
+    // Replaced, not merged: a demoted owner is gone.
+    await marks.rememberOwners(user, VAULT, [U(2)]);
+    expect(parse(store.text).users[user]).toEqual({
+      vaults: { [VAULT]: { rev: 5, ow: [U(2)], obj: {} } },
+    });
+    // Another tab stored newer owners: stored ones come before memory.
+    store.text = JSON.stringify({
+      v: 1,
+      users: {
+        [user]: { vaults: { [VAULT]: { rev: 5, ow: [U(4)], obj: {} } } },
+      },
+    });
+    expect((await marks.read(user)).vaults[VAULT]?.ow).toEqual([U(4)]);
+    // Data from before the owners existed stays valid.
+    store.text = JSON.stringify({
+      v: 1,
+      users: { [user]: { vaults: { [VAULT]: { rev: 7, obj: {} } } } },
+    });
+    const fresh = storedSyncMarks(store, (task) => Promise.resolve(task()));
+    expect((await fresh.read(user)).vaults[VAULT]).toEqual({ rev: 7, obj: {} });
+    // Owners must be account IDs.
+    store.text = JSON.stringify({
+      v: 1,
+      users: {
+        [user]: { vaults: { [VAULT]: { rev: 7, ow: ["x"], obj: {} } } },
+      },
+    });
+    const invalid = storedSyncMarks(store, (task) => Promise.resolve(task()));
+    expect((await invalid.read(user)).vaults[VAULT]).toBeUndefined();
+  });
+
   it("discards invalid data and keeps the most recent accounts", async () => {
     const store = memoryStore();
     store.text = '{"v":1,"users":{"nope":{}}}';
