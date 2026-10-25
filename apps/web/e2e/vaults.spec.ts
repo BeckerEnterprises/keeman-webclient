@@ -5,7 +5,9 @@
 import type { Page, Route } from "@playwright/test";
 import {
   createAccountWithVault,
+  entryRow,
   loginViaUi,
+  nodeEntry,
   nodeGroup,
   openAccount,
   openDatabases,
@@ -55,6 +57,12 @@ async function rewriteChanges(
     change(body);
     await route.fulfill({ response, json: body });
   });
+}
+
+/** Breaks the authentication tag of an object's ciphertext. */
+function flipped(data: string): string {
+  const i = 60;
+  return data.slice(0, i) + (data[i] === "A" ? "B" : "A") + data.slice(i + 1);
 }
 
 async function unlockAfterReload(page: Page, password: string): Promise<void> {
@@ -317,11 +325,7 @@ test.describe("rollback and corruption", () => {
     expect(rootOf(account.device, account.vaultId)).not.toBe("");
     await rewriteChanges(page, (body) => {
       for (const o of body.objects)
-        if (o.id === id && o.data) {
-          const i = 60;
-          const flipped = o.data[i] === "A" ? "B" : "A";
-          o.data = o.data.slice(0, i) + flipped + o.data.slice(i + 1);
-        }
+        if (o.id === id && o.data) o.data = flipped(o.data);
     });
     await loginViaUi(page, account);
     await expect(page.getByTestId("tree-vault-warning")).toBeVisible();
@@ -331,5 +335,64 @@ test.describe("rollback and corruption", () => {
     await page.getByTestId("vault-settings").click();
     await expect(page.getByTestId("corrupt")).toContainText(id);
     await expect(page.getByTestId("corrupt")).toContainText("Prüfsumme");
+  });
+
+  test("a corrupt update keeps the last valid version, read-only", async ({
+    page,
+  }) => {
+    const account = await createAccountWithVault("superseded");
+    const { device, vaultId } = account;
+    const id = await nodeEntry(device, vaultId, rootOf(device, vaultId), {
+      title: "Gültig",
+    });
+    await loginViaUi(page, account);
+    await openVault(page, "Persönlich");
+    await expect(entryRow(page, "Gültig")).toBeVisible();
+    await rewriteChanges(page, (body) => {
+      for (const o of body.objects)
+        if (o.id === id && o.data) o.data = flipped(o.data);
+    });
+    const edit = device.engine.editEntry(vaultId, id);
+    if (!edit) throw new Error("entry missing");
+    await device.engine.saveEntry(edit.base, { ...edit.draft, title: "Neu" });
+    await expect(page.getByTestId("tree-vault-warning")).toBeVisible();
+    await entryRow(page, "Gültig").click();
+    await expect(page.getByTestId("detail-superseded")).toBeVisible();
+    await expect(page.getByTestId("detail-edit")).toBeDisabled();
+  });
+
+  test("an older key version makes the database read-only", async ({
+    page,
+  }) => {
+    const account = await createAccountWithVault("oldkey");
+    const { device, vaultId } = account;
+    const before = (await device.api.vaults()).find(
+      (v) => v.vault_id === vaultId,
+    );
+    const review = await device.engine.prepareRotation(vaultId);
+    await device.engine.runRotation(review, { remove: [], dropCorrupt: false });
+    await loginViaUi(page, account);
+    await openVault(page, "Persönlich");
+    await createGroup(page, "Nach der Rotation");
+    // The server plays back the vault list from before the rotation.
+    await page.route("**/v1/vaults", async (route: Route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      const response = await route.fetch();
+      const body = (await response.json()) as {
+        vaults: Record<string, unknown>[];
+      };
+      for (const summary of body.vaults)
+        if (summary.vault_id === vaultId)
+          Object.assign(summary, {
+            vault_key_version: 1,
+            member_key_version: 1,
+            key_wrapped: before?.key_wrapped,
+            pending_key: null,
+          });
+      await route.fulfill({ response, json: body });
+    });
+    await unlockAfterReload(page, account.password);
+    await expect(page.getByTestId("vault-key-rollback")).toBeVisible();
+    await expect(page.getByTestId("new-group")).toBeDisabled();
   });
 });
