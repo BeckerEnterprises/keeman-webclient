@@ -92,6 +92,11 @@ const reportLines = computed(() => {
           t("kdbx.export.attachment_unreadable", { where, name: item.name }),
         );
         break;
+      case "attachment_too_large":
+        lines.push(
+          t("kdbx.export.attachment_too_large", { where, name: item.name }),
+        );
+        break;
       case "custom_icon_missing":
         lines.push(t("kdbx.export.custom_icon_missing", { where }));
         break;

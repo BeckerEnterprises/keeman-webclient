@@ -558,6 +558,8 @@ export default {
         "{count} Zeichen, die in XML nicht erlaubt sind, wurden entfernt.",
       attachment_unreadable:
         "{where}: Anhang „{name}“ ließ sich nicht laden und fehlt in der Datei.",
+      attachment_too_large:
+        "{where}: Anhang „{name}“ ist größer, als der Server erlaubt, oder überschreitet 1 GiB für alle Anhänge zusammen und fehlt in der Datei.",
       attachment_renamed: "{where}: Anhang „{from}“ heißt in der Datei „{to}“.",
       loading: "Anhänge werden geladen: {count} von {entries}…",
       snapshots_skipped:

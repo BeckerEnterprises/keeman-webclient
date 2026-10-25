@@ -52,7 +52,9 @@ import {
 import {
   attachKdbxBinaries,
   buildKdbxExport,
+  KDBX_EXPORT_ATTACHMENT_BYTES,
   type KdbxExportReport,
+  type KdbxSkipped,
 } from "../kdbx/export";
 import { planKdbxImport } from "../kdbx/plan";
 import type { KdbxExportModel, KdbxFile, KdbxTimes } from "../kdbx/types";
@@ -1520,27 +1522,37 @@ export class SyncEngine {
   ): Promise<{ model: KdbxExportModel; report: KdbxExportReport }> {
     const built = this.#exportModel(vaultId);
     const { attachments } = built;
-    const files: (Uint8Array | undefined)[] = [];
+    const files: (Uint8Array | KdbxSkipped)[] = [];
+    // All files stay in memory until the file is written: a total bound,
+    // so small attachments that unpack big cannot exhaust it.
+    let total = 0;
     for (const [index, attachment] of attachments.entries()) {
       if (run.signal?.aborted) throw new SyncError("cancelled");
+      if (total + attachment.size > KDBX_EXPORT_ATTACHMENT_BYTES) {
+        files.push("too_large");
+        run.onProgress?.({ done: index + 1, total: attachments.length });
+        continue;
+      }
       try {
-        files.push(
-          await this.readAttachment(
-            vaultId,
-            attachment.entryId,
-            attachment.attachmentId,
-            { signal: run.signal },
-          ),
+        const file = await this.readAttachment(
+          vaultId,
+          attachment.entryId,
+          attachment.attachmentId,
+          { signal: run.signal },
         );
+        total += file.length;
+        files.push(file);
       } catch (error) {
         if (error instanceof SyncError && error.code === "cancelled")
           throw error;
-        if (
-          !(error instanceof SyncError) ||
-          !["attachment_missing", "attachment_corrupt"].includes(error.code)
+        if (error instanceof SyncError && error.code === "attachment_too_large")
+          files.push("too_large");
+        else if (
+          error instanceof SyncError &&
+          ["attachment_missing", "attachment_corrupt"].includes(error.code)
         )
-          throw error;
-        files.push(undefined);
+          files.push("unreadable");
+        else throw error;
       }
       run.onProgress?.({ done: index + 1, total: attachments.length });
     }

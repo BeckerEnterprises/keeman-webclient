@@ -126,6 +126,8 @@ type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export interface BytesRun {
   onProgress?: (received: number, total: number | undefined) => void;
   signal?: AbortSignal;
+  /** More bytes than this make the answer unusable (`response`, no retry). */
+  maxBytes?: number;
 }
 
 interface Call {
@@ -180,15 +182,28 @@ async function readBytes(
   const length = Number(response.headers.get("content-length"));
   const total =
     Number.isSafeInteger(length) && length >= 0 ? length : undefined;
+  const max = run.maxBytes ?? Number.POSITIVE_INFINITY;
   const reader = response.body?.getReader();
-  if (!reader) return new Uint8Array(await response.arrayBuffer());
+  if (total !== undefined && total > max) {
+    await reader?.cancel().catch(() => undefined);
+    throw new NetworkError("response");
+  }
+  if (!reader) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.length > max) throw new NetworkError("response");
+    return bytes;
+  }
   const chunks: Uint8Array[] = [];
   let received = 0;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    chunks.push(value);
     received += value.length;
+    if (received > max) {
+      await reader.cancel().catch(() => undefined);
+      throw new NetworkError("response");
+    }
+    chunks.push(value);
     watch();
     run.onProgress?.(received, total);
   }
@@ -1230,6 +1245,8 @@ export class ApiClient {
         try {
           return await readBytes(response, call.bytes, watch);
         } catch (error) {
+          // Too many bytes: the same answer would come again.
+          if (error instanceof NetworkError) throw error;
           return failed(error);
         }
       }

@@ -541,6 +541,8 @@ const en: typeof de = {
       removedCharacters: "{count} characters not allowed in XML were removed.",
       attachment_unreadable:
         "{where}: attachment “{name}” could not be loaded and is missing from the file.",
+      attachment_too_large:
+        "{where}: attachment “{name}” is larger than the server allows or exceeds 1 GiB for all attachments together and is missing from the file.",
       attachment_renamed:
         "{where}: attachment “{from}” is called “{to}” in the file.",
       loading: "Loading attachments: {count} of {entries}…",

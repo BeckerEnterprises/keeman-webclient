@@ -43,9 +43,22 @@ const XML_INVALID = new RegExp(
   "g",
 );
 
+/**
+ * Unpacked attachments one export holds in memory at most. Their sizes
+ * come from the members who added them, so they need a bound of their own.
+ */
+export const KDBX_EXPORT_ATTACHMENT_BYTES = 1024 * 1024 * 1024;
+
 export type KdbxExportItem =
   | {
       kind: "attachment_unreadable";
+      path: readonly string[];
+      title: string;
+      name: string;
+    }
+  /** Over the server's limit, or beyond the total for one export. */
+  | {
+      kind: "attachment_too_large";
       path: readonly string[];
       title: string;
       name: string;
@@ -107,7 +120,12 @@ export interface KdbxExportAttachment {
   path: readonly string[];
   title: string;
   name: string;
+  /** Size of the file, as the entry states it. */
+  size: number;
 }
+
+/** Why an attachment is missing from the file. */
+export type KdbxSkipped = "unreadable" | "too_large";
 
 function hexOf(id: string): string {
   return id.replaceAll("-", "");
@@ -201,6 +219,7 @@ class ExportBuilder {
           path: entry.path,
           title: entry.title,
           name: info.name,
+          size: info.size,
         });
         this.#attachmentIndex.set(info.id, index);
       }
@@ -422,14 +441,17 @@ export function attachKdbxBinaries(
   model: KdbxExportModel,
   report: KdbxExportReport,
   attachments: readonly KdbxExportAttachment[],
-  files: readonly (Uint8Array | undefined)[],
+  files: readonly (Uint8Array | KdbxSkipped | undefined)[],
 ): void {
   const target = new Map<number, number>();
   attachments.forEach((attachment, index) => {
     const file = files[index];
-    if (file === undefined) {
+    if (!(file instanceof Uint8Array)) {
       report.items.push({
-        kind: "attachment_unreadable",
+        kind:
+          file === "too_large"
+            ? "attachment_too_large"
+            : "attachment_unreadable",
         path: attachment.path,
         title: attachment.title,
         name: attachment.name,

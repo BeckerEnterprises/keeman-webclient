@@ -5,7 +5,7 @@
  * only while staged or during a de- or encryption.
  */
 import type { ApiClient } from "../api/client";
-import { ApiError } from "../api/errors";
+import { ApiError, NetworkError } from "../api/errors";
 import { gunzip, packed, type Compression } from "../attachments/compress";
 import { storedAttachment } from "../attachments/refs";
 import {
@@ -16,7 +16,11 @@ import {
 } from "../crypto/bytes";
 import { generateFileKey } from "../crypto/flows/vault";
 import { systemRandomness } from "../crypto/random";
-import { decryptBlob, encryptBlob } from "../crypto/secretstream";
+import {
+  decryptBlob,
+  encryptBlob,
+  encryptedBlobSize,
+} from "../crypto/secretstream";
 import type { AttachmentInfo } from "../model/entry";
 import { SyncError } from "./errors";
 
@@ -249,16 +253,24 @@ export class Attachments {
   ): Promise<Uint8Array> {
     const stored = storedAttachment(raw, attachmentId);
     if (!stored) throw new SyncError("attachment_missing");
+    // `size` comes from whoever added the attachment, so it bounds nothing
+    // by itself: the server's limit for uploads does. A larger file is not
+    // read at all, a larger download is not kept.
+    if (stored.size > (await this.limit()))
+      throw new SyncError("attachment_too_large");
     let blob: Uint8Array;
     try {
       blob = await this.#api.downloadAttachment(vaultId, attachmentId, {
         signal: run.signal,
+        maxBytes: encryptedBlobSize(stored.size),
         onProgress: (done, total) =>
           run.onProgress?.({ done, total: total ?? done }),
       });
     } catch (error) {
       if (error instanceof ApiError && error.status === 404)
         throw new SyncError("attachment_missing");
+      if (error instanceof NetworkError && error.reason === "response")
+        throw new SyncError("attachment_corrupt");
       return cancelled(run.signal, error);
     }
     let plain: Uint8Array;
