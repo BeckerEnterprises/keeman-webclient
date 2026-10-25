@@ -210,6 +210,8 @@ export class FakeServer {
     string,
     { endpoint: string; body: string; response: Response }
   >();
+  /** Change the vault list before it is sent (key rollback tests). */
+  tamperVaults: (list: Record<string, unknown>[]) => void = () => undefined;
   /** Change a changes page before it is sent (rollback and corruption tests). */
   tamperChanges: (page: {
     vault_revision: number;
@@ -1058,6 +1060,7 @@ export class FakeServer {
             created: v.created,
           };
         });
+      this.tamperVaults(list);
       return reply(200, { vaults: list });
     }
     const idempotent = (endpoint: string, run: () => Response): Response => {

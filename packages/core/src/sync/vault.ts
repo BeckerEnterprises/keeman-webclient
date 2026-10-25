@@ -80,6 +80,8 @@ export class VaultState {
   corrupt = new Map<string, CorruptEntry>();
   /** The server delivered an older vault revision than seen before. */
   rollback = false;
+  /** Highest key version this device held (marks); never write below it. */
+  keyFloor = 0;
   /** Tombstones older than the mark of their object: ID → tombstone `seq`. */
   rollbackDeletes = new Map<string, number>();
   error: unknown = undefined;
@@ -328,8 +330,11 @@ export async function pullVault(
       throw error;
     applier = await full();
   }
+  // Synced with the key of this version: it becomes the floor.
+  const kv = state.summary.vault_key_version;
+  state.keyFloor = Math.max(state.keyFloor, kv);
   await context.marks.raise(context.userId, {
-    vaults: { [state.id]: { rev: state.since, obj: applier.raised } },
+    vaults: { [state.id]: { rev: state.since, kv, obj: applier.raised } },
   });
 }
 
@@ -353,5 +358,6 @@ export async function acknowledgeRollback(
     obj,
   });
   state.rollback = false;
+  state.keyFloor = state.summary.vault_key_version;
   state.rollbackDeletes.clear();
 }

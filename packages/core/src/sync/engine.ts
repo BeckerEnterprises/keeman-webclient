@@ -1985,7 +1985,14 @@ export class SyncEngine {
       state.summary = summary;
       this.#unwrapKey(state);
       const seen = marks.vaults[id];
-      if (seen && summary.revision < seen.rev) state.rollback = true;
+      state.keyFloor = Math.max(state.keyFloor, seen?.kv ?? 0);
+      // An older revision or key version: the server played back an older
+      // state (with the old key, a removed member could read new writes).
+      if (
+        (seen && summary.revision < seen.rev) ||
+        summary.vault_key_version < state.keyFloor
+      )
+        state.rollback = true;
     }
     for (const state of this.#states.values()) await this.#checkKey(state);
     if (this.#isStopped()) return;

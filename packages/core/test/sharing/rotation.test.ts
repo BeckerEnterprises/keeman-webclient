@@ -117,6 +117,49 @@ describe("removing a member", () => {
     expect(titles(dave.engine, vaultId).sort()).toEqual(["Nachher", "Vorher"]);
   });
 
+  it("treats an older key version as a rollback and never writes with it", async () => {
+    const { server, alice, bob, carol, vaultId } = await team();
+    const bobId = bob.account.userId ?? "";
+    const oldKey = server.vaults.get(vaultId)?.members.get(bobId)?.key_wrapped;
+    const review = await alice.engine.prepareRotation(vaultId);
+    await alice.engine.runRotation(
+      review,
+      { remove: [carol.account.userId ?? ""], dropCorrupt: false },
+      () => undefined,
+    );
+    await bob.engine.refresh();
+    expect(vault(bob.engine, vaultId)).toMatchObject({
+      vaultKeyVersion: 2,
+      keyStatus: "ok",
+      rollback: false,
+    });
+    // The server plays back the state before the rotation: Bob still holds
+    // the old key, and with it Carol could read what he writes.
+    server.tamperVaults = (list) => {
+      for (const summary of list)
+        if (summary.vault_id === vaultId)
+          Object.assign(summary, {
+            vault_key_version: 1,
+            member_key_version: 1,
+            key_wrapped: oldKey,
+            pending_key: null,
+          });
+    };
+    await bob.engine.refresh();
+    expect(vault(bob.engine, vaultId)).toMatchObject({
+      vaultKeyVersion: 1,
+      rollback: true,
+      writable: false,
+    });
+    const batches = posts(server, "/batch");
+    await expect(
+      bob.engine.createGroup(vaultId, rootOf(bob.engine, vaultId), {
+        name: "Neu",
+      }),
+    ).rejects.toMatchObject({ code: "read_only" });
+    expect(posts(server, "/batch")).toBe(batches);
+  });
+
   it("keeps a removed member from reading new or changed objects", async () => {
     const { server, alice, carol, vaultId } = await team();
     const before = server.vaults

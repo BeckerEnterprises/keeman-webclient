@@ -147,6 +147,36 @@ describe("stored marks", () => {
     expect(parse(store.text).users).toEqual({});
   });
 
+  it("keeps the key version as a maximum and reads older data without it", async () => {
+    const store = memoryStore();
+    const marks = storedSyncMarks(store, (task) => Promise.resolve(task()));
+    const user = U(1);
+    await marks.raise(user, {
+      vaults: { [VAULT]: { rev: 3, kv: 2, obj: {} } },
+    });
+    await marks.raise(user, {
+      vaults: { [VAULT]: { rev: 4, kv: 1, obj: {} } },
+    });
+    expect((await marks.read(user)).vaults[VAULT]).toEqual({
+      rev: 4,
+      kv: 2,
+      obj: {},
+    });
+    // "Understood" replaces it, also with none at all.
+    await marks.replaceVault(user, VAULT, { rev: 4, obj: {} });
+    expect(JSON.parse(store.text ?? "").users[user].vaults[VAULT]).toEqual({
+      rev: 4,
+      obj: {},
+    });
+    // Data written before the key version existed stays valid.
+    store.text = JSON.stringify({
+      v: 1,
+      users: { [user]: { vaults: { [VAULT]: { rev: 7, obj: {} } } } },
+    });
+    const fresh = storedSyncMarks(store, (task) => Promise.resolve(task()));
+    expect((await fresh.read(user)).vaults[VAULT]).toEqual({ rev: 7, obj: {} });
+  });
+
   it("discards invalid data and keeps the most recent accounts", async () => {
     const store = memoryStore();
     store.text = '{"v":1,"users":{"nope":{}}}';

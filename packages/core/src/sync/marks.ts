@@ -1,7 +1,7 @@
 /**
  * High-water marks for the rollback detection: per vault
- * the highest revision, per object the highest `seq` (negative for a
- * tombstone), per account revision and `seq` of `user_data`. Only IDs and
+ * the highest revision and key version, per object the highest `seq`
+ * (negative for a tombstone), per account revision and `seq` of `user_data`. Only IDs and
  * counters, nothing secret.
  */
 import * as v from "valibot";
@@ -9,6 +9,11 @@ import { UUID_PATTERN } from "../crypto/uuid";
 
 export interface VaultMarks {
   rev: number;
+  /**
+   * Highest key version whose key this device held; a lower one from the
+   * server is a rollback (a removed member might read what is written).
+   */
+  kv?: number;
   /** Object ID → `seq`; negative: a tombstone with this `seq`. */
   obj: Record<string, number>;
 }
@@ -86,8 +91,10 @@ export function mergeMarks(a: UserMarks, b: UserMarks): UserMarks {
     const obj: Record<string, number> = { ...left?.obj };
     for (const [objectId, mark] of Object.entries(right?.obj ?? {}))
       obj[objectId] = higherMark(obj[objectId], mark);
+    const kv = Math.max(left?.kv ?? 0, right?.kv ?? 0);
     result.vaults[id] = {
       rev: Math.max(left?.rev ?? 0, right?.rev ?? 0),
+      ...(kv > 0 ? { kv } : {}),
       obj,
     };
   }
@@ -96,6 +103,14 @@ export function mergeMarks(a: UserMarks, b: UserMarks): UserMarks {
 
 function copy(marks: UserMarks): UserMarks {
   return mergeMarks(marks, emptyMarks());
+}
+
+function copyVault(marks: VaultMarks): VaultMarks {
+  return {
+    rev: marks.rev,
+    ...(marks.kv !== undefined ? { kv: marks.kv } : {}),
+    obj: { ...marks.obj },
+  };
 }
 
 /** Marks kept in memory only (tests, and the fallback without storage). */
@@ -110,7 +125,7 @@ export function inMemorySyncMarks(): SyncMarks {
     },
     replaceVault: (userId, vaultId, marks) => {
       const current = get(userId);
-      current.vaults[vaultId] = { rev: marks.rev, obj: { ...marks.obj } };
+      current.vaults[vaultId] = copyVault(marks);
       users.set(userId, current);
       return Promise.resolve(true);
     },
@@ -153,7 +168,11 @@ const StoredSchema = v.object({
       ud: v.optional(v.tuple([Counter, Counter])),
       vaults: v.record(
         Id,
-        v.object({ rev: Counter, obj: v.record(Id, ObjectMark) }),
+        v.object({
+          rev: Counter,
+          kv: v.optional(Counter),
+          obj: v.record(Id, ObjectMark),
+        }),
       ),
     }),
   ),
@@ -233,7 +252,7 @@ export function storedSyncMarks(store: MarksStore, lock: MarksLock): SyncMarks {
       await memory.replaceVault(userId, vaultId, marks);
       return update(userId, (current) => {
         const next = copy(current ?? emptyMarks());
-        next.vaults[vaultId] = { rev: marks.rev, obj: { ...marks.obj } };
+        next.vaults[vaultId] = copyVault(marks);
         return next;
       });
     },

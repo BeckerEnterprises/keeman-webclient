@@ -298,12 +298,10 @@ export class WriteOperation {
   }
 
   #ref(id: string, type: ObjectType) {
-    return {
-      vaultId: this.#state.id,
-      objectId: id,
-      type,
-      keyVersion: this.#state.summary.vault_key_version,
-    };
+    const keyVersion = this.#state.summary.vault_key_version;
+    // Never encrypt with a key older than one this device already held.
+    if (keyVersion < this.#state.keyFloor) throw new SyncError("read_only");
+    return { vaultId: this.#state.id, objectId: id, type, keyVersion };
   }
 
   #put(
