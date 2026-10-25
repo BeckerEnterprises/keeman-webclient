@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Security
+
+- A server can no longer roll back the vault key version unnoticed: the device remembers the highest key version of each database, makes the database read-only with a warning when the server delivers a lower one, and never encrypts with an older key.
+- Placeholders have work limits: one value resolves at most 1000 references and produces at most 1,048,576 characters. Beyond that it stays unresolved with a note ("Too many references"), so a prepared entry cannot freeze the tab.
+- Auto-lock in Firefox and Safari: when the browser refuses to clear the clipboard, the next click or key in the tab clears it, also on the lock screen.
+
+### Fixed
+
+- A corrupt update no longer hides an entry or group: the last valid version stays visible, read-only and marked.
+- A full storage quota (`507`) is reported at once instead of being offered for a retry, and the message covers all data, not only attachments.
+
 ## [0.1.0] - 2026-10-25
 
 First public release. KeeMan is in early development: do not use it with real passwords yet, and note that the code has not been reviewed externally.
