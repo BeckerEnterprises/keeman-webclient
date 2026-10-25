@@ -7,7 +7,6 @@ import { REF_FIELDS, tokenize, type StandardField, type Token } from "./tokens";
 import {
   encodeFor,
   hasScheme,
-  itemsOf,
   layout,
   validHost,
   type Placeholder,
@@ -258,7 +257,7 @@ function urlParts(
   entry: PlaceholderEntry,
   context: Context,
 ): UrlParts {
-  const tokens = tokenize(entry.url.trim());
+  const tokens = tokensOf(context, `${entryId}|url template`, entry.url.trim());
   const [first] = tokens;
   const single =
     tokens.length === 1 && first?.kind !== "text" ? first : undefined;
@@ -269,7 +268,7 @@ function urlParts(
       ? singleValue
       : [piece(context, "https://"), ...singleValue];
   } else {
-    const split = layout(itemsOf(tokens));
+    const split = layout(tokens);
     if (typeof split === "string") return { ok: false, error: split };
     for (const [index, item] of split.items.entries()) {
       if ("literal" in item) {
@@ -341,7 +340,10 @@ export function resolveText(
       ? `${entryId}|S:${fold(custom?.name ?? "")}`
       : `${entryId}|${field}`;
   context.stack.push(key);
-  const refs = tokenize(text).some((t) => t.kind === "ref");
+  // Read once: `textParts` takes the same tokens from the cache.
+  const refs =
+    text.includes("{") &&
+    tokensOf(context, key, text).some((t) => t.kind === "ref");
   let parts: Part[];
   try {
     parts = text.includes("{")

@@ -438,6 +438,19 @@ describe("limits", () => {
     });
   }
 
+  it("reads a value with many { before one } quickly, also in lists", () => {
+    const title = "{".repeat(1 << 20) + "}";
+    const entries = lookup({ [A]: { title, url: title } });
+    const started = performance.now();
+    const listed = resolveText(A, "title", entries, { restricted: true });
+    const shown = resolveText(A, "title", entries);
+    resolveUrl(A, entries);
+    // About 80 ms together without coverage instrumentation (see tokens).
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(listed.value).toBe(title);
+    expect(shown.warnings).toEqual(["too_complex"]);
+  });
+
   it("resolves up to 1000 references", () => {
     // 1 + 31 + 31 × 31 = 993 references.
     const result = resolveText(A, "title", fanOut(31, { title: ref("T", B) }));
