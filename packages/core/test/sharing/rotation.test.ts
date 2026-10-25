@@ -117,6 +117,20 @@ describe("removing a member", () => {
     expect(titles(dave.engine, vaultId).sort()).toEqual(["Nachher", "Vorher"]);
   });
 
+  it("ends quietly when a lock overtakes taking the new key", async () => {
+    const { server, alice, bob, vaultId } = await team();
+    await rotate(alice, vaultId);
+    server.onRequest = (method, path) => {
+      if (method !== "POST" || !path.endsWith(`/${vaultId}/key`)) return;
+      server.onRequest = () => undefined;
+      bob.account.lock();
+    };
+    // The answer arrives after the lock: the key goes nowhere, and the
+    // stopped engine neither fails nor reports anything.
+    await expect(bob.engine.refresh()).resolves.toBeUndefined();
+    expect(bob.account.isUnlocked).toBe(false);
+  });
+
   it("treats an older key version as a rollback and never writes with it", async () => {
     const { server, alice, bob, carol, vaultId } = await team();
     const bobId = bob.account.userId ?? "";

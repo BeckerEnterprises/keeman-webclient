@@ -23,14 +23,30 @@ function assertSynchronous<T>(result: T): T {
   return result;
 }
 
+/** What the sync engine and sharing use of the keys. */
+export interface Keys {
+  useUserKey<T>(use: (userKey: Uint8Array) => T): T;
+  usePrivateKey<T>(use: (privateKey: Uint8Array) => T): T;
+  setVaultKey(vaultId: string, keyVersion: number, vaultKey: Uint8Array): void;
+  hasVaultKey(vaultId: string, keyVersion: number): boolean;
+  useVaultKey<T>(
+    vaultId: string,
+    keyVersion: number,
+    use: (vaultKey: Uint8Array) => T,
+  ): T;
+  forgetVault(vaultId: string): void;
+}
+
 /**
  * The only holder of long-lived keys. It takes ownership of the
  * buffers passed in, lends keys only to synchronous callbacks, never returns
  * secret key bytes and wipes everything on `lock()`.
  */
-export class KeyStore {
+export class KeyStore implements Keys {
   #account: AccountKeyMaterial | undefined;
   readonly #vaultKeys = new Map<string, Map<number, Uint8Array>>();
+  /** Raised by every lock (and so by every unlock). */
+  #generation = 0;
 
   get isUnlocked(): boolean {
     return this.#account !== undefined;
@@ -114,8 +130,43 @@ export class KeyStore {
     this.#vaultKeys.delete(vaultId);
   }
 
+  /**
+   * The keys of the current unlock only. After a lock every call fails with
+   * `locked`, also once the store is unlocked again: a task of a stopped
+   * engine that still finishes never adds a key to a later unlock.
+   */
+  scope(): Keys {
+    const generation = this.#generation;
+    const current = (): this => {
+      if (this.#generation !== generation)
+        throw new CryptoError("locked", "Key store was locked");
+      return this;
+    };
+    return {
+      useUserKey: (use) => current().useUserKey(use),
+      usePrivateKey: (use) => current().usePrivateKey(use),
+      setVaultKey: (vaultId, keyVersion, vaultKey) => {
+        try {
+          current();
+        } catch (error) {
+          wipe(vaultKey);
+          throw error;
+        }
+        this.setVaultKey(vaultId, keyVersion, vaultKey);
+      },
+      hasVaultKey: (vaultId, keyVersion) =>
+        current().hasVaultKey(vaultId, keyVersion),
+      useVaultKey: (vaultId, keyVersion, use) =>
+        current().useVaultKey(vaultId, keyVersion, use),
+      forgetVault: (vaultId) => {
+        current().forgetVault(vaultId);
+      },
+    };
+  }
+
   /** Wipes every key; safe to call repeatedly. */
   lock(): void {
+    this.#generation += 1;
     for (const vaultId of [...this.#vaultKeys.keys()])
       this.forgetVault(vaultId);
     if (this.#account) wipe(this.#account.userKey, this.#account.privateKey);

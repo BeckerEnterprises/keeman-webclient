@@ -182,6 +182,11 @@ export class Account {
   /** Second-factor steps and recoveries; lock and logout discard them. */
   readonly #pending = new Set<Discardable>();
   #engine: SyncEngine | undefined;
+  /**
+   * Raised by every lock. An operation remembers it when it starts and
+   * checks it after each wait: one that a lock overtook takes over nothing.
+   */
+  #epoch = 0;
   #email: string | undefined;
   #userId: string | undefined;
   #kdf: KdfParams | undefined;
@@ -324,6 +329,7 @@ export class Account {
   async startRegistration(
     input: RegistrationInput,
   ): Promise<PendingRegistration> {
+    const epoch = this.#epoch;
     const setup = newPasswordSetup(systemRandomness);
     const loginKeys = await this.#derive(input.password, setup.salt, setup.kdf);
     try {
@@ -346,6 +352,7 @@ export class Account {
         loginWithBody: (request, material) =>
           this.#completeExisting(request, material),
         adopt: (material, data) => {
+          this.#current(epoch);
           this.#adopt(material, data);
         },
       });
@@ -413,8 +420,10 @@ export class Account {
    * the second-factor step, which then holds only wrap_key.
    */
   async login(email: string, password: string): Promise<LoginResult> {
+    const epoch = this.#epoch;
     const normalized = normalizeEmail(email);
     const prelogin = await this.#api.prelogin(normalized);
+    this.#current(epoch);
     const kdf = validKdf(prelogin.kdf);
     const keys = await this.#derive(
       password,
@@ -422,21 +431,28 @@ export class Account {
       kdf,
     );
     try {
+      this.#current(epoch);
       const outcome = await this.#api.login({
         email: normalized,
         auth_key: toBase64Url(keys.authKey),
         device: this.#device,
       });
+      this.#current(epoch);
       if (outcome.kind === "second_factor") {
         const step = new SecondFactorLogin(
           outcome.challenge,
           keys.wrapKey.slice(),
-          this.#secondFactorSteps(kdf),
+          this.#secondFactorSteps(kdf, epoch),
         );
         this.#pending.add(step);
         return { kind: "second_factor", step };
       }
-      const report = await this.#finishLogin(outcome.userId, keys.wrapKey, kdf);
+      const report = await this.#finishLogin(
+        outcome.userId,
+        keys.wrapKey,
+        kdf,
+        epoch,
+      );
       return { kind: "unlocked", report };
     } finally {
       wipe(keys.authKey, keys.wrapKey);
@@ -451,21 +467,25 @@ export class Account {
     userId: string,
     wrapKey: Uint8Array,
     kdf: KdfParams,
+    epoch: number,
   ): Promise<UnlockReport> {
+    this.#current(epoch);
     const me = await this.#api.me();
+    this.#current(epoch);
     if (me.user_id !== userId) throw new AccountError("integrity");
     const report = this.#unlockWith(me, wrapKey, kdf, true);
-    return this.#checkUserDataMarks(report);
+    return this.#checkUserDataMarks(report, epoch);
   }
 
-  #secondFactorSteps(kdf: KdfParams): SecondFactorSteps {
+  #secondFactorSteps(kdf: KdfParams, epoch: number): SecondFactorSteps {
     return {
       api: this.#api,
       now: this.#now,
-      complete: (outcome, wrapKey) => {
-        if (outcome.kind !== "session")
-          return Promise.reject(new AccountError("integrity"));
-        return this.#finishLogin(outcome.userId, wrapKey, kdf);
+      complete: async (outcome, wrapKey) => {
+        // A lock wiped the step's key: that is not an integrity problem.
+        this.#current(epoch);
+        if (outcome.kind !== "session") throw new AccountError("integrity");
+        return this.#finishLogin(outcome.userId, wrapKey, kdf, epoch);
       },
       release: (step) => {
         this.#pending.delete(step);
@@ -481,15 +501,23 @@ export class Account {
 
   /** Unlock with an existing session. */
   async unlock(password: string): Promise<UnlockReport> {
+    const epoch = this.#epoch;
     const me = await this.#api.me();
+    this.#current(epoch);
     const kdf = validKdf(me.kdf);
     const keys = await this.#derive(password, fromBase64Url(me.salt, 16), kdf);
     try {
+      this.#current(epoch);
       const report = this.#unlockWith(me, keys.wrapKey, kdf, false);
-      return await this.#checkUserDataMarks(report);
+      return await this.#checkUserDataMarks(report, epoch);
     } finally {
       wipe(keys.authKey, keys.wrapKey);
     }
+  }
+
+  /** Throws `locked` if a lock came after the operation began at `epoch`. */
+  #current(epoch: number): void {
+    if (epoch !== this.#epoch) throw new AccountError("locked");
   }
 
   /**
@@ -538,9 +566,16 @@ export class Account {
     };
   }
 
-  /** Rollback check of user_data against the marks. */
-  async #checkUserDataMarks(report: UnlockReport): Promise<UnlockReport> {
+  /**
+   * Rollback check of user_data against the marks. A lock while the marks
+   * are read ends the unlock: the keys are gone, nothing is reported.
+   */
+  async #checkUserDataMarks(
+    report: UnlockReport,
+    epoch: number,
+  ): Promise<UnlockReport> {
     const rollback = await this.#applyUserDataMarks();
+    this.#current(epoch);
     return rollback
       ? { ...report, userDataRollback: true, userDataReadOnly: true }
       : report;
@@ -582,10 +617,12 @@ export class Account {
 
   /** After `user_data_changed`: loads a newer user_data. */
   async reloadUserData(revision?: number): Promise<void> {
+    const epoch = this.#epoch;
     const userId = this.#requireUnlocked();
     const slot = this.#userData;
     if (slot && revision !== undefined && revision <= slot.revision) return;
     const me = await this.#api.me();
+    this.#current(epoch);
     if (me.user_id !== userId) throw new AccountError("integrity");
     this.#userData = {
       revision: me.user_data.revision,
@@ -606,6 +643,7 @@ export class Account {
    * second-factor steps and recoveries end as well.
    */
   lock(): void {
+    this.#epoch += 1;
     this.#discardPending();
     this.#engine?.stop();
     this.#engine = undefined;
@@ -755,6 +793,7 @@ export class Account {
     email: string,
     recoveryKey: string,
   ): Promise<RecoveryProcess> {
+    const epoch = this.#epoch;
     let start;
     try {
       start = startRecovery(recoveryKey);
@@ -767,6 +806,7 @@ export class Account {
     let outcome: RecoverStartOutcome;
     try {
       outcome = await this.#api.recoverStart(normalized, start.recoveryAuthKey);
+      this.#current(epoch);
     } catch (error) {
       wipe(start.recoveryWrapKey);
       throw error;
@@ -780,7 +820,8 @@ export class Account {
         now: this.#now,
         device: this.#device,
         derive: (password, salt, kdf) => this.#derive(password, salt, kdf),
-        unlock: (me, userKey, kdf) => this.#adoptRecovered(me, userKey, kdf),
+        unlock: (me, userKey, kdf) =>
+          this.#adoptRecovered(me, userKey, kdf, epoch),
         release: (step) => {
           this.#pending.delete(step);
         },
@@ -795,7 +836,13 @@ export class Account {
     me: Me,
     userKey: Uint8Array,
     kdf: KdfParams,
+    epoch: number,
   ): Promise<UnlockReport> {
+    if (epoch !== this.#epoch) {
+      // A lock wiped the process's key already; this copy goes too.
+      wipe(userKey);
+      throw new AccountError("locked");
+    }
     let unlocked;
     try {
       unlocked = unlockWithUserKey(me, userKey);
@@ -814,17 +861,21 @@ export class Account {
     // An own password change: the new parameters are the ones to expect.
     this.#memory.set(me.user_id, cost(kdf));
     const state = this.#userData.state;
-    const report = await this.#checkUserDataMarks({
-      kdfWeakerThanSeen: false,
-      kdfBelowDefault: isBelowDefault(kdf),
-      recoveryKeyUnconfirmed: false,
-      userDataCorrupt: state.status === "corrupt",
-      userDataReadOnly: state.status === "ok" && state.readOnly,
-      userDataRollback: false,
-    });
+    const report = await this.#checkUserDataMarks(
+      {
+        kdfWeakerThanSeen: false,
+        kdfBelowDefault: isBelowDefault(kdf),
+        recoveryKeyUnconfirmed: false,
+        userDataCorrupt: state.status === "corrupt",
+        userDataReadOnly: state.status === "ok" && state.readOnly,
+        userDataRollback: false,
+      },
+      epoch,
+    );
     // The new recovery key was confirmed before the finish.
     if (!this.recoveryKeyConfirmed && this.contactsWritable)
       await this.confirmRecoveryKey().catch(() => undefined);
+    this.#current(epoch);
     return { ...report, recoveryKeyUnconfirmed: !this.recoveryKeyConfirmed };
   }
 
@@ -934,7 +985,9 @@ export class Account {
     const engine = new SyncEngine(
       {
         api: this.#api,
-        keys: this.#keys,
+        // Bound to this unlock: a task that outlives the engine adds no key
+        // to a later one.
+        keys: this.#keys.scope(),
         userId,
         marks: this.#marks,
         vaultOrder: () => this.vaultOrder,
@@ -1654,12 +1707,18 @@ export class PendingRegistration {
         revision = existing.me.user_data.revision;
         userData = existing.userData;
       }
-      this.#steps.adopt(material, {
-        email: this.#request.email,
-        kdf: validateKdfParams(this.#request.kdf),
-        revision,
-        userData,
-      });
+      try {
+        this.#steps.adopt(material, {
+          email: this.#request.email,
+          kdf: validateKdfParams(this.#request.kdf),
+          revision,
+          userData,
+        });
+      } catch (error) {
+        // Overtaken by a lock: the keys go, the account exists anyway.
+        this.discard();
+        throw error;
+      }
       this.#material = undefined;
     } finally {
       this.#inFlight = false;

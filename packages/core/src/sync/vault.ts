@@ -9,7 +9,7 @@ import type { ChangedObject, VaultSummary } from "../api/schemas";
 import type { ObjectType } from "../crypto/aad";
 import type { JsonObject } from "../crypto/bytes";
 import { CryptoError } from "../crypto/errors";
-import type { KeyStore } from "../crypto/keystore";
+import type { Keys } from "../crypto/keystore";
 import { decryptChange, type DecryptedChange } from "../crypto/objects";
 import { inspectEntry } from "../model/entry";
 import { inspectIcon } from "../model/icon";
@@ -56,7 +56,7 @@ export interface CorruptEntry {
 
 export interface SyncContext {
   api: ApiClient;
-  keys: KeyStore;
+  keys: Keys;
   userId: string;
   marks: SyncMarks;
   /** Page size of `changes`; the server default when unset. */
@@ -141,7 +141,7 @@ function inspect(
 
 /** Decryption and validation, in this order. */
 export function decode(
-  keys: KeyStore,
+  keys: Keys,
   vaultId: string,
   object: ChangedObject,
 ): Decoded {

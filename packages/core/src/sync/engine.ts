@@ -14,7 +14,7 @@ import {
   unwrapVaultKey,
   type NewObject,
 } from "../crypto/flows/vault";
-import type { KeyStore } from "../crypto/keystore";
+import type { Keys } from "../crypto/keystore";
 import { systemRandomness } from "../crypto/random";
 import {
   applyEntryEdit,
@@ -194,7 +194,7 @@ export interface SyncEngineOptions {
 /** What the engine needs from the account; not part of the public API. */
 export interface AccountAccess {
   api: ApiClient;
-  keys: KeyStore;
+  keys: Keys;
   userId: string;
   marks: SyncMarks;
   vaultOrder(): string[];
@@ -404,7 +404,20 @@ export class SyncEngine {
 
   /** `GET /v1/vaults`, then a sync of every vault that changed. */
   refresh(): Promise<void> {
-    return this.#refreshSerial.run(() => this.#refresh());
+    return this.#refreshSerial.run(async () => {
+      try {
+        await this.#refresh();
+      } catch (error) {
+        // A lock stopped the engine while it waited; its keys are gone.
+        if (
+          this.#isStopped() &&
+          error instanceof CryptoError &&
+          error.code === "locked"
+        )
+          return;
+        throw error;
+      }
+    });
   }
 
   /** Delta sync of one vault. */

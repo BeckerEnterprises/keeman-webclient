@@ -13,6 +13,41 @@ function material() {
 }
 
 describe("KeyStore", () => {
+  it("binds a scope to the unlock it was taken in", () => {
+    const store = new KeyStore();
+    store.unlock(material());
+    const scope = store.scope();
+    const v1 = tv("vk1", 32);
+    scope.setVaultKey(IDS.vault, 1, v1);
+    expect(scope.hasVaultKey(IDS.vault, 1)).toBe(true);
+    expect(scope.useVaultKey(IDS.vault, 1, (vk) => vk.length)).toBe(32);
+    expect(scope.useUserKey((uk) => uk.length)).toBe(32);
+    // Locked and unlocked again: the old scope reaches nothing, neither the
+    // keys of the new unlock nor the store itself.
+    store.lock();
+    store.unlock(material());
+    const late = tv("vk2", 32);
+    expectCryptoError(() => {
+      scope.setVaultKey(IDS.vault, 2, late);
+    }, "locked");
+    expect(late.every((b) => b === 0)).toBe(true);
+    expect(store.hasVaultKey(IDS.vault, 2)).toBe(false);
+    expectCryptoError(() => scope.hasVaultKey(IDS.vault, 1), "locked");
+    expectCryptoError(() => scope.useUserKey((uk) => uk.length), "locked");
+    expectCryptoError(() => scope.usePrivateKey((sk) => sk.length), "locked");
+    expectCryptoError(
+      () => scope.useVaultKey(IDS.vault, 1, (vk) => vk.length),
+      "locked",
+    );
+    expectCryptoError(() => {
+      scope.forgetVault(IDS.vault);
+    }, "locked");
+    // A fresh scope works with the new unlock.
+    const fresh = store.scope();
+    fresh.setVaultKey(IDS.vault, 2, tv("vk2", 32));
+    expect(store.hasVaultKey(IDS.vault, 2)).toBe(true);
+  });
+
   it("lends keys to synchronous callbacks only", () => {
     const store = new KeyStore();
     store.unlock(material());
