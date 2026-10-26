@@ -359,6 +359,8 @@ export const useSessionStore = defineStore("session", {
     /** Copies what the UI needs from the account (no keys). */
     refreshFromAccount(): void {
       const { account } = useServices();
+      // A late answer after a lock brings nothing back into the view.
+      if (!account.isUnlocked) return;
       const kdf = account.kdf;
       this.kdf = kdf ? { ops: kdf.ops, mem: kdf.mem } : undefined;
       this.settings = { ...account.settings };
@@ -380,17 +382,23 @@ export const useSessionStore = defineStore("session", {
      * the core unwrapped: it knows only its own objects.
      */
     async verifyContact(candidate: Candidate): Promise<void> {
+      const started = generation;
       await useServices().account.verifyContact(toRaw(candidate));
+      stillCurrent(started);
       this.refreshFromAccount();
     },
 
     async removeContact(userId: string): Promise<void> {
+      const started = generation;
       await useServices().account.removeContact(userId);
+      stillCurrent(started);
       this.refreshFromAccount();
     },
 
     async acknowledgeUserDataRollback(): Promise<void> {
+      const started = generation;
       await useServices().account.acknowledgeUserDataRollback();
+      stillCurrent(started);
       this.refreshFromAccount();
     },
 
@@ -483,12 +491,16 @@ export const useSessionStore = defineStore("session", {
     },
 
     async updateSettings(change: Partial<Settings>): Promise<void> {
+      const started = generation;
       await useServices().account.updateSettings(change);
+      stillCurrent(started);
       this.refreshFromAccount();
     },
 
     async resetUserData(language: Language): Promise<void> {
+      const started = generation;
       await useServices().account.resetUserData(language);
+      stillCurrent(started);
       this.refreshFromAccount();
     },
   },

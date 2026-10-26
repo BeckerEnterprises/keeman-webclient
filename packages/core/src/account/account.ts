@@ -218,29 +218,37 @@ export class Account {
     return this.#kdf;
   }
 
+  /**
+   * The decrypted user_data, only while the keys are there: a late answer
+   * of a write must not make it readable while locked.
+   */
+  #slot(): UserDataSlot | undefined {
+    return this.#keys.isUnlocked ? this.#userData : undefined;
+  }
+
   get userDataState(): UserDataState | undefined {
-    return this.#userData?.state;
+    return this.#slot()?.state;
   }
 
   get settings(): Settings {
-    const state = this.#userData?.state;
+    const state = this.#slot()?.state;
     return state?.status === "ok"
       ? effectiveSettings(state.raw)
       : { ...SETTING_DEFAULTS };
   }
 
   get recoveryKeyConfirmed(): boolean {
-    const state = this.#userData?.state;
+    const state = this.#slot()?.state;
     return state?.status !== "ok" || isRecoveryKeyConfirmed(state.raw);
   }
 
   get userDataRollback(): boolean {
-    return this.#userData?.rollback ?? false;
+    return this.#slot()?.rollback ?? false;
   }
 
   /** `vaultOrder` of user_data. */
   get vaultOrder(): string[] {
-    const state = this.#userData?.state;
+    const state = this.#slot()?.state;
     return state?.status === "ok" ? vaultOrderOf(state.raw) : [];
   }
 
@@ -265,7 +273,7 @@ export class Account {
    * corrupt or rolled back without acknowledgment.
    */
   #trustedContacts(): readonly Contact[] {
-    const slot = this.#userData;
+    const slot = this.#slot();
     if (slot?.state.status !== "ok" || slot.rollback) return [];
     return contactsOf(slot.state.raw);
   }
@@ -276,7 +284,7 @@ export class Account {
 
   /** Confirmations can be stored; otherwise sharing waits. */
   get contactsWritable(): boolean {
-    const slot = this.#userData;
+    const slot = this.#slot();
     return (
       slot?.state.status === "ok" && !slot.state.readOnly && !slot.rollback
     );
@@ -600,6 +608,7 @@ export class Account {
 
   /** "Understood": the delivered user_data becomes the new mark. */
   async acknowledgeUserDataRollback(): Promise<void> {
+    const epoch = this.#epoch;
     const slot = this.#userData;
     const userId = this.#requireUnlocked();
     if (!slot?.rollback || slot.state.status !== "ok") return;
@@ -607,6 +616,7 @@ export class Account {
       slot.revision,
       seqOf(slot.state.raw),
     ]);
+    this.#current(epoch);
     slot.rollback = false;
     slot.state = {
       ...slot.state,
@@ -682,13 +692,17 @@ export class Account {
     chooseKdf: (current: KdfParams) => KdfParams,
     revokeOtherSessions: boolean,
   ): Promise<void> {
+    const epoch = this.#epoch;
     const userId = this.#requireUnlocked();
     const check = await this.#checkPassword(currentPassword);
+    this.#current(epoch);
     let reauthToken = await this.#api.reauth(check.authKey);
+    this.#current(epoch);
     const setup = newPasswordSetup(systemRandomness, chooseKdf(check.kdf));
     const newKeys = await this.#derive(newPassword, setup.salt, setup.kdf);
     let body: string;
     try {
+      this.#current(epoch);
       body = JSON.stringify(
         this.#keys.useUserKey((userKey) =>
           buildPasswordChange(
@@ -720,8 +734,11 @@ export class Account {
         reauthToken = await this.#api.reauth(check.authKey);
       }
     }
-    this.#kdf = setup.kdf;
+    // The change holds on the server either way: the parameters to expect
+    // for this account are the new ones.
     this.#memory.set(userId, cost(setup.kdf));
+    this.#current(epoch);
+    this.#kdf = setup.kdf;
   }
 
   /**
@@ -895,6 +912,7 @@ export class Account {
    * automatic. The recovery key flag is left out (counts as confirmed).
    */
   async resetUserData(language: Language): Promise<void> {
+    const epoch = this.#epoch;
     const userId = this.#requireUnlocked();
     if (this.#userData?.state.status !== "corrupt")
       throw new AccountError("user_data_read_only");
@@ -908,6 +926,8 @@ export class Account {
       encryptUserData(systemRandomness, userKey, userId, content),
     );
     const revision = await this.#api.putUserData(this.#userData.revision, data);
+    // A lock or another account meanwhile: nothing decrypted goes back in.
+    this.#current(epoch);
     this.#userData = {
       revision,
       state: inspectUserData(content),
@@ -917,6 +937,7 @@ export class Account {
   }
 
   async #updateUserData(change: UserDataChange): Promise<void> {
+    const epoch = this.#epoch;
     const userId = this.#requireUnlocked();
     const slot = this.#userData;
     if (!slot || slot.state.status !== "ok")
@@ -932,6 +953,8 @@ export class Account {
       );
       try {
         const newRevision = await this.#api.putUserData(revision, data);
+        // A lock or another account meanwhile: nothing decrypted goes back in.
+        this.#current(epoch);
         this.#userData = {
           revision: newRevision,
           state: { status: "ok", raw: local, readOnly: false },
@@ -949,6 +972,7 @@ export class Account {
           throw new AccountError("conflict_unresolved");
       }
       const me = await this.#api.me();
+      this.#current(epoch);
       const server = inspectUserData(this.#decryptUserData(userId, me));
       if (server.status !== "ok") throw new AccountError("user_data_corrupt");
       if (server.readOnly) throw new AccountError("user_data_read_only");
@@ -1013,16 +1037,25 @@ export class Account {
    * `DELETE /v1/me`, then the device forgets the account.
    */
   async deleteAccount(password: string): Promise<void> {
+    const epoch = this.#epoch;
     const userId = this.#requireUnlocked();
     const check = await this.#checkPassword(password);
+    this.#current(epoch);
     const reauthToken = await this.#api.reauth(check.authKey);
+    this.#current(epoch);
     await this.#api.deleteMe(reauthToken);
-    this.lock();
-    this.#userId = undefined;
-    this.#email = undefined;
-    this.#kdf = undefined;
+    // What the device keeps about the deleted account goes in any case;
+    // the session state only if no lock or other account came meanwhile.
     this.#memory.forget(userId);
+    const current = epoch === this.#epoch;
+    if (current) {
+      this.lock();
+      this.#userId = undefined;
+      this.#email = undefined;
+      this.#kdf = undefined;
+    }
     await this.#marks.forgetUser(userId);
+    if (!current) throw new AccountError("locked");
   }
 
   // ------------------------------------------------------------ two-factor
@@ -1422,6 +1455,7 @@ export class RecoveryProcess {
     const prelogin = await this.#guard(() =>
       this.#steps.api.prelogin(this.email),
     );
+    this.#still(userKey);
     let current: KdfParams;
     try {
       current = validateKdfParams(prelogin.kdf);
@@ -1431,6 +1465,7 @@ export class RecoveryProcess {
     const setup = newPasswordSetup(systemRandomness, strongerOf(current));
     const keys = await this.#steps.derive(newPassword, setup.salt, setup.kdf);
     try {
+      this.#still(userKey);
       const built = buildRecoveryFinish(
         systemRandomness,
         { userId, userKey, ...setup, loginKeys: keys },
@@ -1597,6 +1632,11 @@ export class RecoveryProcess {
     }
     this.#acceptPayload(outcome.payload);
     return { stage: "password" };
+  }
+
+  /** Discarded meanwhile (lock, abort, expiry): the step ends here. */
+  #still(userKey: Uint8Array): void {
+    if (this.#userKey !== userKey) throw new AccountError("challenge_expired");
   }
 
   /** The key of the current stage; out of time ends the recovery. */

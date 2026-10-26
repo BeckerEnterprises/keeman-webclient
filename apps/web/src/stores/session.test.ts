@@ -28,6 +28,7 @@ const account = {
   ownFingerprint: undefined,
   contactsWritable: false,
   unlock: vi.fn<(password: string) => Promise<UnlockReport>>(),
+  updateSettings: vi.fn<(change: object) => Promise<void>>(),
   lock: vi.fn(() => {
     account.isUnlocked = false;
   }),
@@ -63,7 +64,9 @@ function heldUnlock(): (report: UnlockReport) => void {
 beforeEach(() => {
   setActivePinia(createPinia());
   account.isUnlocked = false;
+  account.settings = { ...SETTING_DEFAULTS };
   account.unlock.mockReset();
+  account.updateSettings.mockReset();
 });
 
 describe("session store", () => {
@@ -107,5 +110,33 @@ describe("session store", () => {
       session.applyUnlocked();
     }).toThrow();
     expect(session.phase).toBe("locked");
+  });
+
+  it("takes no settings from a save that a lock overtook", async () => {
+    const session = useSessionStore();
+    session.phase = "locked";
+    account.unlock.mockImplementationOnce(() => {
+      account.isUnlocked = true;
+      return Promise.resolve(REPORT);
+    });
+    await session.unlock("password");
+    let answer!: () => void;
+    account.updateSettings.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const saving = session.updateSettings({ autoLockMinutes: 5 });
+    session.lock(false);
+    // Even a core that kept the late answer does not reach the view.
+    account.isUnlocked = true;
+    account.settings = { ...SETTING_DEFAULTS, autoLockMinutes: 5 };
+    answer();
+    await expect(saving).rejects.toMatchObject({ code: "locked" });
+    expect(session.settings.autoLockMinutes).toBe(
+      SETTING_DEFAULTS.autoLockMinutes,
+    );
+    account.isUnlocked = false;
   });
 });
