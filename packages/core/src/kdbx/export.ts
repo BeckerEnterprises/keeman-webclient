@@ -120,8 +120,6 @@ export interface KdbxExportAttachment {
   path: readonly string[];
   title: string;
   name: string;
-  /** Size of the file, as the entry states it. */
-  size: number;
 }
 
 /** Why an attachment is missing from the file. */
@@ -219,7 +217,6 @@ class ExportBuilder {
           path: entry.path,
           title: entry.title,
           name: info.name,
-          size: info.size,
         });
         this.#attachmentIndex.set(info.id, index);
       }

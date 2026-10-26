@@ -1524,24 +1524,28 @@ export class SyncEngine {
     const { attachments } = built;
     const files: (Uint8Array | KdbxSkipped)[] = [];
     // All files stay in memory until the file is written: a total bound,
-    // so small attachments that unpack big cannot exhaust it.
+    // so small attachments that unpack big cannot exhaust it. What is left
+    // of it bounds each read like the server's limit (checked with the
+    // size the read uses, before downloading), and the actual length is
+    // checked again.
     let total = 0;
     for (const [index, attachment] of attachments.entries()) {
       if (run.signal?.aborted) throw new SyncError("cancelled");
-      if (total + attachment.size > KDBX_EXPORT_ATTACHMENT_BYTES) {
-        files.push("too_large");
-        run.onProgress?.({ done: index + 1, total: attachments.length });
-        continue;
-      }
       try {
+        const left = KDBX_EXPORT_ATTACHMENT_BYTES - total;
         const file = await this.readAttachment(
           vaultId,
           attachment.entryId,
           attachment.attachmentId,
-          { signal: run.signal },
+          { signal: run.signal, maxSize: left },
         );
-        total += file.length;
-        files.push(file);
+        if (file.length > left) {
+          file.fill(0);
+          files.push("too_large");
+        } else {
+          total += file.length;
+          files.push(file);
+        }
       } catch (error) {
         if (error instanceof SyncError && error.code === "cancelled")
           throw error;

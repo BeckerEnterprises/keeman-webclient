@@ -40,6 +40,8 @@ export interface AttachmentProgress {
 export interface AttachmentRun {
   onProgress?: (progress: AttachmentProgress) => void;
   signal?: AbortSignal;
+  /** Reading: unpacked bytes the caller can still take (export budget). */
+  maxSize?: number;
 }
 
 /** An encrypted file ready to go up again with the same bytes. */
@@ -68,6 +70,8 @@ export class Attachments {
   readonly #api: ApiClient;
   readonly #staged = new Map<string, Staged>();
   #limit: Promise<number> | undefined;
+  /** Set by `stop()` (lock): nothing more is staged or handed out. */
+  #stopped = false;
 
   constructor(api: ApiClient) {
     this.#api = api;
@@ -99,6 +103,7 @@ export class Attachments {
       throw new SyncError("attachment_too_large");
     const mime = file.mime.trim() === "" ? FALLBACK_MIME : file.mime;
     const { data, compression } = await packed(file.data, mime);
+    this.#live();
     const id = systemRandomness.id("attachment_id");
     const key = generateFileKey(systemRandomness);
     const info: AttachmentInfo = {
@@ -112,10 +117,12 @@ export class Attachments {
     try {
       const blob = encryptBlob(key, id, data);
       await this.#parts(vaultId, entryId, id, blob, run);
+      this.#live();
       return info;
     } catch (error) {
       this.forget([id]);
       this.#api.deleteAttachment(vaultId, id).catch(() => undefined);
+      if (this.#stopped) throw new SyncError("locked");
       return cancelled(run.signal, error);
     }
   }
@@ -141,6 +148,7 @@ export class Attachments {
     run.onProgress?.({ done: 0, total: blob.length });
     for (let part = 0; part < upload.parts; part++) {
       if (run.signal?.aborted) throw new SyncError("cancelled");
+      this.#live();
       const start = part * upload.part_size;
       const chunk = blob.subarray(start, start + upload.part_size);
       try {
@@ -256,8 +264,12 @@ export class Attachments {
     // `size` comes from whoever added the attachment, so it bounds nothing
     // by itself: the server's limit for uploads does. A larger file is not
     // read at all, a larger download is not kept.
-    if (stored.size > (await this.limit()))
-      throw new SyncError("attachment_too_large");
+    const limit = Math.min(
+      await this.limit(),
+      run.maxSize ?? Number.POSITIVE_INFINITY,
+    );
+    this.#live();
+    if (stored.size > limit) throw new SyncError("attachment_too_large");
     let blob: Uint8Array;
     try {
       blob = await this.#api.downloadAttachment(vaultId, attachmentId, {
@@ -273,6 +285,7 @@ export class Attachments {
         throw new SyncError("attachment_corrupt");
       return cancelled(run.signal, error);
     }
+    this.#live();
     let plain: Uint8Array;
     let key: Uint8Array | undefined;
     try {
@@ -290,12 +303,22 @@ export class Attachments {
     }
     if (stored.compression === "none") return plain;
     const file = await gunzip(plain, stored.size);
+    plain.fill(0);
+    if (this.#stopped) {
+      file?.fill(0);
+      throw new SyncError("locked");
+    }
     if (file?.length !== stored.size) throw new SyncError("attachment_corrupt");
     return file;
   }
 
+  #live(): void {
+    if (this.#stopped) throw new SyncError("locked");
+  }
+
   /** On lock: zeroes every staged key and deletes those uploads. */
   stop(): void {
+    this.#stopped = true;
     this.discard([...this.#staged.keys()], () => false);
   }
 }

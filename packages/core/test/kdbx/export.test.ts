@@ -465,7 +465,6 @@ describe("buildKdbxExport rules", () => {
         path: [],
         title: "history",
         name: "a.txt",
-        size: attachment.size,
       },
     ]);
     expect(item?.history[0]?.attachments).toEqual([

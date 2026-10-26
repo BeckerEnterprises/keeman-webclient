@@ -120,4 +120,72 @@ describe("attachment limits", () => {
     ).toHaveLength(2);
     expect(attachments).toHaveLength(3);
   });
+
+  it("skips an attachment over what is left without downloading it", async () => {
+    const { engine, vaultId, server } = await firstDevice();
+    const { attachments } = await entryWith(engine, vaultId, [
+      text(30_000),
+      text(30_000),
+    ]);
+    const downloads = (id: string) =>
+      server.log.filter(
+        (r) => r.method === "GET" && r.path.endsWith(`/attachments/${id}`),
+      ).length;
+    await engine.exportKdbx(vaultId);
+    expect(downloads(attachments[0] ?? "")).toBe(1);
+    expect(downloads(attachments[1] ?? "")).toBe(0);
+  });
+
+  it("checks the length actually read, not only the stated size", async () => {
+    const { engine, vaultId } = await firstDevice();
+    await entryWith(engine, vaultId, [text(10_000), text(10_000)]);
+    // A file longer than its entry claims, e.g. after a change meanwhile.
+    const read = vi
+      .spyOn(engine, "readAttachment")
+      .mockResolvedValueOnce(new Uint8Array(60_000));
+    const { model, report } = await engine.exportKdbx(vaultId);
+    read.mockRestore();
+    expect(model.binaries.map((b) => b.length)).toEqual([10_000]);
+    expect(
+      report.items
+        .filter((item) => item.kind === "attachment_too_large")
+        .map((item) => ("name" in item ? item.name : "")),
+    ).toEqual(["0.txt"]);
+  });
+
+  it("hands nothing out once a lock stopped the engine", async () => {
+    const { account, engine, vaultId, server } = await firstDevice();
+    const { id, attachments } = await entryWith(engine, vaultId, [text(1000)]);
+    const [stored = ""] = attachments;
+    // Reading: the download arrives after the lock.
+    server.onRequest = (method, path) => {
+      if (method !== "GET" || !path.endsWith(`/attachments/${stored}`)) return;
+      server.onRequest = () => undefined;
+      account.lock();
+    };
+    await expect(
+      engine.readAttachment(vaultId, id, stored),
+    ).rejects.toMatchObject({ code: "locked" });
+  });
+
+  it("stages nothing once a lock stopped the engine", async () => {
+    const { account, engine, vaultId, server } = await firstDevice();
+    const entryId = engine.newEntryId();
+    server.onRequest = (method, path) => {
+      if (method !== "POST" || !path.endsWith("/attachments")) return;
+      server.onRequest = () => undefined;
+      account.lock();
+    };
+    await expect(
+      engine.stageAttachment(vaultId, entryId, {
+        name: "a.txt",
+        mime: "text/plain",
+        data: text(1000),
+      }),
+    ).rejects.toMatchObject({ code: "locked" });
+    const puts = server.log.filter(
+      (r) => r.method === "PUT" && r.path.includes("/parts/"),
+    );
+    expect(puts).toHaveLength(0);
+  });
 });

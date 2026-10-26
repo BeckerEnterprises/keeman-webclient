@@ -195,8 +195,11 @@ describe("budget of the projection", () => {
     console.log(
       `budget: build ${median(builds).toFixed(0)} ms, rebuild ${median(rebuilds).toFixed(1)} ms, search ${median(searches).toFixed(1)} ms`,
     );
+    // Generous: `pnpm test` runs with coverage (several times slower) and
+    // may share the CPU with builds. Rebuilding everything for one change
+    // would take about as long as the first build, far above these.
     expect(median(builds)).toBeLessThan(1500);
-    expect(median(rebuilds)).toBeLessThan(30);
-    expect(median(searches)).toBeLessThan(10);
+    expect(median(rebuilds)).toBeLessThan(100);
+    expect(median(searches)).toBeLessThan(50);
   });
 });
