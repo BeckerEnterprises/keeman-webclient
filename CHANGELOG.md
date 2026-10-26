@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-26
+
+Security release after a code review and a whitebox security audit of 0.1.0. KeeMan is still in early development: do not use it with real passwords yet. Use it with KeeMan Server 0.1.1.
+
 ### Security
 
 - A server can no longer roll back the vault key version unnoticed: the device remembers the highest key version of each database, makes the database read-only with a warning when the server delivers a lower one, and never encrypts with an older key.
@@ -39,4 +43,5 @@ First public release. KeeMan is in early development: do not use it with real pa
 - Strict Content Security Policy, no third-party resources, auto-lock and clipboard clearing.
 - Container image (`Dockerfile`): the built app served by Caddy on port 8080 as a non-root user, with the same security headers as a manual setup; `KEEMAN_API_HOST` sets the API address in the Content Security Policy and in `config.json`. `scripts/check-image.sh` builds and starts the image and checks its headers.
 
+[0.1.1]: https://github.com/BeckerEnterprises/keeman-webclient/releases/tag/v0.1.1
 [0.1.0]: https://github.com/BeckerEnterprises/keeman-webclient/releases/tag/v0.1.0

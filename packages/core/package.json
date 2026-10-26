@@ -1,6 +1,6 @@
 {
   "name": "@keeman/core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "KeeMan client core: crypto, data model, sync and API client. No Vue, no DOM.",
   "license": "AGPL-3.0-or-later",
