@@ -14,7 +14,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - At login the key derivation parameters actually used (from `prelogin`) are compared with the ones seen before, also after a second factor; a failing unlock after weaker parameters mentions manipulated parameters.
 - Locking (by hand, by the timer or from another tab), logging out and switching accounts end an unlock, login, second factor, recovery or registration still waiting for an answer: it takes over no keys and the view stays locked. Before, a late answer could unlock the tab again, and a lock during a second factor or recovery ended in a false integrity error.
 - The sync engine uses the keys of the current unlock only; a task of a stopped engine never adds a key to a later unlock.
-- An attachment is read only up to the server's upload limit, whatever size its entry states, and a download stops beyond the largest blob that size allows; a KDBX export keeps at most 1 GiB of attachments and names the rest in its report. A member can no longer exhaust another member's memory with small attachments that unpack big.
+- The same holds for writes of the account data (settings, contacts, recovery key confirmation, database order, reset), password and KDF changes, account deletion, attachment uploads and reads, and preparing a recovery: one that a lock overtook puts no decrypted data back, also not into another account signed in meanwhile. Without unlocked keys the account data reads as defaults.
+- An attachment is read only up to the server's upload limit, whatever size its entry states, and a download stops beyond the largest blob that size allows; a KDBX export keeps at most 1 GiB of attachments and names the rest in its report. A member can no longer exhaust another member's memory with small attachments that unpack big. The export checks the total with the size each read uses, before downloading, and again with the length actually read.
 
 ### Fixed
 
