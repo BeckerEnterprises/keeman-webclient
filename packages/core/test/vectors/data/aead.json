@@ -1,7 +1,7 @@
 {
   "vectors": "aead",
   "format_version": 1,
-  "generator": "@keeman/core 0.1.0, libsodium-wrappers-sumo 0.8.4",
+  "generator": "@keeman/core 0.1.1, libsodium-wrappers-sumo 0.8.4",
   "cases": [
     {
       "id": "wrap-user-key",
@@ -679,6 +679,28 @@
       "envelope_b64": "AR7kkUuCr7dvMk5hlNoxH_63tulPVRTmtxtzUXsS_WyLF0GvG5wskAQ2wAJewfbRvqayzyuu1NgncQ7-GoFSP2CpU9Idx7j7x3k",
       "expected": {
         "error": "format"
+      }
+    },
+    {
+      "id": "object-manifest",
+      "kind": "json",
+      "key_hex": "12d453859dd9fc87de2569e63dee882c35a2bddfeb282c858ea55985ac9ea67a",
+      "nonce_hex": "b3d20e6a9d57fc8924c940d1709ca854b6d9eb142aa5bf66",
+      "aad": {
+        "template": "object",
+        "params": {
+          "vault_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01",
+          "object_id": "d8f744c3-15b8-8183-bd5f-9facb591834b",
+          "type": "manifest",
+          "key_version": 1
+        },
+        "string": "keeman:v1:object:0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01:d8f744c3-15b8-8183-bd5f-9facb591834b:manifest:1"
+      },
+      "plaintext_utf8": "{\"schema\":1,\"seq\":1,\"shards\":[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]}",
+      "plaintext_hex": "7b22736368656d61223a312c22736571223a312c22736861726473223a5b6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c5d7d",
+      "padded_hex": "7b22736368656d61223a312c22736571223a312c22736861726473223a5b6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c2c6e756c6c5d7d8000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "expected": {
+        "envelope_b64": "AbPSDmqdV_yJJMlA0XCcqFS22esUKqW_ZlAU9Y-a2d43gyTAJN62FKmsABy3nW8CF81Ij3UvFCQgfsxb-Ym-6Zsnt5-WYsO7O1pFqu0uknM2LvaBpI4g4XaA3FOy5YgZ8vzzvP4eJpcYgVjDTUywZI_XqA5jPq5UsSPs71xNJe0ehy7ELvse6LgDrv44779t8ZWguUQbsjCTrLOyO7ZqMN4yX4ObvbWtQdP0tMfReJ7h2BezKZSDlnrpOnSBJ4ZUo-G89K6uE6NWLueLuyV9jcJkyvwJW8bb6TU0lTFOe2G-DDJlUpwgiADtZJmx02yoWpT_iLOb6RYVrJyCmZ-KeAv7XI6k8Pg3qDbZLGoTwnch9mCa1RvbttNYtLrYZkaOWy7RAOLA-0LdI-glIKfPg55i3Vg_qgD6m0x_3p8uR5mfQw-taL520qa2gSzzjJGz8miZHq5lWQB3Erz_bDEHryGA8lQ34QbMCc9acAhz0gQCgQaPd3e3AEzfGBCWlshVn0R6pZs-_t7Gd83ol7UrzJNMuQC6LXS51MKLOP9P89rhnD_EcsyY9Y2dD__8OL9-eyMYwioJHAutHvQu9_HE5ydOqaUjkhQRuh9I_jFspLxxe7w_Ub99oQ96Kx3xIZeDC_J95YCS1ZGoRygbPW1ACptUMgGdhtm3rhLnFKeTrnznXfiWueqPLsUaCv1gnG30jNSzrZIqgn9INq2dUwNY5S0P0gPTcMQh0Q"
       }
     }
   ]

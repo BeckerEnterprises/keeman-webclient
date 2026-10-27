@@ -51,6 +51,7 @@ import {
   buildKeyBox,
   buildRotation,
   buildVaultCreation,
+  rotateManifest,
   type NewObject,
   type StoredObject,
 } from "../../src/crypto/flows/vault";
@@ -63,7 +64,12 @@ import {
 } from "../../src/crypto/kdf";
 import { derivePublicKey } from "../../src/crypto/keypair";
 import { normalizePassword } from "../../src/crypto/normalize";
-import { encryptTombstone } from "../../src/crypto/objects";
+import {
+  decryptObject,
+  encryptObject,
+  encryptTombstone,
+} from "../../src/crypto/objects";
+import { scoped } from "../../src/crypto/random";
 import { pad, unpad } from "../../src/crypto/padding";
 import {
   formatRecoveryKey,
@@ -79,10 +85,57 @@ import {
   type PlaceholderLookup,
 } from "../../src/placeholders/resolve";
 import { totpAt } from "../../src/totp/code";
+import {
+  bucketOf,
+  checkManifest,
+  inspectManifest,
+  manifestIds,
+  nextRoot,
+  nextShards,
+  objectHash,
+  type CurrentShard,
+  type ManifestRead,
+  type ManifestRoot,
+  type Served,
+} from "../../src/model/manifest";
 
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/restrict-plus-operands,
    @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any -- untyped JSON fixtures */
 type Case = Record<string, any>;
+
+/** Root and shards of stored manifest objects, decrypted and read. */
+function openManifest(
+  vaultId: string,
+  key: Uint8Array,
+  objects: readonly StoredObject[],
+): {
+  root: { raw: JsonObject; seq: number; value: ManifestRoot };
+  shards: Map<number, CurrentShard>;
+} {
+  const ids = manifestIds(vaultId);
+  let root: { raw: JsonObject; seq: number; value: ManifestRoot } | undefined;
+  const shards = new Map<number, CurrentShard>();
+  for (const o of objects) {
+    if (o.type !== "manifest" || o.data === null) continue;
+    const raw = decryptObject(
+      key,
+      { vaultId, objectId: o.id, type: "manifest", keyVersion: o.key_version },
+      o.data,
+    );
+    const inspected = inspectManifest(raw, o.id, vaultId);
+    if (inspected.status !== "ok") throw new Error("corrupt manifest");
+    const value = inspected.value;
+    if (value.kind === "root") root = { raw, seq: inspected.seq, value };
+    else if (value.kind === "shard")
+      shards.set(ids.index.get(o.id) ?? -1, {
+        raw,
+        seq: inspected.seq,
+        objects: value.objects,
+      });
+  }
+  if (!root) throw new Error("no root");
+  return { root, shards };
+}
 
 const DIR = new URL("./data/", import.meta.url);
 
@@ -460,6 +513,117 @@ describe("test vectors", () => {
     }
   });
 
+  it("manifest.json", () => {
+    const { cases } = load("manifest");
+    expect(cases.length).toBeGreaterThan(30);
+    for (const c of cases) {
+      const e = c.expected;
+      switch (c.kind) {
+        case "bucket":
+          expect(bucketOf(c.object_id), c.id).toBe(e.bucket);
+          break;
+        case "ids": {
+          const ids = manifestIds(c.vault_id);
+          expect([ids.root, ids.shards]).toEqual([e.root, e.shards]);
+          break;
+        }
+        case "object_hash":
+          expect(
+            objectHash(c.vault_id, c.object_id, c.type, c.key_version, c.data),
+            c.id,
+          ).toBe(e.hash);
+          break;
+        case "envelope": {
+          const key = fromHex(c.key_hex);
+          const ref = {
+            vaultId: c.vault_id,
+            objectId: c.object_id,
+            type: "manifest" as const,
+            keyVersion: c.key_version,
+          };
+          const data = encryptObject(
+            scriptedRandomness({ nonce: fromHex(c.nonce_hex) }),
+            key,
+            ref,
+            c.content,
+          );
+          expect(data, c.id).toBe(e.data);
+          const inspected = inspectManifest(
+            decryptObject(key, ref, data),
+            c.object_id,
+            c.vault_id,
+          );
+          const read =
+            inspected.status === "corrupt"
+              ? { error: "validation" }
+              : inspected.value.kind === "newer"
+                ? { kind: "newer" }
+                : inspected.value.kind === "root"
+                  ? {
+                      kind: "root",
+                      seq: inspected.seq,
+                      shards: inspected.value.shards,
+                    }
+                  : {
+                      kind: "shard",
+                      seq: inspected.seq,
+                      index: inspected.value.index,
+                      objects: Object.fromEntries(inspected.value.objects),
+                    };
+          expect(read, c.id).toEqual(e.read);
+          break;
+        }
+        case "check": {
+          const input = c.input;
+          const served = new Map<string, Served>(
+            (input.served as Case[]).map((s) => [
+              s.id,
+              {
+                type: s.type,
+                revision: 1,
+                hash: s.hash,
+                bucket: bucketOf(s.id),
+              },
+            ]),
+          );
+          const read = (id: string): ManifestRead => {
+            const r = input.reads[id];
+            if (!r) return { kind: "absent" };
+            if (r.kind !== "ok") return r as ManifestRead;
+            const inspected = inspectManifest(r.content, id, input.vault_id);
+            if (inspected.status === "corrupt")
+              return { kind: "corrupt", reason: inspected.reason };
+            if (inspected.value.kind === "newer") return { kind: "newer" };
+            return {
+              kind: "ok",
+              seq: r.seq,
+              raw: r.content,
+              value: inspected.value,
+            };
+          };
+          const result = checkManifest({
+            vaultId: input.vault_id,
+            served,
+            read,
+            flagged: input.flagged,
+            floor: input.floor,
+          });
+          expect(
+            {
+              status: result.status,
+              issues: result.issues,
+              ...(result.rootHash ? { root_hash: result.rootHash } : {}),
+            },
+            c.id,
+          ).toEqual(e);
+          break;
+        }
+        default:
+          throw new Error(`unknown kind ${String(c.kind)}`);
+      }
+    }
+  });
+
   it("placeholders.json", () => {
     for (const c of load("placeholders").cases) {
       const entries = c.entries as Record<string, Case>;
@@ -636,7 +800,9 @@ describe("test vectors", () => {
             userId: i.user_id,
             userKey: fromHex(i.user_key_hex),
             objects: i.objects as NewObject[],
+            manifest: i.manifest === true,
           });
+          expect(rnd.unused()).toEqual([]);
           expect(toHex(vault.vaultKey)).toBe(e.vault_key_hex);
           expect(vault.request).toEqual(e.request);
           break;
@@ -676,6 +842,8 @@ describe("test vectors", () => {
         case "rotation": {
           const rnd = flowRandomness(i.randomness);
           const dropped = (i.drop_object_ids ?? []) as string[];
+          const stored = i.objects as StoredObject[];
+          const withManifest = "manifest_floor" in i;
           const rotation = buildRotation(
             rnd,
             {
@@ -690,7 +858,9 @@ describe("test vectors", () => {
                 version === i.old_key_version
                   ? fromHex(i.old_vault_key_hex)
                   : undefined,
-              objects: i.objects as StoredObject[],
+              objects: withManifest
+                ? stored.filter((o) => o.type !== "manifest")
+                : stored,
               dropObjectIds: dropped,
               members: (i.members as Case[]).map((m) => ({
                 userId: m.user_id,
@@ -700,6 +870,35 @@ describe("test vectors", () => {
             },
             i.now as string | undefined,
           );
+          if (withManifest) {
+            const old = openManifest(
+              i.vault_id,
+              fromHex(i.old_vault_key_hex),
+              stored,
+            );
+            const renewed = rotateManifest(
+              rnd,
+              { vaultId: i.vault_id, newKeyVersion: i.new_key_version },
+              {
+                root: { raw: old.root.raw, seq: old.root.seq },
+                shards: old.shards,
+                floor: i.manifest_floor,
+              },
+              rotation.objects.map((o) => ({
+                id: o.id,
+                type: o.type,
+                hash: objectHash(
+                  i.vault_id,
+                  o.id,
+                  o.type,
+                  i.new_key_version,
+                  o.data,
+                ),
+              })),
+              rotation.vaultKey,
+            );
+            expect(renewed).toEqual(e.manifest);
+          }
           expect(rnd.unused()).toEqual([]);
           expect(toHex(rotation.vaultKey)).toBe(e.vault_key_hex);
           expect(rotation.objects).toEqual(e.objects);
@@ -713,6 +912,68 @@ describe("test vectors", () => {
           } else {
             expect(rotation.commit).toEqual(e.commit);
           }
+          break;
+        }
+        case "manifest_update": {
+          const rnd = flowRandomness(i.randomness);
+          const key = fromHex(i.vault_key_hex);
+          const old = openManifest(
+            i.vault_id,
+            key,
+            i.manifest as StoredObject[],
+          );
+          const ids = manifestIds(i.vault_id);
+          const encrypt = (label: string, objectId: string, raw: JsonObject) =>
+            encryptObject(
+              scoped(rnd, label),
+              key,
+              {
+                vaultId: i.vault_id,
+                objectId,
+                type: "manifest",
+                keyVersion: i.key_version,
+              },
+              raw,
+            );
+          const ops: Case[] = [];
+          const written = nextShards(
+            old.shards,
+            (i.changes as Case[]).map((c) => ({
+              id: c.id,
+              type: c.type ?? "group",
+              hash:
+                c.op === "put"
+                  ? objectHash(i.vault_id, c.id, c.type, i.key_version, c.data)
+                  : undefined,
+            })),
+          ).map((shard) => {
+            const id = ids.shards[shard.index] ?? "";
+            const data = encrypt(
+              `manifest.shard.${String(shard.index)}`,
+              id,
+              shard.raw,
+            );
+            ops.push({
+              id,
+              type: "manifest",
+              key_version: i.key_version,
+              data,
+            });
+            return {
+              index: shard.index,
+              seq: shard.seq,
+              hash: objectHash(i.vault_id, id, "manifest", i.key_version, data),
+            };
+          });
+          const root = nextRoot(old.root, i.floor, written);
+          ops.push({
+            id: ids.root,
+            type: "manifest",
+            key_version: i.key_version,
+            data: encrypt("manifest.root", ids.root, root.raw),
+          });
+          expect(rnd.unused()).toEqual([]);
+          expect(ops).toEqual(e.ops);
           break;
         }
         case "tombstone": {
