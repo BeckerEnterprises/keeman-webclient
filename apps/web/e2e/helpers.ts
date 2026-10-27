@@ -275,6 +275,7 @@ const SECTIONS = {
   "two-factor": "Zwei-Faktor",
   sessions: "Sitzungen",
   contacts: "Kontakte",
+  pairing: "Gerät koppeln",
   settings: "Einstellungen",
   about: "Über KeeMan",
   delete: "Konto löschen",
