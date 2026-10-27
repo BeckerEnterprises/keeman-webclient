@@ -16,7 +16,7 @@ import {
 } from "@keeman/core";
 import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRoute, useRouter } from "vue-router";
+import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 import { copyInEvent, copySecret } from "../../clipboard";
 import ErrorNotice from "../../components/ErrorNotice.vue";
 import FreshnessWarning from "../../components/FreshnessWarning.vue";
@@ -101,12 +101,18 @@ const depth = computed(() =>
       : "tree",
 );
 
-// Without a selection the first database opens, once it is loaded.
+// Without a selection the first database opens, once it is loaded, unless
+// the user is already on the way elsewhere: replacing the route would
+// cancel that navigation.
+let leaving = false;
+onBeforeRouteLeave(() => {
+  leaving = true;
+});
 watch(
   () =>
     [vaults.snapshot?.loaded, vaultId.value, vaults.vaults[0]?.status] as const,
   async () => {
-    if (vaultId.value || !vaults.snapshot?.loaded) return;
+    if (leaving || vaultId.value || !vaults.snapshot?.loaded) return;
     // Narrow screens show the tree first.
     if (window.matchMedia("(max-width: 1023px)").matches) return;
     const first = vaults.vaults[0];
