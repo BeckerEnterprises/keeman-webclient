@@ -221,6 +221,13 @@ export interface VaultView {
   readonly roles: RolesView;
   /** A member left; owners renew the key. */
   readonly rotationRequired: boolean;
+  /**
+   * Whether a device of the account confirmed the delivered state within
+   * the period; `undefined` before the first sync. `stale` is read-only.
+   */
+  readonly freshness: "fresh" | "stale" | undefined;
+  /** The last confirmation known (Unix ms); `undefined`: never. */
+  readonly confirmedSince: number | undefined;
   readonly created: string;
   readonly error: unknown;
   readonly tree: VaultTree;
@@ -692,6 +699,8 @@ export class VaultProjection {
           ? previous.roles
           : roles,
       rotationRequired: state.summary.rotation_required,
+      freshness: state.freshness?.status,
+      confirmedSince: state.freshness?.since,
       created: state.summary.created,
       error: state.error,
       tree,

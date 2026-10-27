@@ -142,12 +142,16 @@ export class RolesKeeper {
 
   /**
    * Loads the chain if the head changed and checks it. `owners` are the
-   * owners this device remembers (for the transition of older vaults).
+   * owners this device remembers (for the transition of older vaults);
+   * `points` are further checked statements (own attestations, a pairing):
+   * the highest of all points is the anchor, and the chain must agree with
+   * every other one.
    */
   async update(
     vaultId: string,
     version: number | null,
     owners: readonly string[] | undefined,
+    points: readonly RolePoint[] = [],
   ): Promise<VaultRoles> {
     const previous = this.#vaults.get(vaultId);
     let delivered: DeliveredRoles[];
@@ -162,13 +166,31 @@ export class RolesKeeper {
     const marks = await this.#port.marks.read(this.#port.userId);
     const floor = marks.vaults[vaultId]?.rl;
     const stored = this.#port.anchor(vaultId);
-    const fork =
-      stored !== undefined &&
-      floor !== undefined &&
-      stored.version === floor[0] &&
-      stored.hash !== floor[1];
-    const { anchor, lower } = effectiveAnchor(stored, floor);
-    const roles = this.#check(vaultId, version, delivered, anchor, lower, fork);
+    const effective = effectiveAnchor(stored, floor);
+    let anchor = effective.anchor;
+    const lower = effective.lower;
+    const lowers = lower ? [lower] : [];
+    for (const point of points) {
+      if (!anchor || point.version > anchor.version) {
+        if (anchor) lowers.push({ version: anchor.version, hash: anchor.hash });
+        anchor = { ...point, owners: stored?.owners ?? [] };
+      } else lowers.push(point);
+    }
+    // Two points of the same version with different hashes contradict.
+    const fork = lowers.some(
+      (l) =>
+        anchor !== undefined &&
+        l.version === anchor.version &&
+        l.hash !== anchor.hash,
+    );
+    const roles = this.#check(
+      vaultId,
+      version,
+      delivered,
+      anchor,
+      lowers,
+      fork,
+    );
     let result = roles;
     if (roles.status === "unanchored" && roles.head) {
       if (this.#adoptable(roles.head, roles.statements, owners ?? [])) {
@@ -190,7 +212,7 @@ export class RolesKeeper {
     version: number | null,
     delivered: DeliveredRoles[],
     anchor: RoleAnchor | undefined,
-    lower: RolePoint | undefined,
+    lowers: readonly RolePoint[],
     fork: boolean,
   ): VaultRoles {
     const base = {
@@ -218,9 +240,10 @@ export class RolesKeeper {
     if (result.status !== "ok")
       return { ...base, status: result.status, deliveredOwners };
     if (
-      lower &&
-      result.statements.some(
-        (s) => s.statement.version === lower.version && s.hash !== lower.hash,
+      result.statements.some((s) =>
+        lowers.some(
+          (l) => s.statement.version === l.version && s.hash !== l.hash,
+        ),
       )
     )
       return { ...base, status: "fork", deliveredOwners };

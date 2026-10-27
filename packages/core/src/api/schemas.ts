@@ -27,6 +27,8 @@ export const ServerConfigSchema = v.object({
     manifest: v.optional(v.boolean()),
     /** Absent on servers without signing keys and roles chains. */
     roles: v.optional(v.boolean()),
+    /** Absent on servers that store no freshness attestations. */
+    freshness: v.optional(v.boolean()),
   }),
   limits: v.object({ attachment_max_bytes: Count }),
 });
@@ -149,9 +151,18 @@ export const MeSchema = v.object({
     webauthn_credentials: Count,
     backup_codes_remaining: Count,
   }),
+  /** The own attestation of user_data; checked by the caller, never trusted. */
+  freshness: v.optional(v.unknown()),
   created: v.string(),
 });
 export type Me = v.InferOutput<typeof MeSchema>;
+
+export const PairingSchema = v.object({
+  payload: v.pipe(v.string(), v.regex(/^[A-Za-z0-9_-]+$/)),
+  expires_at: v.string(),
+});
+
+export const PairingCreatedSchema = v.object({ expires_at: v.string() });
 
 export const ReauthSchema = v.object({ reauth_token: Token });
 
@@ -197,6 +208,11 @@ export const VaultListSchema = v.object({
       rotation_required: v.boolean(),
       /** Version of the roles chain's head; `null` without a chain. */
       roles_version: v.optional(v.nullable(PositiveInteger)),
+      /**
+       * The own attestation of this vault; checked by the caller, so a bad
+       * one is ignored instead of breaking the list.
+       */
+      freshness: v.optional(v.unknown()),
       member_count: Count,
       created: v.string(),
     }),

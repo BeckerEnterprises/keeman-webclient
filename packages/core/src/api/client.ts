@@ -9,6 +9,8 @@ import {
   MemberListSchema,
   MeSchema,
   OpenRotationSchema,
+  PairingCreatedSchema,
+  PairingSchema,
   PasskeyListSchema,
   PreloginSchema,
   FaviconSchema,
@@ -600,6 +602,52 @@ export class ApiClient {
     });
   }
 
+  /** Replaces the own attestation of user_data. */
+  async putUserDataFreshness(
+    freshness: Schemas["SignedFreshness"],
+  ): Promise<void> {
+    await this.#request({
+      method: "PUT",
+      path: "/v1/me/freshness",
+      body: JSON.stringify({ freshness }),
+      auth: true,
+      idempotent: true,
+    });
+  }
+
+  /** Stores the account's pairing envelope; replaces an older one. */
+  async putPairing(payload: string): Promise<{ expiresAt: string }> {
+    const data = await this.#request({
+      method: "PUT",
+      path: "/v1/me/pairing",
+      body: JSON.stringify({ payload }),
+      auth: true,
+      idempotent: true,
+    });
+    return { expiresAt: parse(PairingCreatedSchema, data).expires_at };
+  }
+
+  async pairing(): Promise<{ payload: string; expiresAt: string }> {
+    const data = parse(
+      PairingSchema,
+      await this.#request({
+        method: "GET",
+        path: "/v1/me/pairing",
+        auth: true,
+      }),
+    );
+    return { payload: data.payload, expiresAt: data.expires_at };
+  }
+
+  async deletePairing(): Promise<void> {
+    await this.#request({
+      method: "DELETE",
+      path: "/v1/me/pairing",
+      auth: true,
+      idempotent: true,
+    });
+  }
+
   // ------------------------------------------------------------ own 2FA
 
   async totpSetup(
@@ -904,6 +952,20 @@ export class ApiClient {
       path: `${vaultPath(vaultId)}/roles`,
       body: JSON.stringify({ roles }),
       auth: true,
+    });
+  }
+
+  /** Replaces the own attestation of a vault. */
+  async putVaultFreshness(
+    vaultId: string,
+    freshness: Schemas["SignedFreshness"],
+  ): Promise<void> {
+    await this.#request({
+      method: "PUT",
+      path: `${vaultPath(vaultId)}/freshness`,
+      body: JSON.stringify({ freshness }),
+      auth: true,
+      idempotent: true,
     });
   }
 

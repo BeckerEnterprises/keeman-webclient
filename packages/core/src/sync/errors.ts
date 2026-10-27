@@ -59,6 +59,16 @@ export type SyncErrorCode =
   | "rollback_open"
   /** The delivered state does not match the vault manifest; acknowledge first. */
   | "manifest_mismatch"
+  /** No device of the account confirmed the vault within the period; pair or confirm first. */
+  | "stale"
+  /** The pairing code has invalid characters or length. */
+  | "pairing_invalid"
+  /** The server holds no pairing for the account (expired or withheld). */
+  | "pairing_missing"
+  /** The code does not open the pairing: a typo, or another account's. */
+  | "pairing_wrong"
+  /** The server stores no pairings. */
+  | "pairing_unsupported"
   | "locked";
 
 export class SyncError extends Error {

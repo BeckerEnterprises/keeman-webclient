@@ -33,6 +33,8 @@ export interface Settings {
   showTotpColumn: boolean;
   /** Each option falls back to its default on its own. */
   passwordGenerator: GeneratorOptions;
+  /** Days within which a device of the account must have confirmed a state. */
+  freshnessDays: number;
 }
 
 export type SettingKey = keyof Settings;
@@ -46,6 +48,7 @@ export const SETTING_DEFAULTS: Settings = {
   searchProtectedFields: false,
   showTotpColumn: true,
   passwordGenerator: GENERATOR_DEFAULTS,
+  freshnessDays: 7,
 };
 
 /** `undefined` removes the setting, i.e. returns to the default. */
@@ -145,6 +148,7 @@ const SETTING_RULES: { [K in SettingKey]: (value: unknown) => boolean } = {
   searchProtectedFields: (value) => typeof value === "boolean",
   showTotpColumn: (value) => typeof value === "boolean",
   passwordGenerator: isGeneratorOptions,
+  freshnessDays: (value) => isInteger(value, 1, 90),
 };
 
 function settingsOf(raw: JsonObject): JsonObject {
@@ -228,6 +232,7 @@ export function effectiveSettings(raw: JsonObject): Settings {
     searchProtectedFields: read("searchProtectedFields"),
     showTotpColumn: read("showTotpColumn"),
     passwordGenerator: generatorOptionsOf(own(stored, "passwordGenerator")),
+    freshnessDays: read("freshnessDays"),
   };
 }
 

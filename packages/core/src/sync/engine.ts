@@ -16,7 +16,7 @@ import {
 } from "../crypto/flows/vault";
 import { derivePublicKey } from "../crypto/keypair";
 import type { Keys } from "../crypto/keystore";
-import { checkGrantRoles, roleOwner } from "../crypto/roles";
+import { checkGrantRoles, roleOwner, type RolePoint } from "../crypto/roles";
 import { systemRandomness } from "../crypto/random";
 import {
   applyEntryEdit,
@@ -40,7 +40,8 @@ import {
   type IconSource,
 } from "../model/icon";
 import { clone, same, setOwn } from "../model/json";
-import { isManifestId } from "../model/manifest";
+import { isManifestId, manifestIds } from "../model/manifest";
+import type { VaultFreshness } from "../crypto/freshness";
 import { keyAtEnd, keysAtEnd } from "../model/sort-key";
 import { ancestors, subtree } from "../model/tree";
 import {
@@ -108,6 +109,15 @@ import {
 import { IdMap } from "./id-map";
 import { KdbxImportJob, type KdbxImportPort } from "./kdbx-import";
 import type { SyncMarks, UserMarks } from "./marks";
+import {
+  attestedAt,
+  confirmationBasis,
+  DAY_MS,
+  FreshnessKeeper,
+  RENEW_AFTER_MS,
+  type DeliveredState,
+} from "./freshness";
+import { currentRoot } from "./manifest";
 import { RolesKeeper } from "./roles";
 import { Serial } from "./serial";
 import {
@@ -222,6 +232,12 @@ export interface AccountAccess {
   roleAnchor(vaultId: string): RoleAnchor | undefined;
   /** Stores roles anchors in user_data (`null` removes one); best effort. */
   saveRoleAnchors(anchors: Record<string, RoleAnchor | null>): Promise<void>;
+  /** The device clock (Unix ms); never the server's time. */
+  now(): number;
+  /** The effective confirmation period in days. */
+  freshnessPeriodDays(): number;
+  /** Signs and uploads the attestation of user_data where it is confirmed. */
+  attestUserData(): Promise<void>;
 }
 
 /** A pending invitation as the engine keeps it. */
@@ -313,6 +329,11 @@ export class SyncEngine {
   /** Whether the server knows signing keys and roles chains, asked once. */
   #rolesFeature: Promise<boolean> | undefined;
   readonly #roles: RolesKeeper;
+  /** Whether the server stores freshness attestations, asked once. */
+  #freshnessFeature: Promise<boolean> | undefined;
+  readonly #freshness: FreshnessKeeper;
+  /** The hourly refresh while unlocked. */
+  #tick: unknown;
 
   constructor(access: AccountAccess, options: SyncEngineOptions = {}) {
     this.#access = access;
@@ -354,6 +375,14 @@ export class SyncEngine {
       anchor: (vaultId) => access.roleAnchor(vaultId),
       saveAnchors: (anchors) => access.saveRoleAnchors(anchors),
       contacts: () => access.contacts(),
+    });
+    this.#freshness = new FreshnessKeeper({
+      api: access.api,
+      keys: access.keys,
+      userId: access.userId,
+      now: () => access.now(),
+      timers: options.timers ?? systemTimers,
+      supported: () => this.#freshnessSupported(),
     });
     this.#clock = new TotpClock({
       time: () => access.api.time(),
@@ -417,6 +446,7 @@ export class SyncEngine {
   async start(): Promise<void> {
     this.#events?.start();
     this.#clock.start();
+    this.#scheduleTick();
     await this.refresh();
   }
 
@@ -425,6 +455,10 @@ export class SyncEngine {
     this.#stopped = true;
     this.#events?.stop();
     this.#clock.stop();
+    this.#freshness.stop();
+    if (this.#tick !== undefined)
+      (this.#options.timers ?? systemTimers).clearTimeout(this.#tick);
+    this.#tick = undefined;
     this.#attachments.stop();
     this.#states.clear();
     this.#projections.clear();
@@ -466,6 +500,7 @@ export class SyncEngine {
           try {
             await pullVault(this.#context, state);
             state.error = undefined;
+            this.#evaluate(state);
           } catch (error) {
             if (this.#stopped) return;
             if (error instanceof CryptoError && error.code === "locked") return;
@@ -475,6 +510,7 @@ export class SyncEngine {
       ),
     );
     this.#emit();
+    await this.#attest(state);
     if (state.manifest.status === "unverified")
       void this.#ensureManifest(state);
   }
@@ -544,7 +580,11 @@ export class SyncEngine {
       this.#context,
       state,
       plan,
-      () => pullVault(this.#context, state),
+      async () => {
+        await pullVault(this.#context, state);
+        this.#evaluate(state);
+        void this.#attest(state).catch(() => undefined);
+      },
       () => new Date().toISOString(),
       mode,
     );
@@ -644,6 +684,10 @@ export class SyncEngine {
     );
     const vaultId = creation.vaultId;
     access.keys.setVaultKey(vaultId, 1, creation.vaultKey);
+    // A vault this device creates is confirmed from the start.
+    await this.#context.marks.raise(access.userId, {
+      vaults: { [vaultId]: { rev: 0, obj: {}, ft: access.now() } },
+    });
     const key = systemRandomness.id("idempotency_key");
     const body = JSON.stringify(creation.request);
     const send = async (): Promise<string> => {
@@ -780,7 +824,10 @@ export class SyncEngine {
   /** Invites a verified contact; the box vouches for the checked roles. */
   async invite(vaultId: string, candidate: Candidate): Promise<void> {
     const state = this.#owned(vaultId);
+    // With an unconfirmed state the old key might be handed on.
+    this.#requireConfirmed(state);
     const roles = await this.#ensureRoles(state);
+    const root = currentRoot(state);
     await invite(
       this.#access,
       {
@@ -788,6 +835,10 @@ export class SyncEngine {
         keyVersion: state.summary.vault_key_version,
         vaultName: this.#vaultName(state),
         roles,
+        manifest:
+          state.manifest.status === "verified" && root
+            ? root.entry.seq
+            : undefined,
       },
       candidate,
     );
@@ -811,6 +862,9 @@ export class SyncEngine {
   ): Promise<void> {
     const state = this.#owned(vaultId);
     const access = this.#access;
+    // Stepping down needs no confirmed state; everything else does.
+    if (!(userId === access.userId && role === "member"))
+      this.#requireConfirmed(state);
     if (!(await this.#ensureRoles(state))) {
       await setRole(access, vaultId, userId, role);
       await this.refresh();
@@ -873,7 +927,15 @@ export class SyncEngine {
     const chain = (await this.#rolesSupported())
       ? await this.#roles.invitationChain(vaultId)
       : undefined;
+    const access = this.#access;
+    const known =
+      access.roleAnchor(vaultId) !== undefined ||
+      (await access.marks.read(access.userId)).vaults[vaultId] !== undefined;
+    let box: { created: string; manifest: number | undefined } | undefined;
+    let named: RolePoint | undefined;
     const roles: RolesCheck = (opened) => {
+      box = { created: opened.created, manifest: opened.manifest };
+      named = opened.roles;
       if (!chain) return opened.roles ? "roles_invalid" : undefined;
       return checkGrantRoles({
         statements: chain,
@@ -892,8 +954,53 @@ export class SyncEngine {
       this.#candidate(invitation.sender),
       { roles },
     );
+    await this.#invitationReference(vaultId, box, {
+      known,
+      sender: invitation.summary.invitation?.sender_id,
+      statement: chain?.find(
+        (s) =>
+          named !== undefined &&
+          s.statement.version === named.version &&
+          s.hash === named.hash,
+      )?.statement,
+    });
     if (chain) await this.#roles.anchorInvitation(vaultId, chain);
     await this.refresh();
+  }
+
+  /**
+   * The box of an accepted invitation: its manifest `seq` is a floor, and
+   * its time confirms the vault if the account never had it and the sender
+   * owns the statement the box names (only owners invite, naming the head
+   * they checked).
+   */
+  async #invitationReference(
+    vaultId: string,
+    box: { created: string; manifest: number | undefined } | undefined,
+    input: {
+      known: boolean;
+      sender: string | undefined;
+      statement: { owners: readonly { userId: string }[] } | undefined;
+    },
+  ): Promise<void> {
+    if (!box) return;
+    const now = this.#access.now();
+    const at = attestedAt(box.created, now);
+    const owner =
+      input.sender !== undefined &&
+      input.statement?.owners.some((o) => o.userId === input.sender) === true;
+    const confirms =
+      !input.known && owner && at !== undefined && at >= now - this.#periodMs();
+    await this.#context.marks.raise(this.#access.userId, {
+      vaults: {
+        [vaultId]: {
+          rev: 0,
+          obj: {},
+          ...(box.manifest !== undefined ? { mf: box.manifest } : {}),
+          ft: confirms ? at : 0,
+        },
+      },
+    });
   }
 
   async declineInvitation(vaultId: string): Promise<void> {
@@ -952,11 +1059,10 @@ export class SyncEngine {
    */
   async prepareRotation(vaultId: string): Promise<RotationReview> {
     const state = this.#owned(vaultId);
-    const rollback =
-      state.rollback ||
-      state.rollbackDeletes.size > 0 ||
-      [...state.objects.values()].some((o) => o.rollback);
-    if (rollback) throw new SyncError("rollback_open");
+    if (this.#rollbackOpen(state)) throw new SyncError("rollback_open");
+    // The member list is not authenticated: with an unconfirmed state the
+    // new key might be boxed for a removed member.
+    this.#requireConfirmed(state);
     if (state.manifest.status === "mismatch")
       throw new SyncError("manifest_mismatch");
     // The rotation renews the manifest; one that is missing comes first,
@@ -1076,8 +1182,12 @@ export class SyncEngine {
 
   async acknowledgeRollback(vaultId: string): Promise<void> {
     const state = this.#state(vaultId);
-    await state.lock.run(() => acknowledgeRollback(this.#context, state));
+    await state.lock.run(async () => {
+      await acknowledgeRollback(this.#context, state);
+      this.#evaluate(state);
+    });
     this.#emit();
+    await this.#attest(state);
   }
 
   /**
@@ -1092,12 +1202,14 @@ export class SyncEngine {
         state.synced = false;
         await pullVault(this.#context, state);
         await acknowledgeRollback(this.#context, state);
+        this.#evaluate(state);
         if (state.manifest.status === "mismatch")
           await this.#operation(state, () => [], "rebuild").run();
       });
     } finally {
       this.#emit();
     }
+    await this.#attest(state);
   }
 
   // ------------------------------------------------------------ groups
@@ -2356,6 +2468,10 @@ export class SyncEngine {
       return;
     }
     if (this.#isStopped()) return;
+    // Own attestations are floors, whatever their age, before anything is
+    // accepted or synced.
+    await this.#applyAttestations(summaries);
+    if (this.#isStopped()) return;
     const marks = await access.marks.read(access.userId);
     const active = summaries.filter((s) => s.state === "active");
     this.#invitations = await Promise.all(
@@ -2375,13 +2491,16 @@ export class SyncEngine {
     for (const summary of active) {
       const id = summary.vault_id;
       let state = this.#states.get(id);
+      const seen = marks.vaults[id];
       if (!state) {
         state = new VaultState(summary);
+        // Marks from before confirmation times: the first check confirms.
+        state.transition = seen !== undefined && seen.ft === undefined;
         this.#states.set(id, state);
       }
+      state.confirmedAt = Math.max(state.confirmedAt, seen?.ft ?? 0);
       state.summary = summary;
       this.#unwrapKey(state);
-      const seen = marks.vaults[id];
       state.keyFloor = Math.max(state.keyFloor, seen?.kv ?? 0);
       // An older revision or key version: the server played back an older
       // state (with the old key, a removed member could read new writes).
@@ -2421,6 +2540,15 @@ export class SyncEngine {
         )
         .map((s) => this.pull(s.id)),
     );
+    if (this.#isStopped()) return;
+    // A vault without a new revision is checked again too: an attestation
+    // may have arrived, or the period passed.
+    const settled = [...this.#states.values()].filter(
+      (s) => s.synced && s.keyStatus === "ok",
+    );
+    for (const state of settled) this.#evaluate(state);
+    this.#emit();
+    await Promise.all(settled.map((s) => this.#attest(s)));
   }
 
   /** The sender's public key, cached for the session. */
@@ -2475,7 +2603,10 @@ export class SyncEngine {
       // older rules back: that is a rollback.
       const anchor =
         this.#access.roleAnchor(state.id) ??
-        (marks.vaults[state.id]?.rl ? { owners: [] } : undefined);
+        (marks.vaults[state.id]?.rl ||
+        this.#freshness.rolePoints(state.id).length > 0
+          ? { owners: [] }
+          : undefined);
       state.roles = anchor
         ? {
             version: null,
@@ -2494,6 +2625,7 @@ export class SyncEngine {
         state.id,
         version,
         marks.vaults[state.id]?.ow,
+        this.#freshness.rolePoints(state.id),
       );
     } catch (error) {
       if (error instanceof CryptoError && error.code === "locked") throw error;
@@ -2518,7 +2650,8 @@ export class SyncEngine {
         state.summary.role !== "owner" ||
         state.keyStatus !== "ok" ||
         state.rollback ||
-        !state.roles
+        !state.roles ||
+        !this.#confirmed(state)
       )
         continue;
       try {
@@ -2609,10 +2742,13 @@ export class SyncEngine {
             : roles.status === "unanchored"
               ? "roles_unconfirmed"
               : "roles_invalid";
-    if (waiting) {
+    // A device with an unconfirmed state might be shown a forked chain
+    // that commits to a former owner's key.
+    const reason = waiting ?? (this.#confirmed(state) ? undefined : "stale");
+    if (reason) {
       state.keyStatus = "pending";
       state.pendingSender = sender;
-      state.pendingReason = waiting;
+      state.pendingReason = reason;
       return;
     }
     try {
@@ -2710,6 +2846,213 @@ export class SyncEngine {
       const snapshot = this.snapshot;
       for (const listener of this.#listeners) listener(snapshot);
     });
+  }
+
+  // ------------------------------------------------------------ freshness
+
+  #freshnessSupported(): Promise<boolean> {
+    this.#freshnessFeature ??= this.#access.api.config().then(
+      (config) => config.features.freshness === true,
+      () => {
+        this.#freshnessFeature = undefined;
+        return false;
+      },
+    );
+    return this.#freshnessFeature;
+  }
+
+  #periodMs(): number {
+    return this.#access.freshnessPeriodDays() * DAY_MS;
+  }
+
+  /** What the server delivered, as far as an attestation speaks about it. */
+  #delivered(state: VaultState, withRoot: boolean): DeliveredState {
+    let root: DeliveredState["root"];
+    if (withRoot) {
+      const current = currentRoot(state);
+      const hash = state.served.get(manifestIds(state.id).root)?.hash;
+      root = current && hash ? { seq: current.entry.seq, hash } : null;
+    }
+    return {
+      keyVersion: state.summary.vault_key_version,
+      root,
+      roles: state.roles?.status === "ok" ? state.roles.statements : undefined,
+    };
+  }
+
+  /**
+   * Before a sync: confirmed by this device or by an own attestation the
+   * delivered key version and roles chain meet, within the period.
+   */
+  #confirmed(state: VaultState): boolean {
+    if (state.transition || state.freshness?.status === "fresh") return true;
+    const now = this.#access.now();
+    const basis = confirmationBasis(
+      state.confirmedAt,
+      this.#freshness.attestation(state.id),
+      this.#delivered(state, false),
+      now,
+    );
+    return basis > 0 && basis >= now - this.#periodMs();
+  }
+
+  /** After a sync: confirms the vault or marks it stale; no network. */
+  #evaluate(state: VaultState): void {
+    if (this.#stopped || !state.synced || !state.keyOk) return;
+    const now = this.#access.now();
+    const basis = state.transition
+      ? now
+      : confirmationBasis(
+          state.confirmedAt,
+          this.#freshness.attestation(state.id),
+          this.#delivered(state, true),
+          now,
+        );
+    state.transition = false;
+    const fresh = basis > 0 && basis >= now - this.#periodMs();
+    if (!fresh) {
+      state.freshness = {
+        status: "stale",
+        since: basis > 0 ? basis : undefined,
+      };
+      return;
+    }
+    state.confirmedAt = now;
+    state.freshness = { status: "fresh", since: now };
+    void this.#context.marks
+      .raise(this.#access.userId, {
+        vaults: { [state.id]: { rev: 0, obj: {}, ft: now } },
+      })
+      .catch(() => undefined);
+  }
+
+  #rollbackOpen(state: VaultState): boolean {
+    return (
+      state.rollback ||
+      state.rollbackDeletes.size > 0 ||
+      [...state.objects.values()].some((o) => o.rollback)
+    );
+  }
+
+  /** Only a confirmed vault without any warning is signed. */
+  #signable(state: VaultState): boolean {
+    const { summary } = state;
+    const roles = state.roles?.status;
+    return (
+      !this.#stopped &&
+      state.freshness?.status === "fresh" &&
+      state.synced &&
+      state.keyOk &&
+      state.keyStatus === "ok" &&
+      summary.member_key_version === summary.vault_key_version &&
+      !this.#rollbackOpen(state) &&
+      (state.manifest.status === "verified" ||
+        state.manifest.status === "unverified") &&
+      (roles === undefined || roles === "ok" || roles === "none")
+    );
+  }
+
+  #statement(state: VaultState): VaultFreshness {
+    const root = currentRoot(state);
+    const rootHash = state.manifest.rootHash;
+    const head = state.roles?.status === "ok" ? state.roles.head : undefined;
+    return {
+      type: "vault_freshness",
+      vaultId: state.id,
+      userId: this.#access.userId,
+      time: new Date(this.#access.now()).toISOString(),
+      keyVersion: state.summary.vault_key_version,
+      manifest:
+        state.manifest.status === "verified" && root && rootHash
+          ? { seq: root.entry.seq, hash: rootHash }
+          : null,
+      roles: head ? { version: head.statement.version, hash: head.hash } : null,
+    };
+  }
+
+  /** Offers the vault's attestation; nothing for a vault with a warning. */
+  async #attest(state: VaultState): Promise<void> {
+    if (!this.#signable(state)) return;
+    try {
+      await this.#freshness.offer(state.id, () =>
+        this.#signable(state) ? this.#statement(state) : undefined,
+      );
+    } catch (error) {
+      if (error instanceof CryptoError && error.code === "locked") return;
+      throw error;
+    }
+  }
+
+  /** Raises the floors of the own attestations of the vault list. */
+  async #applyAttestations(summaries: readonly VaultSummary[]): Promise<void> {
+    const attested = this.#freshness.take(summaries);
+    if (attested.size === 0) return;
+    const vaults: UserMarks["vaults"] = {};
+    for (const [id, attestation] of attested)
+      vaults[id] = {
+        rev: 0,
+        obj: {},
+        kv: attestation.keyVersion,
+        ...(attestation.manifest ? { mf: attestation.manifest.seq } : {}),
+        // Not a confirmation: only the field, so no transition is assumed.
+        ft: 0,
+      };
+    await this.#context.marks.raise(this.#access.userId, { vaults });
+  }
+
+  #requireConfirmed(state: VaultState): void {
+    if (!this.#confirmed(state)) throw new SyncError("stale");
+  }
+
+  /**
+   * "Understood": the delivered state of the vault (or of every stale
+   * vault) counts as confirmed now, and the device signs it again.
+   */
+  async acknowledgeFreshness(vaultId?: string): Promise<void> {
+    const states =
+      vaultId === undefined
+        ? [...this.#states.values()].filter(
+            (s) => s.freshness?.status === "stale",
+          )
+        : [this.#state(vaultId)];
+    const now = this.#access.now();
+    for (const state of states) {
+      state.confirmedAt = now;
+      await this.#context.marks.raise(this.#access.userId, {
+        vaults: { [state.id]: { rev: 0, obj: {}, ft: now } },
+      });
+      this.#evaluate(state);
+    }
+    this.#emit();
+    await Promise.all(states.map((s) => this.#attest(s)));
+  }
+
+  /**
+   * After a pairing raised the marks: roles points to check the chains
+   * against, and a full sync of every vault against the new floors.
+   */
+  async afterPairing(
+    rolePoints: ReadonlyMap<string, RolePoint>,
+  ): Promise<void> {
+    for (const [id, point] of rolePoints)
+      this.#freshness.rememberPaired(id, point);
+    for (const state of this.#states.values()) {
+      state.synced = false;
+      state.freshness = undefined;
+    }
+    await this.refresh();
+  }
+
+  #scheduleTick(): void {
+    if (this.#stopped) return;
+    const timers = this.#options.timers ?? systemTimers;
+    this.#tick = timers.setTimeout(() => {
+      this.#tick = undefined;
+      if (this.#stopped) return;
+      void this.refresh();
+      void this.#access.attestUserData().catch(() => undefined);
+      this.#scheduleTick();
+    }, RENEW_AFTER_MS);
   }
 
   #build(): SyncSnapshot {

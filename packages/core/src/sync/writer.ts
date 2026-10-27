@@ -146,6 +146,7 @@ export function vaultWritable(state: VaultState, rebuild = false): boolean {
     state.keyStatus === "ok" &&
     state.synced &&
     !state.rollback &&
+    state.freshness?.status === "fresh" &&
     meta !== undefined &&
     !meta.readOnly &&
     !meta.rollback &&

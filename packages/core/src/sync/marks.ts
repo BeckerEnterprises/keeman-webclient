@@ -1,9 +1,11 @@
 /**
  * High-water marks for the rollback detection: per vault
  * the highest revision and key version, the owners, the highest root
- * `seq` of the manifest and the checked head of the roles chain, per object the
- * highest `seq` (negative for a tombstone), per account revision and `seq`
- * of `user_data`. Only IDs and counters, nothing secret.
+ * `seq` of the manifest, the checked head of the roles chain and the time
+ * this device last confirmed the vault as current, per object the highest
+ * `seq` (negative for a tombstone), per account revision and `seq` of
+ * `user_data` with its confirmation. Only IDs, counters and times, nothing
+ * secret.
  */
 import * as v from "valibot";
 import { UUID_PATTERN } from "../crypto/uuid";
@@ -30,6 +32,11 @@ export interface VaultMarks {
    * only "understood" at a roles warning lowers it.
    */
   rl?: [number, string];
+  /**
+   * When this device last confirmed the vault as current (Unix ms, device
+   * clock); `0` = never. Missing on marks from before this field existed.
+   */
+  ft?: number;
   /** Object ID → `seq`; negative: a tombstone with this `seq`. */
   obj: Record<string, number>;
 }
@@ -37,6 +44,10 @@ export interface VaultMarks {
 export interface UserMarks {
   /** Revision and `seq` of `user_data`. */
   ud?: [number, number];
+  /** When this device last confirmed `user_data` (Unix ms); `0` = never. */
+  uf?: number;
+  /** The confirmation period in days that applied at `uf`. */
+  fd?: number;
   vaults: Record<string, VaultMarks>;
 }
 
@@ -112,9 +123,17 @@ function higherRoles(
   return [b[0], b[1]];
 }
 
+function maxDefined(
+  a: number | undefined,
+  b: number | undefined,
+): number | undefined {
+  return a === undefined ? b : b === undefined ? a : Math.max(a, b);
+}
+
 /**
  * Per-entry maximum of two mark sets. Owners are not a maximum: those of
- * `a` win, so stored owners come before the ones in memory.
+ * `a` win, so stored owners come before the ones in memory. The period
+ * `fd` goes with the later `uf`, so it can also go down.
  */
 export function mergeMarks(a: UserMarks, b: UserMarks): UserMarks {
   const result: UserMarks = { vaults: {} };
@@ -122,6 +141,12 @@ export function mergeMarks(a: UserMarks, b: UserMarks): UserMarks {
     const [ar, as] = a.ud ?? [0, 0];
     const [br, bs] = b.ud ?? [0, 0];
     result.ud = [Math.max(ar, br), Math.max(as, bs)];
+  }
+  if (a.uf !== undefined || b.uf !== undefined) {
+    const later = b.uf !== undefined && (a.uf === undefined || b.uf > a.uf);
+    const source = later ? b : a;
+    result.uf = source.uf;
+    if (source.fd !== undefined) result.fd = source.fd;
   }
   for (const id of new Set([
     ...Object.keys(a.vaults),
@@ -136,12 +161,14 @@ export function mergeMarks(a: UserMarks, b: UserMarks): UserMarks {
     const ow = left?.ow ?? right?.ow;
     const mf = Math.max(left?.mf ?? 0, right?.mf ?? 0);
     const rl = higherRoles(left?.rl, right?.rl);
+    const ft = maxDefined(left?.ft, right?.ft);
     result.vaults[id] = {
       rev: Math.max(left?.rev ?? 0, right?.rev ?? 0),
       ...(kv > 0 ? { kv } : {}),
       ...(ow ? { ow: [...ow] } : {}),
       ...(mf > 0 ? { mf } : {}),
       ...(rl ? { rl } : {}),
+      ...(ft !== undefined ? { ft } : {}),
       obj,
     };
   }
@@ -153,8 +180,8 @@ function copy(marks: UserMarks): UserMarks {
 }
 
 /**
- * `marks` replacing `current`; the manifest floor never goes down, and the
- * roles floor only changes through `replaceRoles`.
+ * `marks` replacing `current`; the manifest floor and the confirmation time
+ * never go down, and the roles floor only changes through `replaceRoles`.
  */
 function replacing(
   current: VaultMarks | undefined,
@@ -162,10 +189,12 @@ function replacing(
 ): VaultMarks {
   const mf = Math.max(current?.mf ?? 0, marks.mf ?? 0);
   const rl = higherRoles(current?.rl, marks.rl);
+  const ft = maxDefined(current?.ft, marks.ft);
   return copyVault({
     ...marks,
     ...(mf > 0 ? { mf } : {}),
     ...(rl ? { rl } : {}),
+    ...(ft !== undefined ? { ft } : {}),
   });
 }
 
@@ -176,6 +205,7 @@ function copyVault(marks: VaultMarks): VaultMarks {
     ...(marks.ow !== undefined ? { ow: [...marks.ow] } : {}),
     ...(marks.mf !== undefined ? { mf: marks.mf } : {}),
     ...(marks.rl !== undefined ? { rl: [marks.rl[0], marks.rl[1]] } : {}),
+    ...(marks.ft !== undefined ? { ft: marks.ft } : {}),
     obj: { ...marks.obj },
   };
 }
@@ -267,6 +297,8 @@ const StoredSchema = v.object({
     Id,
     v.object({
       ud: v.optional(v.tuple([Counter, Counter])),
+      uf: v.optional(Counter),
+      fd: v.optional(v.pipe(Counter, v.minValue(1), v.maxValue(90))),
       vaults: v.record(
         Id,
         v.object({
@@ -280,6 +312,7 @@ const StoredSchema = v.object({
               v.pipe(v.string(), v.regex(/^[A-Za-z0-9_-]{43}$/)),
             ]),
           ),
+          ft: v.optional(Counter),
           obj: v.record(Id, ObjectMark),
         }),
       ),
@@ -312,11 +345,14 @@ export function storedSyncMarks(store: MarksStore, lock: MarksLock): SyncMarks {
     try {
       const parsed = v.parse(StoredSchema, JSON.parse(text));
       return new Map(
-        Object.entries(parsed.users).map(([id, marks]) => [
+        Object.entries(parsed.users).map(([id, marks]): [string, UserMarks] => [
           id,
-          marks.ud
-            ? { ud: marks.ud, vaults: marks.vaults }
-            : { vaults: marks.vaults },
+          {
+            ...(marks.ud ? { ud: marks.ud } : {}),
+            ...(marks.uf !== undefined ? { uf: marks.uf } : {}),
+            ...(marks.fd !== undefined ? { fd: marks.fd } : {}),
+            vaults: marks.vaults,
+          },
         ]),
       );
     } catch {

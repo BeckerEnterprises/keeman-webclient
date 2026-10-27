@@ -21,6 +21,7 @@ import {
   type Inspected,
 } from "../model/vault";
 import type { Candidate } from "../sharing/candidate";
+import type { FreshnessStatus } from "./freshness";
 import { Mutex } from "./lock";
 import type { VaultRoles } from "./roles";
 import {
@@ -78,7 +79,8 @@ export type PendingReason =
   | "unknown_owner"
   | "roles_unconfirmed"
   | "roles_invalid"
-  | "roles_rejected";
+  | "roles_rejected"
+  | "stale";
 
 export class VaultState {
   readonly id: string;
@@ -119,6 +121,17 @@ export class VaultState {
   manifest: ManifestCheck = { status: "unverified", issues: [] };
   /** Highest root `seq` this device has seen; the next one goes above. */
   manifestFloor = 0;
+  /**
+   * When this device last confirmed the vault (Unix ms, `0` = never);
+   * `undefined` while its marks predate confirmations.
+   */
+  confirmedAt = 0;
+  /** Marks without a confirmation time: the first check confirms. */
+  transition = false;
+  /** The last freshness check; `undefined` before the first sync. */
+  freshness:
+    { status: FreshnessStatus; since: number | undefined } | undefined =
+    undefined;
   error: unknown = undefined;
   /** Held by every sync and every write of this vault. */
   readonly lock = new Mutex();
@@ -400,6 +413,8 @@ export async function pullVault(
         kv,
         obj: applier.raised,
         ...(state.manifestFloor > 0 ? { mf: state.manifestFloor } : {}),
+        // Marks of this version always carry a confirmation time.
+        ft: 0,
       },
     },
   });

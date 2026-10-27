@@ -61,6 +61,8 @@ export interface KeySenders {
 export type RolesCheck = (opened: {
   vaultKey: Uint8Array;
   roles: RolePoint | undefined;
+  created: string;
+  manifest: number | undefined;
 }) => SyncErrorCode | undefined;
 
 /**

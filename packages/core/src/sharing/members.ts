@@ -66,6 +66,8 @@ export interface InviteTarget {
   vaultName: string;
   /** The checked head of the roles chain the box vouches for. */
   roles?: RolePoint | undefined;
+  /** `seq` of the manifest root last synced, a floor for the invitee. */
+  manifest?: number | undefined;
 }
 
 /** A box with the current vault key for a verified contact. */
@@ -92,6 +94,7 @@ export async function invite(
         vaultName: target.vaultName,
         created: new Date().toISOString(),
         roles: target.roles,
+        manifest: target.manifest,
       }),
     ),
   );

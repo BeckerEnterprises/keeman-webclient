@@ -54,7 +54,24 @@ import { KeyStore, type AccountKeyMaterial } from "../crypto/keystore";
 import { normalizeEmail } from "../crypto/normalize";
 import { decryptUserData, encryptUserData } from "../crypto/objects";
 import { systemRandomness } from "../crypto/random";
+import { signFreshness, type UserDataFreshness } from "../crypto/freshness";
+import {
+  formatPairingCode,
+  generatePairingSecret,
+  openPairing,
+  parsePairingCode,
+  sealPairing,
+  type PairingContent,
+} from "../crypto/pairing";
+import type { RolePoint } from "../crypto/roles";
 import { signingPublicKeyOf } from "../crypto/signing";
+import {
+  attestedAt,
+  DAY_MS,
+  effectivePeriodDays,
+  ownUserDataAttestation,
+  RENEW_AFTER_MS,
+} from "../sync/freshness";
 import {
   applyUserDataChange,
   effectiveSettings,
@@ -85,6 +102,7 @@ import {
   inMemorySyncMarks,
   isUserDataOlder,
   type SyncMarks,
+  type UserMarks,
 } from "../sync/marks";
 import { AccountError } from "./errors";
 import {
@@ -118,6 +136,10 @@ export interface UnlockReport {
   userDataReadOnly: boolean;
   /** The server delivered older user_data than seen before. */
   userDataRollback: boolean;
+  /** No device of the account confirmed the delivered user_data in time. */
+  userDataStale: boolean;
+  /** This device had no marks for the account yet (offer pairing). */
+  newDevice: boolean;
   /** Unused backup codes left after a login with a backup code. */
   backupCodesRemaining?: number;
 }
@@ -175,6 +197,12 @@ interface UserDataSlot {
   state: UserDataState;
   /** Older than seen before: read-only until acknowledged. */
   rollback: boolean;
+  /** Not confirmed within the period: read-only until acknowledged. */
+  stale: boolean;
+  /** The own attestation of user_data that checked out, if any. */
+  attestation: UserDataFreshness | undefined;
+  /** The last confirmation known (Unix ms). */
+  confirmedSince: number | undefined;
 }
 
 /**
@@ -208,6 +236,14 @@ export class Account {
   #rolesFeature: Promise<boolean> | undefined;
   /** The answer, once there is one. */
   #rolesKnown: boolean | undefined;
+  /** Whether the server stores freshness attestations, asked once. */
+  #freshnessFeature: Promise<boolean> | undefined;
+  /** The period this device last confirmed (`fd` of the marks). */
+  #periodFloor: number | undefined;
+  /** No marks for the account on this device at the unlock. */
+  #newDevice = false;
+  /** The last uploaded attestation of user_data. */
+  #userDataAttested: { at: number; seq: number } | undefined;
 
   constructor(options: AccountOptions) {
     this.#api = options.api;
@@ -296,7 +332,8 @@ export class Account {
    */
   #trustedContacts(): readonly Contact[] {
     const slot = this.#slot();
-    if (slot?.state.status !== "ok" || slot.rollback) return [];
+    // Unconfirmed user_data might still list a contact removed since.
+    if (slot?.state.status !== "ok" || slot.rollback || slot.stale) return [];
     return contactsOf(slot.state.raw);
   }
 
@@ -390,9 +427,17 @@ export class Account {
         register: (request) => this.#api.register(request),
         loginWithBody: (request, material) =>
           this.#completeExisting(request, material),
-        adopt: (material, data) => {
+        adopt: async (material, data) => {
           this.#current(epoch);
           this.#adopt(material, data);
+          // Made on this device: its user_data is current, and other
+          // devices learn so from the attestation.
+          await this.#marks.raise(material.userId, {
+            uf: this.#now(),
+            fd: SETTING_DEFAULTS.freshnessDays,
+            vaults: {},
+          });
+          await this.#attestUserData().catch(() => undefined);
         },
       });
     } finally {
@@ -448,6 +493,9 @@ export class Account {
       revision: data.revision,
       state: inspectUserData(data.userData),
       rollback: false,
+      stale: false,
+      attestation: undefined,
+      confirmedSince: undefined,
     };
     this.#memory.set(material.userId, cost(data.kdf));
   }
@@ -636,6 +684,13 @@ export class Account {
       revision: me.user_data.revision,
       state: inspectUserData(unlocked.userData),
       rollback: false,
+      stale: false,
+      attestation: ownUserDataAttestation(
+        me.freshness,
+        me.user_id,
+        this.#keys.signingPublicKey(),
+      ),
+      confirmedSince: undefined,
     };
     if (!weaker) this.#memory.set(me.user_id, cost(kdf));
     const state = this.#userData.state;
@@ -646,6 +701,8 @@ export class Account {
       userDataCorrupt: state.status === "corrupt",
       userDataReadOnly: state.status === "ok" && state.readOnly,
       userDataRollback: false,
+      userDataStale: false,
+      newDevice: false,
     };
   }
 
@@ -657,28 +714,71 @@ export class Account {
     report: UnlockReport,
     epoch: number,
   ): Promise<UnlockReport> {
-    const rollback = await this.#applyUserDataMarks();
+    const userId = this.#userId;
+    if (userId !== undefined) {
+      const before = await this.#marks.read(userId);
+      this.#current(epoch);
+      this.#newDevice =
+        before.ud === undefined && Object.keys(before.vaults).length === 0;
+    }
+    const { rollback, stale } = await this.#applyUserDataMarks();
     this.#current(epoch);
-    return rollback
-      ? { ...report, userDataRollback: true, userDataReadOnly: true }
-      : report;
+    const checked = { ...report, newDevice: this.#newDevice };
+    if (rollback)
+      return { ...checked, userDataRollback: true, userDataReadOnly: true };
+    if (stale)
+      return { ...checked, userDataStale: true, userDataReadOnly: true };
+    void this.#attestUserData().catch(() => undefined);
+    return checked;
   }
 
-  /** Marks the slot as rolled back, or raises the marks; `true`: rolled back. */
-  async #applyUserDataMarks(): Promise<boolean> {
+  /**
+   * Checks user_data against the marks and the own attestation (a floor
+   * whatever its age): rolled back, or else confirmed within the period
+   * or stale. Raises the marks.
+   */
+  async #applyUserDataMarks(): Promise<{ rollback: boolean; stale: boolean }> {
     const slot = this.#userData;
     const userId = this.#userId;
     if (!slot || userId === undefined || slot.state.status !== "ok")
-      return false;
+      return { rollback: false, stale: false };
     const seq = seqOf(slot.state.raw);
+    const attestation = slot.attestation;
     const marks = await this.#marks.read(userId);
-    if (isUserDataOlder(marks.ud, slot.revision, seq)) {
+    this.#periodFloor = marks.fd;
+    const floor: [number, number] = [
+      marks.ud?.[0] ?? 0,
+      Math.max(marks.ud?.[1] ?? 0, attestation?.seq ?? 0),
+    ];
+    if (attestation)
+      await this.#marks.raise(userId, { ud: [0, attestation.seq], vaults: {} });
+    if (isUserDataOlder(floor, slot.revision, seq)) {
       slot.rollback = true;
       slot.state = { ...slot.state, readOnly: true };
-      return true;
+      return { rollback: true, stale: false };
     }
     await this.#marks.raise(userId, { ud: [slot.revision, seq], vaults: {} });
-    return false;
+    const now = this.#now();
+    // Marks from before confirmation times: the first check confirms.
+    const transition = marks.ud !== undefined && marks.uf === undefined;
+    const attested =
+      attestation && seq >= attestation.seq
+        ? (attestedAt(attestation.time, now) ?? 0)
+        : 0;
+    const basis = transition ? now : Math.max(marks.uf ?? 0, attested);
+    const days = effectivePeriodDays(
+      effectiveSettings(slot.state.raw).freshnessDays,
+      marks.fd,
+    );
+    if (basis > 0 && basis >= now - days * DAY_MS) {
+      await this.#confirmUserData(userId, slot);
+      return { rollback: false, stale: false };
+    }
+    slot.confirmedSince = basis > 0 ? basis : undefined;
+    this.#markStale(slot, true);
+    if (marks.uf === undefined)
+      await this.#marks.raise(userId, { uf: 0, vaults: {} });
+    return { rollback: false, stale: true };
   }
 
   /** "Understood": the delivered user_data becomes the new mark. */
@@ -713,8 +813,16 @@ export class Account {
       revision: me.user_data.revision,
       state: inspectUserData(this.#decryptUserData(userId, me)),
       rollback: false,
+      stale: false,
+      attestation: ownUserDataAttestation(
+        me.freshness,
+        userId,
+        this.#keys.signingPublicKey(),
+      ),
+      confirmedSince: undefined,
     };
-    await this.#applyUserDataMarks();
+    const { rollback, stale } = await this.#applyUserDataMarks();
+    if (!rollback && !stale) void this.#attestUserData().catch(() => undefined);
   }
 
   /** The user accepted weaker parameters. */
@@ -738,6 +846,10 @@ export class Account {
     // The server may be updated before the next unlock.
     this.#rolesFeature = undefined;
     this.#rolesKnown = undefined;
+    this.#freshnessFeature = undefined;
+    this.#periodFloor = undefined;
+    this.#newDevice = false;
+    this.#userDataAttested = undefined;
   }
 
   /** Locks, forgets the account and revokes the session. */
@@ -957,6 +1069,13 @@ export class Account {
       revision: me.user_data.revision,
       state: inspectUserData(unlocked.userData),
       rollback: false,
+      stale: false,
+      attestation: ownUserDataAttestation(
+        me.freshness,
+        me.user_id,
+        this.#keys.signingPublicKey(),
+      ),
+      confirmedSince: undefined,
     };
     // An own password change: the new parameters are the ones to expect.
     this.#memory.set(me.user_id, cost(kdf));
@@ -969,6 +1088,8 @@ export class Account {
         userDataCorrupt: state.status === "corrupt",
         userDataReadOnly: state.status === "ok" && state.readOnly,
         userDataRollback: false,
+        userDataStale: false,
+        newDevice: false,
       },
       epoch,
     );
@@ -1015,6 +1136,9 @@ export class Account {
       revision,
       state: inspectUserData(content),
       rollback: false,
+      stale: false,
+      attestation: undefined,
+      confirmedSince: undefined,
     };
     await this.#marks.raise(userId, { ud: [revision, 1], vaults: {} });
   }
@@ -1042,11 +1166,15 @@ export class Account {
           revision: newRevision,
           state: { status: "ok", raw: local, readOnly: false },
           rollback: false,
+          stale: false,
+          attestation: slot.attestation,
+          confirmedSince: slot.confirmedSince,
         };
         await this.#marks.raise(userId, {
           ud: [newRevision, seqOf(local)],
           vaults: {},
         });
+        void this.#attestUserData().catch(() => undefined);
         return;
       } catch (error) {
         if (!(error instanceof ApiError && error.code === "conflict"))
@@ -1119,12 +1247,262 @@ export class Account {
               throw error;
           }
         },
+        now: () => this.#now(),
+        freshnessPeriodDays: () => this.freshnessPeriodDays,
+        attestUserData: () => this.#attestUserData(),
       },
       options,
     );
     this.#engine = engine;
     void engine.start();
     return engine;
+  }
+
+  // ------------------------------------------------------------ freshness
+
+  #freshnessSupported(): Promise<boolean> {
+    this.#freshnessFeature ??= this.#api.config().then(
+      (config) => config.features.freshness === true,
+      () => {
+        this.#freshnessFeature = undefined;
+        return false;
+      },
+    );
+    return this.#freshnessFeature;
+  }
+
+  /** The effective confirmation period in days (never above the confirmed one). */
+  get freshnessPeriodDays(): number {
+    return effectivePeriodDays(this.settings.freshnessDays, this.#periodFloor);
+  }
+
+  /** No device of the account confirmed the delivered user_data in time. */
+  get userDataStale(): boolean {
+    return this.#slot()?.stale ?? false;
+  }
+
+  /** The last confirmation of user_data known (Unix ms). */
+  get userDataConfirmedSince(): number | undefined {
+    return this.#slot()?.confirmedSince;
+  }
+
+  /** This device had no marks for the account when it was unlocked. */
+  get isNewDevice(): boolean {
+    return this.#keys.isUnlocked && this.#newDevice;
+  }
+
+  #markStale(slot: UserDataSlot, stale: boolean): void {
+    slot.stale = stale;
+    if (slot.state.status !== "ok") return;
+    slot.state = {
+      ...slot.state,
+      readOnly:
+        stale ||
+        slot.rollback ||
+        (slot.state.raw.schema as number) > USER_DATA_SCHEMA,
+    };
+  }
+
+  /** Confirms the delivered user_data now; the period goes with it. */
+  async #confirmUserData(userId: string, slot: UserDataSlot): Promise<void> {
+    if (slot.state.status !== "ok") return;
+    const now = this.#now();
+    const days = effectiveSettings(slot.state.raw).freshnessDays;
+    await this.#marks.raise(userId, { uf: now, fd: days, vaults: {} });
+    this.#periodFloor = days;
+    slot.confirmedSince = now;
+    this.#markStale(slot, false);
+  }
+
+  /** "Understood" at unconfirmed user_data: it counts as current now. */
+  async acknowledgeUserDataFreshness(): Promise<void> {
+    const epoch = this.#epoch;
+    const userId = this.#requireUnlocked();
+    const slot = this.#userData;
+    if (!slot?.stale) return;
+    await this.#confirmUserData(userId, slot);
+    this.#current(epoch);
+    this.#engine?.contactsChanged();
+    await this.#attestUserData();
+  }
+
+  /**
+   * Signs and uploads the attestation of confirmed user_data: after it
+   * changed, and otherwise at most once an hour.
+   */
+  async #attestUserData(): Promise<void> {
+    const slot = this.#slot();
+    const userId = this.#userId;
+    if (
+      !slot ||
+      userId === undefined ||
+      slot.state.status !== "ok" ||
+      slot.rollback ||
+      slot.stale ||
+      this.#signingKeyMissing
+    )
+      return;
+    const epoch = this.#epoch;
+    if (!(await this.#freshnessSupported())) return;
+    this.#current(epoch);
+    const seq = seqOf(slot.state.raw);
+    const now = this.#now();
+    const last = this.#userDataAttested;
+    if (last && last.seq >= seq && now - last.at < RENEW_AFTER_MS) return;
+    const signed = this.#keys.useSigningKey((secretKey) =>
+      signFreshness(
+        {
+          type: "user_data_freshness",
+          userId,
+          time: new Date(now).toISOString(),
+          seq,
+        },
+        secretKey,
+      ),
+    );
+    this.#userDataAttested = { at: now, seq };
+    try {
+      await this.#api.putUserDataFreshness(signed);
+    } catch {
+      this.#userDataAttested = undefined;
+      return;
+    }
+    this.#current(epoch);
+    await this.#confirmUserData(userId, slot);
+  }
+
+  /**
+   * Makes a pairing for another device of this account: the vaults are
+   * synced first, then their marks travel sealed with a one-time code.
+   */
+  async createPairing(): Promise<{ code: string; expiresAt: string }> {
+    const epoch = this.#epoch;
+    const userId = this.#requireUnlocked();
+    if (!(await this.#freshnessSupported()))
+      throw new SyncError("pairing_unsupported");
+    await this.#engine?.refresh();
+    this.#current(epoch);
+    const marks = await this.#marks.read(userId);
+    this.#current(epoch);
+    const time = (ms: number | undefined) =>
+      ms ? new Date(ms).toISOString() : null;
+    const ids =
+      this.#engine?.snapshot.vaults.map((v) => v.id) ??
+      Object.keys(marks.vaults);
+    const ud = marks.ud;
+    const content: PairingContent = {
+      fd: marks.fd ?? null,
+      userData:
+        ud && ud[0] >= 1 && ud[1] >= 1
+          ? { rev: ud[0], seq: ud[1], at: time(marks.uf) }
+          : null,
+      vaults: ids.flatMap((vaultId) => {
+        const m = marks.vaults[vaultId];
+        return m
+          ? [
+              {
+                vaultId,
+                rev: m.rev,
+                kv: m.kv ?? null,
+                mf: m.mf ?? null,
+                rl: m.rl ? { version: m.rl[0], hash: m.rl[1] } : null,
+                at: time(m.ft),
+              },
+            ]
+          : [];
+      }),
+    };
+    const secret = generatePairingSecret(systemRandomness);
+    try {
+      const payload = sealPairing(systemRandomness, secret, userId, content);
+      const { expiresAt } = await this.#api.putPairing(payload);
+      this.#current(epoch);
+      return { code: formatPairingCode(secret), expiresAt };
+    } finally {
+      wipe(secret);
+    }
+  }
+
+  /**
+   * Takes over the marks of another device of this account; afterwards
+   * every vault and user_data are checked again against them.
+   */
+  async pair(code: string): Promise<{ vaults: number }> {
+    const epoch = this.#epoch;
+    const userId = this.#requireUnlocked();
+    let secret: Uint8Array;
+    try {
+      secret = parsePairingCode(code);
+    } catch {
+      throw new SyncError("pairing_invalid");
+    }
+    try {
+      if (!(await this.#freshnessSupported()))
+        throw new SyncError("pairing_unsupported");
+      let payload: string;
+      try {
+        payload = (await this.#api.pairing()).payload;
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404)
+          throw new SyncError("pairing_missing");
+        throw error;
+      }
+      this.#current(epoch);
+      let content: PairingContent;
+      try {
+        content = openPairing(secret, userId, payload);
+      } catch (error) {
+        if (error instanceof CryptoError) throw new SyncError("pairing_wrong");
+        throw error;
+      }
+      const points = await this.#applyPairing(userId, content);
+      this.#current(epoch);
+      this.#newDevice = false;
+      try {
+        await this.#api.deletePairing();
+      } catch {
+        // It expires anyway.
+      }
+      this.#current(epoch);
+      await this.reloadUserData();
+      await this.#engine?.afterPairing(points);
+      return { vaults: content.vaults.length };
+    } finally {
+      wipe(secret);
+    }
+  }
+
+  /** The pairing's marks as floors; its confirmation times on this clock. */
+  async #applyPairing(
+    userId: string,
+    content: PairingContent,
+  ): Promise<Map<string, RolePoint>> {
+    const now = this.#now();
+    const time = (at: string | null) =>
+      at === null ? 0 : (attestedAt(at, now) ?? 0);
+    const vaults: UserMarks["vaults"] = {};
+    const points = new Map<string, RolePoint>();
+    for (const v of content.vaults) {
+      vaults[v.vaultId] = {
+        rev: v.rev,
+        obj: {},
+        ...(v.kv !== null ? { kv: v.kv } : {}),
+        ...(v.mf !== null ? { mf: v.mf } : {}),
+        ...(v.rl ? { rl: [v.rl.version, v.rl.hash] } : {}),
+        ft: time(v.at),
+      };
+      if (v.rl) points.set(v.vaultId, v.rl);
+    }
+    const ud = content.userData;
+    const uf = ud ? time(ud.at) : 0;
+    await this.#marks.raise(userId, {
+      ...(ud ? { ud: [ud.rev, ud.seq] } : {}),
+      ...(uf > 0
+        ? { uf, ...(content.fd !== null ? { fd: content.fd } : {}) }
+        : {}),
+      vaults,
+    });
+    return points;
   }
 
   // ------------------------------------------------------------ deletion
@@ -1788,7 +2166,7 @@ interface RegistrationSteps {
       revision: number;
       userData: JsonObject | undefined;
     },
-  ): void;
+  ): Promise<void>;
 }
 
 /**
@@ -1856,7 +2234,7 @@ export class PendingRegistration {
         userData = existing.userData;
       }
       try {
-        this.#steps.adopt(material, {
+        await this.#steps.adopt(material, {
           email: this.#request.email,
           kdf: validateKdfParams(this.#request.kdf),
           revision,
