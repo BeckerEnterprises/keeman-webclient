@@ -202,6 +202,8 @@ test.describe("sharing", () => {
       { ...emptyDraft(), title: "Nach der Erneuerung" },
     );
     await bobDevice.engine.pull(alice.vaultId);
+    // The rotation renewed the manifest with the new key.
+    expect(view(bobDevice.engine, alice.vaultId).manifest).toBe("verified");
     expect(
       [...view(bobDevice.engine, alice.vaultId).entries.values()].map(
         (e) => e.title,

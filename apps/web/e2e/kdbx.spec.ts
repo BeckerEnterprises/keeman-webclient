@@ -187,6 +187,8 @@ test.describe("KDBX", () => {
       { type: "kdbx" },
     ]);
     expect(entry?.customIcon).toBe([...vault.icons.keys()][0]);
+    // A new device finds everything the manifest names.
+    expect(vault.manifest).toBe("verified");
   });
 
   test("imports the KeePass 2 file as a new database", async ({ page }) => {
@@ -308,6 +310,7 @@ test.describe("KDBX", () => {
       (web) => `{REF:P@I:${web.id.replaceAll("-", "").toUpperCase()}}`,
     );
     expect([...references].sort()).toEqual([...expected].sort());
+    expect(vault.manifest).toBe("verified");
   });
 
   test("explains refusals and cancels while opening", async ({ page }) => {
