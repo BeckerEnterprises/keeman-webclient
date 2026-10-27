@@ -943,6 +943,264 @@
       "expected": {
         "error": "validation"
       }
+    },
+    {
+      "id": "alice-to-bob-manifest",
+      "kind": "box",
+      "sender_private_key_hex": "38f2e04ad62fa7845a953ca699adba4975b9de7ee6b24b3ec7dfa097aa5927ef",
+      "recipient_public_key_hex": "8a4e83f509464ed1f71f39377b243dfb571d0efef01c6844326e38b2b8a89c71",
+      "nonce_hex": "0c503c713c35b271492405832b1b43ce9df220b3950c0a7d",
+      "message": {
+        "v": 1,
+        "type": "vault_key",
+        "vault_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01",
+        "key_version": 3,
+        "vault_key": "WdhXbV3IIiErx3OCKHCR5BlR6x5g3K36ynR9QCeZn4s",
+        "sender_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
+        "recipient_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a02",
+        "vault_name": "Gemeinsam",
+        "created": "2026-10-23T08:42:00.000Z",
+        "roles": {
+          "version": 3,
+          "hash": "yV2w77p-hgI8bMnd2yUKDdrncGlhSx-C7RD3rFuQYPg"
+        },
+        "manifest": 12
+      },
+      "message_utf8_hex": "7b2276223a312c2274797065223a227661756c745f6b6579222c227661756c745f6964223a2230313932623361342d356336642d376538662d396130622d316332643365346635623031222c226b65795f76657273696f6e223a332c227661756c745f6b6579223a2257646858625633494969457278334f434b48435235426c5236783567334b3336796e52395143655a6e3473222c2273656e6465725f6964223a2230313932623361342d356336642d376538662d396130622d316332643365346635613031222c22726563697069656e745f6964223a2230313932623361342d356336642d376538662d396130622d316332643365346635613032222c227661756c745f6e616d65223a2247656d65696e73616d222c2263726561746564223a22323032362d31302d32335430383a34323a30302e3030305a222c22726f6c6573223a7b2276657273696f6e223a332c2268617368223a22795632773737702d68674938624d6e643279554b4464726e63476c6853782d433752443372467551595067227d2c226d616e6966657374223a31327d",
+      "open": {
+        "recipient_private_key_hex": "e17d5a32fefc8d14404e48d4d4bf475f8f40c628c5d3c416e5547dfb8aa3598f",
+        "sender_public_key_hex": "eb37e02d15f4bf6201ace34a6553773e67fa23c33d9b125b529977e361176d6c",
+        "context": {
+          "own_user_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a02",
+          "sender_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
+          "vault_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01",
+          "key_version": 3
+        }
+      },
+      "expected": {
+        "envelope_b64": "AgxQPHE8NbJxSSQFgysbQ86d8iCzlQwKfeZv3fuKrr0DLDhSTDxJlinXGe72LhRTlejSAywWEhl5yubAAxYS8wL76hBPRwJYNORyhYNj9u_l4mHV3IUTZTq43WDh8jU-BZVRw8kFnfDB_79B1XpAkBtbsdH3mvDkEiUTib3phbtbvVpFeuftFzqNw9Jtb-1ooyktvQk6BhaDOEycc-znG0deReM7KvPaqpLeMXC_i6CnUwJ2Biqld7_fVuwhg7Qb-MOstaUIGcW1AWxUdIEhg-lVhif-hi4iISj3AQun0YBAFZ0VsXlBVLGzea52ubH8EwhVUSfbXL78_IaRatrPizMeSBHOlx5K_vV1sJW2ibAH0fuXfCKI-g7lNxQJLoywJ3E578XD1yfnKLhMOtWbfvYy8I8GPLm-R49ecVF0hCMoUpzVwfdl7RsrNJU4NC3W5NewYhIqT98mHtvVbUOQXbohjyiGgrxYawyP4VK6dxpKnCRF2Gygh9jcHNyDNYOXKhVB6A5DXGRP0AQGwzAweeVSjybAKCjdP-fSz9DxoXBjkeUGwyXeoVUjSSGSxwoi4sIVNUK9oGCC5tIj7-bYK__32A4jkrFhUN6jcx29BKe_WRw21Tx6520j17mAmigYG12Z3buFePr7itwkGiRqkQmlBEVv1tkJS0zw6izPdIHJjT_LbtVru5OwtVwg5q8cesMhmF-n8BQGspSoyfOSI0BcB6Dpi9SbJw",
+        "vault_key_hex": "59d8576d5dc822212bc77382287091e41951eb1e60dcadfaca747d4027999f8b",
+        "vault_name": "Gemeinsam",
+        "created": "2026-10-23T08:42:00.000Z",
+        "roles": {
+          "version": 3,
+          "hash": "yV2w77p-hgI8bMnd2yUKDdrncGlhSx-C7RD3rFuQYPg"
+        },
+        "manifest": 12
+      }
+    },
+    {
+      "id": "manifest-null",
+      "kind": "box_open",
+      "nonce_hex": "62271a26315d2e8f1b7d5f2e7d49b4f47c28454856e1c481",
+      "message": {
+        "v": 1,
+        "type": "vault_key",
+        "vault_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01",
+        "key_version": 3,
+        "vault_key": "WdhXbV3IIiErx3OCKHCR5BlR6x5g3K36ynR9QCeZn4s",
+        "sender_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
+        "recipient_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a02",
+        "vault_name": "Gemeinsam",
+        "created": "2026-10-23T08:42:00.000Z",
+        "manifest": null
+      },
+      "message_utf8_hex": "7b2276223a312c2274797065223a227661756c745f6b6579222c227661756c745f6964223a2230313932623361342d356336642d376538662d396130622d316332643365346635623031222c226b65795f76657273696f6e223a332c227661756c745f6b6579223a2257646858625633494969457278334f434b48435235426c5236783567334b3336796e52395143655a6e3473222c2273656e6465725f6964223a2230313932623361342d356336642d376538662d396130622d316332643365346635613031222c22726563697069656e745f6964223a2230313932623361342d356336642d376538662d396130622d316332643365346635613032222c227661756c745f6e616d65223a2247656d65696e73616d222c2263726561746564223a22323032362d31302d32335430383a34323a30302e3030305a222c226d616e6966657374223a6e756c6c7d",
+      "padded": true,
+      "sender_private_key_hex": "38f2e04ad62fa7845a953ca699adba4975b9de7ee6b24b3ec7dfa097aa5927ef",
+      "recipient_public_key_hex": "8a4e83f509464ed1f71f39377b243dfb571d0efef01c6844326e38b2b8a89c71",
+      "open": {
+        "recipient_private_key_hex": "e17d5a32fefc8d14404e48d4d4bf475f8f40c628c5d3c416e5547dfb8aa3598f",
+        "sender_public_key_hex": "eb37e02d15f4bf6201ace34a6553773e67fa23c33d9b125b529977e361176d6c",
+        "context": {
+          "own_user_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a02",
+          "sender_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
+          "vault_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01",
+          "key_version": 3
+        }
+      },
+      "envelope_b64": "AmInGiYxXS6PG31fLn1JtPR8KEVIVuHEgQ6Chb8JEV29LjpYvBkIxHCvOV7KkW1RcJ52hLwLkmV1eHPWF8HfR_AiBfajob-yI0fR0pIbqbYC0LRHUDmx5lORt0NhNIo1e1AhJ-L3BmHcXZmn5w6LFzho7-3q952v-J7qKQESdG5gP9nJdpcdfLHHwOLu2dO0p-kGblx71gOFpSu8IrYuo7h3xVhuz7jhBSZZf1ikWjJOQR4ZhCZlycLTZp3AvSGHB7HnQX-KoMTKIIp72dxtyFxAxBW7i3SNPcUYSeckv5AlpsgryILPgUau-GuuVL8KMc1Tvvxcdz2ZMuh6td3jk79bkPWEGiLYzG2My6zJU-Cc5ztHCE_YQ0viHCY8QS2E3LiXFRBLvvuJmq56hNa-jAXJ579XypEqA9HLfZeq_NM3nMBMxFY--AUZE3BG-KS8UsqXOViCg0SgFzIi9OhTgPa5CY-tBsaArSHEhaaWjumXeviQQDzuXAFLOuPFFYaGX7mnNBYjTNChJogQx6pq_bVpDHhHdk-abd3bD7AAWYWl_PY2hBb4U_NOxTXC4MnAepVDi0hxDTx4afqO8APL-YnyBPxYSs2QHUswzwcvS5NPAgYV6HA8W1PD_WodPlQvMm5Z00R4HGsXH2M1f3KcdmN6-HRJbivs2v64oZde8ooXcK8YM5UGwN2kZi3jnf5CjpOGqXpM3AXDlAvMjK2NzOaJcG979rkUOQ",
+      "expected": {
+        "error": "validation"
+      }
+    },
+    {
+      "id": "manifest-0",
+      "kind": "box_open",
+      "nonce_hex": "fea9f503c3ed5fba068dd18308406bff3a9ffef6193272a5",
+      "message": {
+        "v": 1,
+        "type": "vault_key",
+        "vault_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01",
+        "key_version": 3,
+        "vault_key": "WdhXbV3IIiErx3OCKHCR5BlR6x5g3K36ynR9QCeZn4s",
+        "sender_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
+        "recipient_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a02",
+        "vault_name": "Gemeinsam",
+        "created": "2026-10-23T08:42:00.000Z",
+        "manifest": 0
+      },
+      "message_utf8_hex": "7b2276223a312c2274797065223a227661756c745f6b6579222c227661756c745f6964223a2230313932623361342d356336642d376538662d396130622d316332643365346635623031222c226b65795f76657273696f6e223a332c227661756c745f6b6579223a2257646858625633494969457278334f434b48435235426c5236783567334b3336796e52395143655a6e3473222c2273656e6465725f6964223a2230313932623361342d356336642d376538662d396130622d316332643365346635613031222c22726563697069656e745f6964223a2230313932623361342d356336642d376538662d396130622d316332643365346635613032222c227661756c745f6e616d65223a2247656d65696e73616d222c2263726561746564223a22323032362d31302d32335430383a34323a30302e3030305a222c226d616e6966657374223a307d",
+      "padded": true,
+      "sender_private_key_hex": "38f2e04ad62fa7845a953ca699adba4975b9de7ee6b24b3ec7dfa097aa5927ef",
+      "recipient_public_key_hex": "8a4e83f509464ed1f71f39377b243dfb571d0efef01c6844326e38b2b8a89c71",
+      "open": {
+        "recipient_private_key_hex": "e17d5a32fefc8d14404e48d4d4bf475f8f40c628c5d3c416e5547dfb8aa3598f",
+        "sender_public_key_hex": "eb37e02d15f4bf6201ace34a6553773e67fa23c33d9b125b529977e361176d6c",
+        "context": {
+          "own_user_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a02",
+          "sender_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
+          "vault_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01",
+          "key_version": 3
+        }
+      },
+      "envelope_b64": "Av6p9QPD7V-6Bo3RgwhAa_86n_72GTJypVcsda2nKE7h2QjGaXu4WH9CnsIqqASNNM3wyPtQ5S0xGsA4I8FPxiXKssrDCy3BE0UmoH6NF5nvgo548kPAa-D1cl3pvQcyY6OJu99NPNYm3KCpJmQc69SjDFtFIao_q0w83zYGW5sA3wcf1eOudnWyQOg_aubxBcSgNhUwHZqYL6Dx8wBmVw7RhBFAliPb476YiYuM2U5aGn3L3fcbKopuDznh2738vfS0fFL3UK4GRdYlH0GDaF1pGUKX8878I8zNmlnzFKXUnp_hb9gLqmGK300DMnfWNgwAcekaITA0VZXms6iZMmUsHRIlxPPU74nfgKoJesT8voAkBm9tkIf-Eq9ZAGIoJsS7HiLemwp6-O0aApM1IR56OFSFazaVY_uJhpU_MaELc8o_S18TPSjfL4fr33nMu24DHAlBUV7iYko_qrs4DOaglgpneVFchNudiBDCTDB4ZGJZL50Vs7gC0MA6Zaf0Zit-6A9R42WvgbLBawIPrL2qc0ABa2Q1OEcEx7b0UmeuLOypId2H5-zZ6iJATVInP93MAZNRDaGkNcSSSns2CP2-fFftcpp4-0v30qg6cjKbWF86ZoAJVpTSb96mNlLmh3TyHM67e4bfH2oxgcct1slMody7WfGE4eLOHKeLjgIhZBmF-yhdnjdK1zpx2ZTV4AT_oCfS3I3M0oB7Li_sYQCFl14N6_XL7A",
+      "expected": {
+        "error": "validation"
+      }
+    },
+    {
+      "id": "manifest-string",
+      "kind": "box_open",
+      "nonce_hex": "dfbef48a01160eae13b2a843a400361788d85db905a5fb96",
+      "message": {
+        "v": 1,
+        "type": "vault_key",
+        "vault_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01",
+        "key_version": 3,
+        "vault_key": "WdhXbV3IIiErx3OCKHCR5BlR6x5g3K36ynR9QCeZn4s",
+        "sender_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
+        "recipient_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a02",
+        "vault_name": "Gemeinsam",
+        "created": "2026-10-23T08:42:00.000Z",
+        "manifest": "12"
+      },
+      "message_utf8_hex": "7b2276223a312c2274797065223a227661756c745f6b6579222c227661756c745f6964223a2230313932623361342d356336642d376538662d396130622d316332643365346635623031222c226b65795f76657273696f6e223a332c227661756c745f6b6579223a2257646858625633494969457278334f434b48435235426c5236783567334b3336796e52395143655a6e3473222c2273656e6465725f6964223a2230313932623361342d356336642d376538662d396130622d316332643365346635613031222c22726563697069656e745f6964223a2230313932623361342d356336642d376538662d396130622d316332643365346635613032222c227661756c745f6e616d65223a2247656d65696e73616d222c2263726561746564223a22323032362d31302d32335430383a34323a30302e3030305a222c226d616e6966657374223a223132227d",
+      "padded": true,
+      "sender_private_key_hex": "38f2e04ad62fa7845a953ca699adba4975b9de7ee6b24b3ec7dfa097aa5927ef",
+      "recipient_public_key_hex": "8a4e83f509464ed1f71f39377b243dfb571d0efef01c6844326e38b2b8a89c71",
+      "open": {
+        "recipient_private_key_hex": "e17d5a32fefc8d14404e48d4d4bf475f8f40c628c5d3c416e5547dfb8aa3598f",
+        "sender_public_key_hex": "eb37e02d15f4bf6201ace34a6553773e67fa23c33d9b125b529977e361176d6c",
+        "context": {
+          "own_user_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a02",
+          "sender_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
+          "vault_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01",
+          "key_version": 3
+        }
+      },
+      "envelope_b64": "At--9IoBFg6uE7KoQ6QANheI2F25BaX7ljVy71B25qWnomM-5yJaq70ddMi5WN8Se4rLrrhc_M4KOSFoQm-zxbWE_gDX4MVHIm5UcAVpb3PpoAS-10qge8pHltqFC0skfcUsbqZi1yPEbnGL6nbvHn7rsmVbqnLRgQLm8RaYe55Vw5bIMVD0qxhIcw_JqN6bhJfoI9HVDKxInnyb59mXKyuUvBTwH52R-hSB3tyq8FetfYOF3cjfzSqVqcjVmaY7OIhGE0yHicmlBbcXlN6NalLwjgIkvVJhp2OeHB90L2NGo9l4jle2o-SoKqCJeYRIE1LRMUHdGAoZOC-wNBR5yAZI1qOERj0ii8lxpq7OK_lvTcEl50cJAKCazVfSIef4DJgLRXrXs1sXUW7uTFUhMDezPQz0d6xSTVCTLl01e9QsudHOA5uqqz3d0utupkvexv3NnCqYMixciFDiUPWGw4eUKL7nsKaJ2O-6m-DjneO8d8LHAqZE4o6CG6QzQC1Ql52_2ohml6sDJNjVtOlT4TdUvHPCb1RiM69laNnz02ZJbvmarZAQP00k7e3G3ahTUhFxOb9GHtAdZWnKK5xbpWP1YfDQF35Jrwm0a6Qp8Zr_NGxuRSXKRGuqOA6DA87nFSPcW1bkfkAcrMhFTvol_Z4fPeJJZMvSdNfVVQS_PIUwrlDS8AVSY6J6bEfBRixrfXICFTo6rg-Uj3LeuOTgNvb4BCxO42ehpg",
+      "expected": {
+        "error": "validation"
+      }
+    },
+    {
+      "id": "manifest-float",
+      "kind": "box_open",
+      "nonce_hex": "906e81eb119c196300efe58f79bc7df870213454eb08ec12",
+      "message": {
+        "v": 1,
+        "type": "vault_key",
+        "vault_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01",
+        "key_version": 3,
+        "vault_key": "WdhXbV3IIiErx3OCKHCR5BlR6x5g3K36ynR9QCeZn4s",
+        "sender_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
+        "recipient_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a02",
+        "vault_name": "Gemeinsam",
+        "created": "2026-10-23T08:42:00.000Z",
+        "manifest": 12.5
+      },
+      "message_utf8_hex": "7b2276223a312c2274797065223a227661756c745f6b6579222c227661756c745f6964223a2230313932623361342d356336642d376538662d396130622d316332643365346635623031222c226b65795f76657273696f6e223a332c227661756c745f6b6579223a2257646858625633494969457278334f434b48435235426c5236783567334b3336796e52395143655a6e3473222c2273656e6465725f6964223a2230313932623361342d356336642d376538662d396130622d316332643365346635613031222c22726563697069656e745f6964223a2230313932623361342d356336642d376538662d396130622d316332643365346635613032222c227661756c745f6e616d65223a2247656d65696e73616d222c2263726561746564223a22323032362d31302d32335430383a34323a30302e3030305a222c226d616e6966657374223a31322e357d",
+      "padded": true,
+      "sender_private_key_hex": "38f2e04ad62fa7845a953ca699adba4975b9de7ee6b24b3ec7dfa097aa5927ef",
+      "recipient_public_key_hex": "8a4e83f509464ed1f71f39377b243dfb571d0efef01c6844326e38b2b8a89c71",
+      "open": {
+        "recipient_private_key_hex": "e17d5a32fefc8d14404e48d4d4bf475f8f40c628c5d3c416e5547dfb8aa3598f",
+        "sender_public_key_hex": "eb37e02d15f4bf6201ace34a6553773e67fa23c33d9b125b529977e361176d6c",
+        "context": {
+          "own_user_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a02",
+          "sender_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
+          "vault_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01",
+          "key_version": 3
+        }
+      },
+      "envelope_b64": "ApBugesRnBljAO_lj3m8ffhwITRU6wjsEoMthXkVycDARMsum1HtdO96czn-WAAsDE_HiN5nVanuVMWaYQrsLUfLUIoiO0nKjeH6E4OKr4IHSy0e4k_7rDqdaddlgGwpGQtl6Bcjg0atoAVH5Z_fhRy7TERU5UCLvEoom-K47D1v-zjjzjwtuxlyRvvczuz4qdh00ix2bV59YtxBozdYjOnh1VJDU07PrOQPWebuMgki11o7xfLixNjLdPDdmq9Mi1LBwGHnxi1jI_hsR_FOzgF4TZk-ly_vqRbUYgJ51fDPYCD_YrNExVxlS3i8jhBfmOvbfhoZ4ZiiKIGDOdbpwfN86yfhLXl7nIzNsNBb7v1-wvFxMYVeGuZ19uvwnf8KB34CVK-9v1Ye-nQ6r0ChxqHxlB_aQ3HVvdmlfpzwH2WkJAEWkqWOa4Oz1XeMMpwYHtd3fl8cfJ-9yEzGGOk6J-roW1rxmfJ7Sew4VXn9kPBvOXJstCAJ_RmPjIu5X74v638ArQ3KQmaF-l4CvHpVX8wCzC7SmdXG2qJsdfUny9fz9z9xfTu9mRcm2Uas3cP-TxnNHTSSncfoeDNt0tWL0VtVY6Gf4y3BPiL22jqUBjFX2fJxUHGC5LsE3c2L9IGAvLMDVFF33a7bLZhDw4hWS-fH12I9wtNhvWqyMZfeTtMc2KIz4ezHXnKNttrkdwl2b-8ZlLDCw5F0uFfpFS7oKCzkTXnfyRZQ_A",
+      "expected": {
+        "error": "validation"
+      }
+    },
+    {
+      "id": "manifest-unsafe",
+      "kind": "box_open",
+      "nonce_hex": "63aeba2eeed6dbe96b36dcd1c25e67e5819e2e5490109703",
+      "message": {
+        "v": 1,
+        "type": "vault_key",
+        "vault_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01",
+        "key_version": 3,
+        "vault_key": "WdhXbV3IIiErx3OCKHCR5BlR6x5g3K36ynR9QCeZn4s",
+        "sender_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
+        "recipient_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a02",
+        "vault_name": "Gemeinsam",
+        "created": "2026-10-23T08:42:00.000Z",
+        "manifest": 9007199254740992
+      },
+      "message_utf8_hex": "7b2276223a312c2274797065223a227661756c745f6b6579222c227661756c745f6964223a2230313932623361342d356336642d376538662d396130622d316332643365346635623031222c226b65795f76657273696f6e223a332c227661756c745f6b6579223a2257646858625633494969457278334f434b48435235426c5236783567334b3336796e52395143655a6e3473222c2273656e6465725f6964223a2230313932623361342d356336642d376538662d396130622d316332643365346635613031222c22726563697069656e745f6964223a2230313932623361342d356336642d376538662d396130622d316332643365346635613032222c227661756c745f6e616d65223a2247656d65696e73616d222c2263726561746564223a22323032362d31302d32335430383a34323a30302e3030305a222c226d616e6966657374223a393030373139393235343734303939327d",
+      "padded": true,
+      "sender_private_key_hex": "38f2e04ad62fa7845a953ca699adba4975b9de7ee6b24b3ec7dfa097aa5927ef",
+      "recipient_public_key_hex": "8a4e83f509464ed1f71f39377b243dfb571d0efef01c6844326e38b2b8a89c71",
+      "open": {
+        "recipient_private_key_hex": "e17d5a32fefc8d14404e48d4d4bf475f8f40c628c5d3c416e5547dfb8aa3598f",
+        "sender_public_key_hex": "eb37e02d15f4bf6201ace34a6553773e67fa23c33d9b125b529977e361176d6c",
+        "context": {
+          "own_user_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a02",
+          "sender_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
+          "vault_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01",
+          "key_version": 3
+        }
+      },
+      "envelope_b64": "AmOuui7u1tvpazbc0cJeZ-WBni5UkBCXA3NLJ8tBDZdWf30-El1ExFoTorgIGij5BK2mFSzUc0tVkcu35CzKTWWaL-HzH72hvRHG4FBwEFdO9-FS9cYRQPallhFHfGZ8icZgHGySMGBIejH7aV23v96pVfZtO2RJpYfjGcCCvT3MmpCID4hqBujnNaGT4FhjHkNoOU0loBWFvOdtc6iI03h5dreR4nKR1C1TMkajEDoqCQ1yEuOSswYuu5CzAZSFty8FWsNEf6MX_v33cuO5tg5VGO_HXdU-nCz40dFobDAZtwRmg83ETD_d9hQVoYkQnKYQTMLiOqPB_32ssWqi1y2troqr_DNZks0_wh3qWpeHl7G9x8fccWKbqnKZwgl4khsPrGp49XaXdDbTTdQW5GpBbUYT5VhY8fDLMuSn2EVq3RS00Cagdl_1e2VKL1NWEzBWBkfvXrc2O_eK8ANbN7tjMOAH_trTFIcjibf8MoSOAeEH8JH4oeMJoWUzLdb961KzI9ga8JDMVE4W5zi25SIg_lQRcZZjt1iUaNnK7t0Kw9E8cIgbw5WT4RwvFyBaCF0uoaPXpOaUqztl5Ue6f7CtAKT9qtdcCQC-sdUfBGlnYnfxMPJtT4nuacDGZuQXfjgskFWqcU47tvSWOEaLZtouRAvDIXidhvYEj9f83JMaQ0afl1-0iL6TqgX-W7r9Hl2EUusn9neIzjWkfnSsG-ihoEH7UIxKUg",
+      "expected": {
+        "error": "validation"
+      }
+    },
+    {
+      "id": "manifest-array",
+      "kind": "box_open",
+      "nonce_hex": "e522ec9bfb212211bbcb0f092279e43b55d9dffe6e485733",
+      "message": {
+        "v": 1,
+        "type": "vault_key",
+        "vault_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01",
+        "key_version": 3,
+        "vault_key": "WdhXbV3IIiErx3OCKHCR5BlR6x5g3K36ynR9QCeZn4s",
+        "sender_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
+        "recipient_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a02",
+        "vault_name": "Gemeinsam",
+        "created": "2026-10-23T08:42:00.000Z",
+        "manifest": [
+          12,
+          "yV2w77p-hgI8bMnd2yUKDdrncGlhSx-C7RD3rFuQYPg"
+        ]
+      },
+      "message_utf8_hex": "7b2276223a312c2274797065223a227661756c745f6b6579222c227661756c745f6964223a2230313932623361342d356336642d376538662d396130622d316332643365346635623031222c226b65795f76657273696f6e223a332c227661756c745f6b6579223a2257646858625633494969457278334f434b48435235426c5236783567334b3336796e52395143655a6e3473222c2273656e6465725f6964223a2230313932623361342d356336642d376538662d396130622d316332643365346635613031222c22726563697069656e745f6964223a2230313932623361342d356336642d376538662d396130622d316332643365346635613032222c227661756c745f6e616d65223a2247656d65696e73616d222c2263726561746564223a22323032362d31302d32335430383a34323a30302e3030305a222c226d616e6966657374223a5b31322c22795632773737702d68674938624d6e643279554b4464726e63476c6853782d433752443372467551595067225d7d",
+      "padded": true,
+      "sender_private_key_hex": "38f2e04ad62fa7845a953ca699adba4975b9de7ee6b24b3ec7dfa097aa5927ef",
+      "recipient_public_key_hex": "8a4e83f509464ed1f71f39377b243dfb571d0efef01c6844326e38b2b8a89c71",
+      "open": {
+        "recipient_private_key_hex": "e17d5a32fefc8d14404e48d4d4bf475f8f40c628c5d3c416e5547dfb8aa3598f",
+        "sender_public_key_hex": "eb37e02d15f4bf6201ace34a6553773e67fa23c33d9b125b529977e361176d6c",
+        "context": {
+          "own_user_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a02",
+          "sender_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
+          "vault_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01",
+          "key_version": 3
+        }
+      },
+      "envelope_b64": "AuUi7Jv7ISIRu8sPCSJ55DtV2d_-bkhXM_WSyCIyxfZO-eZjnRmGCQDwTdPvB54nY9SzBEylkeGSyog6RLvhcDGXiJrB9UZ9GSybx76pTUEI_AR4BSY8BLQ6XDL223tPChmSNdA36saP--z8nL8k4UGD5dQcxA6MOlQu7btLXJhUo0Lhc9nhTh-ykLQbZszyjGxEt3m3BTIRy84ESGU1m4HNv00LEWpw7nNPe08ijQdqB2a8EB2NOELDomWgo92VXt3-FiT_kKqhjZWnxQrOqcAPYMynpQblciCrGu8QeA315zt-eZ9X1mMGRoID8KCEk_MeZNVzl-TFviPfzOHmgkgjDWJhaXn8yxGpj2HtOnnIKk3ZCDLt2W6FhExInUUcbuqpCnew3idshZEQvK71pNlzpnhxlE5d4GDoXVe-GQdHQFB18A2UW54PW8mOHTN6JoMwKL_q2_okNbxAIv5bs0MC6NmsIIp8Wgc8irpG0g-c1c6OWd4C-yfol1DdQbRV275ZK63xfnxEjJc6r5XJZn3tIt30SKaw-cSC_emus1ZKqoL2rNsXSo_Yz5EPTCPHIssirAl4ILbvD3rMb8Cjvn2zD8tpOsiL1F6Nn_I4AviuLeUWMiPnIXMKJw8oUc1aqO2jK3LU1oLTWaEI6THDmaQ8TptwxVxEjr-NJaiIjBeeb1iDRe2C_bMsiCkYomsD6cFOJ-pJzS5o7J-pPN4VvFH-FaBJer4SCg",
+      "expected": {
+        "error": "validation"
+      }
     }
   ]
 }

@@ -61,4 +61,5 @@ export const aad = {
     `keeman:v1:object:${id(vaultId, "vault_id")}:${id(objectId, "object_id")}:${objectType(type)}:${keyVersion(version)}`,
   attachment: (attachmentId: string) =>
     `keeman:v1:attachment:${id(attachmentId, "attachment_id")}`,
+  pairing: (userId: string) => `keeman:v1:pairing:${id(userId, "user_id")}`,
 };

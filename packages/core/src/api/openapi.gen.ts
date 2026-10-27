@@ -360,6 +360,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/freshness": {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Keeman-Client": components["parameters"]["KeemanClient"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["putUserDataFreshness"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/pairing": {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Keeman-Client": components["parameters"]["KeemanClient"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getPairing"];
+        put: operations["putPairing"];
+        post?: never;
+        delete: operations["deletePairing"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/totp/setup": {
         parameters: {
             query?: never;
@@ -740,6 +776,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/vaults/{vault_id}/freshness": {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Keeman-Client": components["parameters"]["KeemanClient"];
+            };
+            path: {
+                vault_id: components["parameters"]["VaultId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["putVaultFreshness"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/vaults/{vault_id}/members/{user_id}": {
         parameters: {
             query?: never;
@@ -1027,6 +1083,24 @@ export interface components {
         SigningKeyRequest: {
             signing_public_key: components["schemas"]["Key32"];
         };
+        SignedFreshness: {
+            statement: string;
+            signature: string;
+        };
+        FreshnessRequest: {
+            freshness: components["schemas"]["SignedFreshness"];
+        };
+        PairingRequest: {
+            payload: components["schemas"]["PairingEnvelope"];
+        };
+        PairingCreated: {
+            expires_at: components["schemas"]["Timestamp"];
+        };
+        Pairing: {
+            payload: components["schemas"]["PairingEnvelope"];
+            expires_at: components["schemas"]["Timestamp"];
+        };
+        PairingEnvelope: string;
         AppendRolesRequest: {
             roles: components["schemas"]["SignedRoles"];
         };
@@ -1062,6 +1136,7 @@ export interface components {
                 favicon: boolean;
                 manifest?: boolean;
                 roles?: boolean;
+                freshness?: boolean;
             };
             limits: {
                 attachment_max_bytes: number;
@@ -1191,6 +1266,7 @@ export interface components {
                 webauthn_credentials: number;
                 backup_codes_remaining: number;
             };
+            freshness: components["schemas"]["SignedFreshness"] | null;
             created: components["schemas"]["Timestamp"];
         };
         ReauthRequest: {
@@ -1295,6 +1371,7 @@ export interface components {
             revision: components["schemas"]["Revision"];
             rotation_required: boolean;
             roles_version: number | null;
+            freshness: components["schemas"]["SignedFreshness"] | null;
             member_count: number;
             created: components["schemas"]["Timestamp"];
         };
@@ -2336,6 +2413,115 @@ export interface operations {
             default: components["responses"]["Problem"];
         };
     };
+    putUserDataFreshness: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Keeman-Client": components["parameters"]["KeemanClient"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FreshnessRequest"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    getPairing: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Keeman-Client": components["parameters"]["KeemanClient"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Pairing"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    putPairing: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Keeman-Client": components["parameters"]["KeemanClient"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PairingRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PairingCreated"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            413: components["responses"]["PayloadTooLarge"];
+            429: components["responses"]["TooManyRequests"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    deletePairing: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Keeman-Client": components["parameters"]["KeemanClient"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            default: components["responses"]["Problem"];
+        };
+    };
     setupTotp: {
         parameters: {
             query?: never;
@@ -3083,6 +3269,44 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AppendRolesRequest"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    putVaultFreshness: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Keeman-Client": components["parameters"]["KeemanClient"];
+            };
+            path: {
+                vault_id: components["parameters"]["VaultId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FreshnessRequest"];
             };
         };
         responses: {

@@ -265,6 +265,8 @@ export interface KeyBoxInput {
   created: string;
   /** The checked roles statement the sender vouches for. */
   roles?: RolePoint | undefined;
+  /** `seq` of the manifest root the sender last synced (invitations). */
+  manifest?: number | undefined;
 }
 
 /** `key_box` for an invitation or after a rotation. Fingerprint policy: caller. */
@@ -285,6 +287,7 @@ export function buildKeyBox(
       vaultName: input.vaultName,
       created: input.created,
       roles: input.roles,
+      manifest: input.manifest,
     },
   );
 }
@@ -294,6 +297,10 @@ export interface KeyGrantAcceptance {
   vaultName: string;
   /** The roles statement the box names, if any. */
   roles: RolePoint | undefined;
+  /** When the sender made the box (the sender's clock). */
+  created: string;
+  /** `seq` of the sender's manifest root, in newer invitations. */
+  manifest: number | undefined;
   /** Body of `POST /v1/vaults/{id}/accept` or `/key`. */
   request: Schemas["VaultKeyAcceptance"];
 }
@@ -331,6 +338,8 @@ export function acceptKeyGrant(
     vaultKey: opened.vaultKey,
     vaultName: opened.vaultName,
     roles: opened.roles,
+    created: opened.created,
+    manifest: opened.manifest,
     request: {
       key_version: input.grant.key_version,
       key_wrapped: wrapVaultKey(

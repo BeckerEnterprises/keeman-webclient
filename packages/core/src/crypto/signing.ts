@@ -17,6 +17,7 @@ const SECRET_KEY_BYTES = 64;
 /** Signature contexts; a signature never counts for another context. */
 export const SIGNATURE_CONTEXT = {
   roles: "keeman:v1:roles",
+  freshness: "keeman:v1:freshness",
 } as const;
 
 export type SignatureContext =

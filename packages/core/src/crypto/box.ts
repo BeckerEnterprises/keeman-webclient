@@ -31,6 +31,12 @@ export interface VaultKeyMessage {
   created: string;
   /** Version and hash of the newest roles statement the sender checked. */
   roles?: RolePoint | undefined;
+  /** `seq` of the manifest root the sender last synced (invitations only). */
+  manifest?: number | undefined;
+}
+
+function isSeq(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
 }
 
 function assertKeyVersion(value: unknown): asserts value is number {
@@ -56,6 +62,8 @@ export function sealVaultKeyBox(
     throw new CryptoError("validation", "Invalid created timestamp");
   if (message.roles !== undefined && !isRolePoint(message.roles))
     throw new CryptoError("validation", "Invalid roles");
+  if (message.manifest !== undefined && !isSeq(message.manifest))
+    throw new CryptoError("validation", "Invalid manifest");
   if (
     senderPrivateKey.length !== KEY_BYTES ||
     recipientPublicKey.length !== KEY_BYTES
@@ -77,6 +85,7 @@ export function sealVaultKeyBox(
   };
   if (message.roles)
     json.roles = { version: message.roles.version, hash: message.roles.hash };
+  if (message.manifest !== undefined) json.manifest = message.manifest;
   const nonce = randomness.bytes("nonce", NONCE_BYTES);
   if (nonce.length !== NONCE_BYTES)
     throw new CryptoError("validation", "Nonce must be 24 bytes");
@@ -108,6 +117,8 @@ export interface OpenedVaultKey {
   created: string;
   /** The roles statement the sender vouches for; missing in older boxes. */
   roles: RolePoint | undefined;
+  /** `seq` of the sender's manifest root; only in newer invitations. */
+  manifest: number | undefined;
 }
 
 function validateMessage(
@@ -149,6 +160,8 @@ function validateMessage(
     if (!isRolePoint(message.roles)) return fail("roles");
     roles = { version: message.roles.version, hash: message.roles.hash };
   }
+  if (message.manifest !== undefined && !isSeq(message.manifest))
+    return fail("manifest");
   let vaultKey: Uint8Array | undefined;
   try {
     vaultKey =
@@ -164,6 +177,7 @@ function validateMessage(
     vaultName: message.vault_name as string,
     created: message.created as string,
     roles,
+    manifest: message.manifest,
   };
 }
 

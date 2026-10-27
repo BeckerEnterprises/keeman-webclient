@@ -92,6 +92,20 @@ import {
 } from "../../src/crypto/roles";
 import { decryptBlob } from "../../src/crypto/secretstream";
 import {
+  decodeFreshness,
+  readFreshness,
+  signFreshness,
+  type FreshnessStatement,
+} from "../../src/crypto/freshness";
+import {
+  formatPairingCode,
+  openPairing,
+  pairingKey,
+  parsePairingCode,
+  sealPairing,
+  type PairingContent,
+} from "../../src/crypto/pairing";
+import {
   deriveSigningKeyPair,
   sign,
   verifySignature,
@@ -266,6 +280,8 @@ function buildAad(template: string, p: Case): string {
       return aad.object(p.vault_id, p.object_id, p.type, p.key_version);
     case "attachment":
       return aad.attachment(p.attachment_id);
+    case "pairing":
+      return aad.pairing(p.user_id);
     default:
       throw new Error(`unknown template ${template}`);
   }
@@ -474,11 +490,13 @@ describe("test vectors", () => {
           opened.vaultName,
           opened.created,
           opened.roles,
+          opened.manifest,
         ]).toEqual([
           c.expected.vault_key_hex,
           c.expected.vault_name,
           c.expected.created,
           c.expected.roles,
+          c.expected.manifest,
         ]);
       };
       if (c.kind === "box" && base === undefined) {
@@ -496,6 +514,7 @@ describe("test vectors", () => {
             vaultName: m.vault_name,
             created: m.created,
             roles: m.roles,
+            manifest: m.manifest,
           },
         );
         expect(envelope, c.id).toBe(c.expected.envelope_b64);
@@ -884,6 +903,156 @@ describe("test vectors", () => {
           ).toEqual(e);
           break;
         }
+        default:
+          throw new Error(`unknown kind ${String(c.kind)}`);
+      }
+    }
+  });
+
+  it("freshness.json", () => {
+    const wire = (s: FreshnessStatement) =>
+      s.type === "user_data_freshness"
+        ? { v: 1, type: s.type, user_id: s.userId, time: s.time, seq: s.seq }
+        : {
+            v: 1,
+            type: s.type,
+            vault_id: s.vaultId,
+            user_id: s.userId,
+            time: s.time,
+            key_version: s.keyVersion,
+            manifest: s.manifest && [s.manifest.seq, s.manifest.hash],
+            roles: s.roles && [s.roles.version, s.roles.hash],
+          };
+    for (const c of load("freshness").cases) {
+      const e = c.expected;
+      switch (c.kind) {
+        case "statement": {
+          const statement = decodeFreshness(
+            fromBase64Url(e.statement as string),
+          );
+          expect(wire(statement), c.id).toEqual(c.statement);
+          const signed = signFreshness(
+            statement,
+            deriveSigningKeyPair(fromHex(c.signer_user_key_hex)).secretKey,
+          );
+          expect(signed, c.id).toEqual({
+            statement: e.statement,
+            signature: e.signature,
+          });
+          break;
+        }
+        case "decode":
+          expectOutcome(c, () => {
+            const statement = decodeFreshness(fromBase64Url(c.statement_b64));
+            expect(wire(statement), c.id).toEqual(e.statement);
+          });
+          break;
+        case "verify":
+          expectOutcome(c, () => {
+            const statement = readFreshness(
+              c.attestation,
+              fromHex(c.public_key_hex),
+            );
+            expect(wire(statement), c.id).toEqual(e.statement);
+          });
+          break;
+        default:
+          throw new Error(`unknown kind ${String(c.kind)}`);
+      }
+    }
+  });
+
+  it("pairing.json", () => {
+    const { cases, byId } = load("pairing");
+    const wire = (content: PairingContent) => ({
+      schema: 1,
+      fd: content.fd,
+      user_data: content.userData && {
+        rev: content.userData.rev,
+        seq: content.userData.seq,
+        at: content.userData.at,
+      },
+      vaults: Object.fromEntries(
+        content.vaults.map((v) => [
+          v.vaultId,
+          {
+            rev: v.rev,
+            kv: v.kv,
+            mf: v.mf,
+            rl: v.rl && [v.rl.version, v.rl.hash],
+            at: v.at,
+          },
+        ]),
+      ),
+    });
+    for (const c of cases) {
+      const e = c.expected;
+      switch (c.kind) {
+        case "code": {
+          const secret = fromHex(c.secret_hex);
+          expect(
+            [formatPairingCode(secret), toHex(pairingKey(secret))],
+            c.id,
+          ).toEqual([e.code, e.key_hex]);
+          break;
+        }
+        case "parse":
+          expectOutcome(c, () => {
+            expect(toHex(parsePairingCode(c.input)), c.id).toBe(e.secret_hex);
+          });
+          break;
+        case "envelope": {
+          const { effective, base } = resolve(c, byId);
+          let envelope: string;
+          if (base === undefined) {
+            const opened = openPairing(
+              fromHex(c.secret_hex),
+              c.user_id,
+              e.envelope_b64,
+            );
+            envelope = sealPairing(
+              nonceRandomness(c.nonce_hex),
+              fromHex(c.secret_hex),
+              c.user_id,
+              opened,
+            );
+            expect(envelope, c.id).toBe(e.envelope_b64);
+          } else {
+            envelope = base.expected.envelope_b64;
+            if (c.mutations)
+              envelope = toBase64Url(
+                mutate(fromBase64Url(envelope), c.mutations),
+              );
+          }
+          expectOutcome(c, () => {
+            const opened = openPairing(
+              fromHex(effective.secret_hex),
+              effective.user_id,
+              envelope,
+            );
+            expect(wire(opened), c.id).toEqual(e.content);
+          });
+          break;
+        }
+        case "content":
+          expect(
+            sealJson(
+              nonceRandomness(c.nonce_hex),
+              pairingKey(fromHex(c.secret_hex)),
+              c.content,
+              aad.pairing(c.user_id),
+            ),
+            c.id,
+          ).toBe(c.envelope_b64);
+          expectOutcome(c, () => {
+            const opened = openPairing(
+              fromHex(c.secret_hex),
+              c.user_id,
+              c.envelope_b64,
+            );
+            expect(wire(opened), c.id).toEqual(e.content);
+          });
+          break;
         default:
           throw new Error(`unknown kind ${String(c.kind)}`);
       }
