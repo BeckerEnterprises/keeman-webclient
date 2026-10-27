@@ -168,6 +168,7 @@ export type {
   RotationReview,
 } from "./sharing/rotation";
 export type { ConnectionState, SocketFactory, SocketLike } from "./sync/events";
+export type { ManifestIssue, ManifestStatus } from "./model/manifest";
 export {
   storedSyncMarks,
   type MarksLock,

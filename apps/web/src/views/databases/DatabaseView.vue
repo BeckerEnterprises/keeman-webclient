@@ -11,6 +11,7 @@ import ErrorNotice from "../../components/ErrorNotice.vue";
 import IconsSection from "../../components/IconsSection.vue";
 import KdbxExportDialog from "../../components/kdbx/KdbxExportDialog.vue";
 import KdbxImportDialog from "../../components/kdbx/KdbxImportDialog.vue";
+import ManifestWarning from "../../components/ManifestWarning.vue";
 import MembersSection from "../../components/sharing/MembersSection.vue";
 import VaultDeleteDialog from "../../components/VaultDeleteDialog.vue";
 import VaultEditForm from "../../components/VaultEditForm.vue";
@@ -44,6 +45,20 @@ async function acknowledge(): Promise<void> {
     await vaults.engine().acknowledgeRollback(vault.value.id);
   } catch (caught) {
     error.value = toUiError(caught);
+  }
+}
+
+const acknowledging = ref(false);
+
+async function acknowledgeManifest(): Promise<void> {
+  if (!vault.value) return;
+  acknowledging.value = true;
+  try {
+    await vaults.engine().acknowledgeManifest(vault.value.id);
+  } catch (caught) {
+    error.value = toUiError(caught);
+  } finally {
+    acknowledging.value = false;
   }
 }
 </script>
@@ -82,12 +97,29 @@ async function acknowledge(): Promise<void> {
           {{ t("common.understood") }}
         </button>
       </div>
+      <ManifestWarning
+        :vault="vault"
+        :busy="acknowledging"
+        @acknowledge="acknowledgeManifest"
+      />
       <p
-        v-else-if="!vault.writable && vault.status === 'ready'"
+        v-if="
+          !vault.rollback &&
+          vault.manifest !== 'mismatch' &&
+          !vault.writable &&
+          vault.status === 'ready'
+        "
         class="notice notice-warning"
         data-test="vault-read-only"
       >
         {{ t("vault.readOnly") }}
+      </p>
+      <p
+        v-if="vault.manifest === 'unverified' && vault.status === 'ready'"
+        class="notice notice-warning"
+        data-test="vault-unverified"
+      >
+        {{ t("vault.unverified") }}
       </p>
       <WriteNotices :notices="notices" />
       <ErrorNotice :error="error" />
@@ -113,6 +145,30 @@ async function acknowledge(): Promise<void> {
                 type: item.type,
                 id: item.id,
                 reason: t(`vault.reasons.${item.reason}`),
+              })
+            }}
+          </li>
+        </ul>
+      </section>
+
+      <section
+        v-if="vault.manifestIssues.length > 0"
+        class="corrupt"
+        data-test="manifest-list"
+      >
+        <h2>{{ t("vault.manifestTitle") }}</h2>
+        <p>{{ t("vault.manifestText") }}</p>
+        <ul class="plain-list mono">
+          <li
+            v-for="item in vault.manifestIssues"
+            :key="item.id"
+            data-test="manifest-issue"
+          >
+            {{
+              t("vault.manifestItem", {
+                type: item.type,
+                id: item.id,
+                reason: t(`vault.manifestReasons.${item.reason}`),
               })
             }}
           </li>

@@ -9,6 +9,7 @@ import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import ErrorNotice from "../../components/ErrorNotice.vue";
 import KdbxImportDialog from "../../components/kdbx/KdbxImportDialog.vue";
+import ManifestWarning from "../../components/ManifestWarning.vue";
 import VaultDeleteDialog from "../../components/VaultDeleteDialog.vue";
 import VaultEditForm from "../../components/VaultEditForm.vue";
 import WriteNotices from "../../components/WriteNotices.vue";
@@ -63,6 +64,10 @@ async function move(id: string, direction: -1 | 1): Promise<void> {
 
 async function acknowledge(id: string): Promise<void> {
   await run(() => vaults.engine().acknowledgeRollback(id));
+}
+
+async function acknowledgeManifest(id: string): Promise<void> {
+  await run(() => vaults.engine().acknowledgeManifest(id));
 }
 
 function edited(result: ReturnType<typeof describeNotices>): void {
@@ -186,6 +191,11 @@ function edited(result: ReturnType<typeof describeNotices>): void {
                 {{ t("common.understood") }}
               </button>
             </div>
+            <ManifestWarning
+              :vault="vault"
+              :busy="busy"
+              @acknowledge="acknowledgeManifest(vault.id)"
+            />
           </div>
           <div class="actions">
             <button

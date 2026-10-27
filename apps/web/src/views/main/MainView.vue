@@ -19,6 +19,7 @@ import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { copyInEvent, copySecret } from "../../clipboard";
 import ErrorNotice from "../../components/ErrorNotice.vue";
+import ManifestWarning from "../../components/ManifestWarning.vue";
 import WriteNotices from "../../components/WriteNotices.vue";
 import EntryDetail from "../../components/detail/EntryDetail.vue";
 import ConfirmDialog from "../../components/dialogs/ConfirmDialog.vue";
@@ -398,6 +399,15 @@ async function acknowledgeRollback(): Promise<void> {
   if (id)
     await run(async () => {
       await vaults.engine().acknowledgeRollback(id);
+      return undefined;
+    });
+}
+
+async function acknowledgeManifest(): Promise<void> {
+  const id = vaultId.value;
+  if (id)
+    await run(async () => {
+      await vaults.engine().acknowledgeManifest(id);
       return undefined;
     });
 }
@@ -871,8 +881,19 @@ function back(): void {
         {{ t("common.understood") }}
       </button>
     </div>
+    <ManifestWarning
+      v-if="vault"
+      :vault="vault"
+      @acknowledge="acknowledgeManifest"
+    />
     <p
-      v-else-if="vault && !vault.writable && vault.status === 'ready'"
+      v-if="
+        vault &&
+        !vault.rollback &&
+        vault.manifest !== 'mismatch' &&
+        !vault.writable &&
+        vault.status === 'ready'
+      "
       class="notice notice-warning"
       data-test="vault-read-only"
     >

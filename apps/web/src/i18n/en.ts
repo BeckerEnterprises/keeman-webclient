@@ -181,6 +181,16 @@ const en: typeof de = {
       "This includes an older key version of the database: removed members could read what would be written now. Confirm only if the server was restored from a backup.",
     rollback:
       "The server delivered older data than last seen on this device. The database is read-only until you confirm. This can be an error or an attack on the server.",
+    manifest: {
+      withheld:
+        "The server is withholding data: what it delivered does not match the manifest of this database. The database is read-only. This can be an error or an attack on the server; compare with another device.",
+      missing: "Missing: {count}",
+      differs: "A different version than in the manifest: {count}",
+      unlisted: "Not in the manifest: {count}",
+      corrupt: "Manifest corrupt: {count}",
+      confirm:
+        "Accept the delivered state? Missing objects then count as gone, and the manifest is written anew. Compare with another device first.",
+    },
     status: {
       loading: "Loading…",
       error: "This database could not be loaded.",
@@ -206,6 +216,18 @@ const en: typeof de = {
     corruptText:
       "These objects could not be decrypted or validated. They are not changed.",
     corruptItem: "{type} {id}: {reason}",
+    unverified:
+      "Unverified: this database has no manifest yet, so whether the server delivers everything cannot be checked.",
+    manifestTitle: "Differences from the manifest",
+    manifestText:
+      "These objects are missing, come in a different version than in the manifest or are not listed in it.",
+    manifestItem: "{type} {id}: {reason}",
+    manifestReasons: {
+      missing: "missing",
+      differs: "different version",
+      unlisted: "not in the manifest",
+      corrupt: "corrupt",
+    },
     icons: {
       title: "Custom icons",
       count: "{count} custom icons.",
@@ -1138,6 +1160,8 @@ const en: typeof de = {
     feature_disabled: "This feature is switched off on the server.",
     sync_rollback_open:
       "First acknowledge the warning about older data at this database.",
+    sync_manifest_mismatch:
+      "First acknowledge the warning that the server is withholding data of this database.",
     too_many_attachments: "At most 50 attachments per entry.",
   },
 };

@@ -186,6 +186,16 @@ export default {
       "Darunter ist eine ältere Schlüsselversion der Datenbank: Was jetzt geschrieben würde, könnten entfernte Mitglieder lesen. Bestätige nur, wenn der Server aus einer Sicherung wiederhergestellt wurde.",
     rollback:
       "Der Server hat ältere Daten geliefert als zuletzt auf diesem Gerät gesehen. Die Datenbank ist schreibgeschützt, bis du bestätigst. Das kann ein Fehler oder ein Angriff auf den Server sein.",
+    manifest: {
+      withheld:
+        "Der Server hält Daten zurück: Was er geliefert hat, passt nicht zum Manifest dieser Datenbank. Die Datenbank ist schreibgeschützt. Das kann ein Fehler oder ein Angriff auf den Server sein; vergleiche mit einem anderen Gerät.",
+      missing: "Fehlen: {count}",
+      differs: "Andere Fassung als im Manifest: {count}",
+      unlisted: "Nicht im Manifest: {count}",
+      corrupt: "Manifest beschädigt: {count}",
+      confirm:
+        "Den gelieferten Stand übernehmen? Fehlende Objekte gelten danach als nicht vorhanden, und das Manifest wird neu geschrieben. Vergleiche vorher mit einem anderen Gerät.",
+    },
     status: {
       loading: "Lädt…",
       error: "Diese Datenbank konnte nicht geladen werden.",
@@ -212,6 +222,18 @@ export default {
     corruptText:
       "Diese Objekte ließen sich nicht entschlüsseln oder prüfen. Sie werden nicht verändert.",
     corruptItem: "{type} {id}: {reason}",
+    unverified:
+      "Ungeprüft: Für diese Datenbank gibt es noch kein Manifest. Ob der Server alles liefert, lässt sich deshalb nicht prüfen.",
+    manifestTitle: "Abweichungen vom Manifest",
+    manifestText:
+      "Diese Objekte fehlen, liegen in einer anderen Fassung vor als im Manifest oder sind nicht darin aufgeführt.",
+    manifestItem: "{type} {id}: {reason}",
+    manifestReasons: {
+      missing: "fehlt",
+      differs: "andere Fassung",
+      unlisted: "nicht im Manifest",
+      corrupt: "beschädigt",
+    },
     icons: {
       title: "Eigene Icons",
       count: "{count} eigene Icons.",
@@ -1179,6 +1201,8 @@ export default {
     feature_disabled: "Diese Funktion ist auf dem Server abgeschaltet.",
     sync_rollback_open:
       "Bestätige zuerst die Warnung über ältere Daten an dieser Datenbank.",
+    sync_manifest_mismatch:
+      "Bestätige zuerst die Warnung, dass der Server Daten dieser Datenbank zurückhält.",
     too_many_attachments: "Höchstens 50 Anhänge pro Eintrag.",
   },
 };

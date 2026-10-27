@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+Upgrading: needs a server that reports `features.manifest`; with an older server databases stay "unverified". Tabs opened before the update stop syncing a database once it has a manifest and cannot save there; reloading the page fixes this.
+
+### Added
+
+- Vault manifest: every database carries an encrypted list of all its objects with a hash of each. After every sync the web client checks what the server delivered against it, also on a new device. If objects are missing, differ or are not listed, the database becomes read-only with the warning "The server is withholding data", the counts and a list on the database page.
+- "Understood" at that warning asks first, then syncs in full, accepts the delivered state and writes the manifest anew.
+- New databases get their manifest at once, existing ones after their first full sync; a database without one is marked "unverified".
+- A key rotation checks the state it collected against the manifest, refuses an older one than this device has seen, and renews the manifest with the new key.
+
+### Changed
+
+- Every save also writes the manifest. Saves of two devices at the same time therefore always meet; the second is planned again without a notice, and only real conflicts count towards the three attempts.
+
 ## [0.1.1] - 2026-10-26
 
 Security release after a code review and a whitebox security audit of 0.1.0. KeeMan is still in early development: do not use it with real passwords yet. Use it with KeeMan Server 0.1.1.

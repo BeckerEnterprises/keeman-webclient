@@ -548,14 +548,18 @@ defineExpose({
       <span
         v-if="
           row.node.kind === 'root' &&
-          (row.vault.rollback || row.vault.corrupt.length > 0)
+          (row.vault.rollback ||
+            row.vault.manifest === 'mismatch' ||
+            row.vault.corrupt.length > 0)
         "
         class="tag text-error"
         data-test="tree-vault-warning"
         :title="
-          row.vault.rollback
-            ? t('vaults.rollback')
-            : t('vaults.corrupt', { count: row.vault.corrupt.length })
+          row.vault.manifest === 'mismatch'
+            ? t('vaults.manifest.withheld')
+            : row.vault.rollback
+              ? t('vaults.rollback')
+              : t('vaults.corrupt', { count: row.vault.corrupt.length })
         "
       >
         <AppIcon ui="warning" :size="14" />

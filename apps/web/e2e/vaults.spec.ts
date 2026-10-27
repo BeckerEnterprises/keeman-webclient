@@ -1,6 +1,7 @@
 /**
  * Databases and synchronisation: groups in the tree,
- * two browsers, conflicts, paging, rollback, corruption and deletion.
+ * two browsers, conflicts, paging, rollback, corruption, the vault manifest
+ * and deletion.
  */
 import type { Page, Route } from "@playwright/test";
 import {
@@ -11,6 +12,7 @@ import {
   nodeGroup,
   openAccount,
   openDatabases,
+  openMain,
   openVault,
   rootOf,
   treeRow,
@@ -394,5 +396,161 @@ test.describe("rollback and corruption", () => {
     await unlockAfterReload(page, account.password);
     await expect(page.getByTestId("vault-key-rollback")).toBeVisible();
     await expect(page.getByTestId("new-group")).toBeDisabled();
+  });
+});
+
+test.describe("vault manifest", () => {
+  test("a new device notices a withheld entry and accepts the state", async ({
+    page,
+  }) => {
+    const account = await createAccountWithVault("manifest");
+    const root = rootOf(account.device, account.vaultId);
+    await nodeEntry(account.device, account.vaultId, root, {
+      title: "Sichtbar",
+    });
+    const hidden = await nodeEntry(account.device, account.vaultId, root, {
+      title: "Versteckt",
+    });
+    await rewriteChanges(page, (body) => {
+      body.objects = body.objects.filter((o) => o.id !== hidden);
+    });
+    await loginViaUi(page, account);
+    await openVault(page, "Persönlich");
+    await expect(page.getByTestId("vault-manifest")).toBeVisible();
+    await expect(page.getByTestId("tree-vault-warning")).toBeVisible();
+    await expect(entryRow(page, "Sichtbar")).toBeVisible();
+    await expect(page.getByTestId("new-group")).toBeDisabled();
+    await openDatabases(page);
+    await expect(page.getByTestId("vault-manifest-counts")).toContainText(
+      "Fehlen: 1",
+    );
+    await page.getByTestId("vault-settings").click();
+    await expect(page.getByTestId("manifest-issue")).toContainText(hidden);
+    await expect(page.getByTestId("manifest-issue")).toContainText("fehlt");
+
+    // The server delivers everything again; the user accepts.
+    await page.unroute("**/v1/vaults/*/changes?**");
+    page.once("dialog", (dialog) => void dialog.accept());
+    await page.getByTestId("vault-manifest-ack").click();
+    await expect(page.getByTestId("vault-manifest")).toHaveCount(0);
+    await expect(page.getByTestId("manifest-list")).toHaveCount(0);
+    await openMain(page);
+    await openVault(page, "Persönlich");
+    await expect(entryRow(page, "Versteckt")).toBeVisible();
+    await expect(page.getByTestId("new-group")).toBeEnabled();
+  });
+
+  test("a deleted entry played back is not in the manifest", async ({
+    page,
+  }) => {
+    const account = await createAccountWithVault("manifest-replay");
+    const root = rootOf(account.device, account.vaultId);
+    const id = await nodeEntry(account.device, account.vaultId, root, {
+      title: "Gelöscht",
+    });
+    const old = (await account.device.api.changes(account.vaultId, 0)).objects
+      .filter((o) => o.id === id)
+      .at(0);
+    await account.device.engine.destroy(account.vaultId, [
+      { kind: "entry", id },
+    ]);
+    await rewriteChanges(page, (body) => {
+      if (old && !body.objects.some((o) => o.id === id))
+        body.objects.push({ ...old, revision: body.vault_revision });
+    });
+    await loginViaUi(page, account);
+    await openDatabases(page);
+    await expect(page.getByTestId("vault-manifest-counts")).toContainText(
+      "Nicht im Manifest: 1",
+    );
+  });
+
+  test("a device that synced notices a withheld deletion", async ({ page }) => {
+    const account = await createAccountWithVault("manifest-delta");
+    const root = rootOf(account.device, account.vaultId);
+    const id = await nodeEntry(account.device, account.vaultId, root, {
+      title: "Bald weg",
+    });
+    await loginViaUi(page, account);
+    await openVault(page, "Persönlich");
+    await expect(entryRow(page, "Bald weg")).toBeVisible();
+    await expect(page.getByTestId("vault-manifest")).toHaveCount(0);
+    await rewriteChanges(page, (body) => {
+      body.objects = body.objects.filter((o) => o.id !== id);
+    });
+    await account.device.engine.destroy(account.vaultId, [
+      { kind: "entry", id },
+    ]);
+    // The event triggers a delta that lacks the tombstone.
+    await expect(page.getByTestId("vault-manifest")).toBeVisible();
+  });
+
+  test("a vault without manifest is unverified until one is created", async ({
+    page,
+  }) => {
+    const account = await createAccountWithVault("manifest-old");
+    await page.route("**/v1/config", async (route: Route) => {
+      const response = await route.fetch();
+      const body = (await response.json()) as {
+        features: Record<string, boolean>;
+      };
+      body.features.manifest = false;
+      await route.fulfill({ response, json: body });
+    });
+    await loginViaUi(page, account);
+    await openDatabases(page);
+    await page.getByTestId("vault-create-name").fill("Alt");
+    await page.getByTestId("vault-create-submit").click();
+    const row = page.getByTestId("vault").filter({ hasText: "Alt" });
+    await row.getByTestId("vault-settings").click();
+    await expect(page.getByTestId("vault-unverified")).toBeVisible();
+    // Through the API only: the Node device's engine would create the
+    // manifest itself.
+    const alt =
+      (await account.device.api.vaults()).find(
+        (v) => v.vault_id !== account.vaultId,
+      )?.vault_id ?? "";
+    const hasManifest = async () =>
+      (await account.device.api.changes(alt, 0)).objects.some(
+        (o) => o.type === "manifest",
+      );
+    expect(await hasManifest()).toBe(false);
+
+    // The server knows it again: the next unlock creates the manifest.
+    await page.unroute("**/v1/config");
+    await unlockAfterReload(page, account.password);
+    await expect.poll(hasManifest).toBe(true);
+    await openDatabases(page);
+    await page
+      .getByTestId("vault")
+      .filter({ hasText: "Alt" })
+      .getByTestId("vault-settings")
+      .click();
+    await expect(page.getByTestId("database-view")).toBeVisible();
+    await expect(page.getByTestId("vault-unverified")).toHaveCount(0);
+  });
+
+  test("two devices saving at the same time lose nothing", async ({
+    page,
+    otherContext,
+  }) => {
+    const account = await createAccountWithVault("manifest-two");
+    await nodeGroup(account.device, account.vaultId, "Eins");
+    await nodeGroup(account.device, account.vaultId, "Zwei");
+    const other = await otherContext.newPage();
+    for (const p of [page, other]) {
+      await loginViaUi(p, account);
+      await openVault(p, "Persönlich");
+    }
+    await Promise.all([
+      rename(page, "Eins", "Eins neu"),
+      rename(other, "Zwei", "Zwei neu"),
+    ]);
+    for (const p of [page, other]) {
+      await expect(treeRow(p, "Eins neu")).toBeVisible();
+      await expect(treeRow(p, "Zwei neu")).toBeVisible();
+      await expect(p.getByTestId("vault-manifest")).toHaveCount(0);
+      await expect(p.getByTestId("write-notices")).toHaveCount(0);
+    }
   });
 });
