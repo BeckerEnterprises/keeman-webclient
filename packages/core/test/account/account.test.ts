@@ -175,6 +175,9 @@ describe("login and unlock", () => {
         userDataCorrupt: false,
         userDataReadOnly: false,
         userDataRollback: false,
+        userDataStale: false,
+        // A device of its own: no marks for the account yet.
+        newDevice: true,
       },
     });
     expect(

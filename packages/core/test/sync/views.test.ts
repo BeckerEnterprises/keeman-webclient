@@ -48,6 +48,7 @@ function state(): VaultState {
   } as unknown as VaultSummary;
   const s = new VaultState(summary);
   s.synced = true;
+  s.freshness = { status: "fresh", since: 0 };
   const objects: ObjectEntry[] = [
     object(VAULT, "vault_meta", {
       name: "V",

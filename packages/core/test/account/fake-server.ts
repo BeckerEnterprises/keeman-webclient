@@ -9,7 +9,13 @@ import {
   type WorkerLike,
 } from "../../src/crypto/argon2-worker";
 import { createHmac } from "node:crypto";
-import { concatBytes, toBase64Url, utf8Encode } from "../../src/crypto/bytes";
+import {
+  concatBytes,
+  fromBase64Url,
+  toBase64Url,
+  utf8Encode,
+} from "../../src/crypto/bytes";
+import { readFreshness } from "../../src/crypto/freshness";
 import { sodium } from "../../src/crypto/sodium";
 import { isManifestId, manifestIds } from "../../src/model/manifest";
 import { decodeTotpSecret } from "../../src/totp/uri";
@@ -33,6 +39,8 @@ interface UserRecord {
   private_key_wrapped: string;
   /** `null` for an account from before signing keys. */
   signing_public_key: string | null;
+  /** The own attestation of user_data. */
+  freshness?: { statement: string; signature: string } | undefined;
   recovery: { auth_key: string; user_key_wrapped: string };
   user_data: { revision: number; data: string };
   twoFactor: TwoFactorRecord;
@@ -123,6 +131,8 @@ export interface MemberRecord {
     sender_id: string;
   } | null;
   created: string;
+  /** The member's own attestation of this vault; goes with the membership. */
+  freshness?: { statement: string; signature: string } | undefined;
 }
 
 /** A statement of the roles chain as the server stores it. */
@@ -267,6 +277,10 @@ export class FakeServer {
   manifestEnabled = true;
   /** `features.roles`: signing keys and roles chains; off like an older server. */
   rolesEnabled = true;
+  /** `features.freshness`: attestations and pairings; off like an older server. */
+  freshnessEnabled = true;
+  /** Pairings by account. */
+  readonly pairings = new Map<string, { payload: string; expiresAt: number }>();
   /** URLs sent to `POST /v1/favicon`. */
   readonly faviconRequests: string[] = [];
   /** The favicon proxy's answer; by default a valid icon. */
@@ -734,6 +748,7 @@ export class FakeServer {
           favicon: this.faviconEnabled,
           ...(this.manifestEnabled ? { manifest: true } : {}),
           ...(this.rolesEnabled ? { roles: true } : {}),
+          ...(this.freshnessEnabled ? { freshness: true } : {}),
         },
         limits: {
           attachment_max_bytes: this.attachmentMaxBytes,
@@ -869,6 +884,7 @@ export class FakeServer {
             (c) => !c.used,
           ).length,
         },
+        ...(this.freshnessEnabled ? { freshness: user.freshness ?? null } : {}),
         created: "2026-10-23T08:00:00.000Z",
       };
       this.tamperMe(me);
@@ -951,6 +967,86 @@ export class FakeServer {
       return reply(204);
     }
     return problem(404, "not_found");
+  }
+
+  /**
+   * Attestations and pairings like the server: the signature is checked
+   * against the caller's signing key, the content is not.
+   */
+  #freshness(
+    method: string,
+    path: string,
+    data: Record<string, unknown>,
+    user: UserRecord,
+  ): Response | undefined {
+    const vaultMatch = /^\/v1\/vaults\/([^/]+)\/freshness$/.exec(path);
+    const mine =
+      path === "/v1/me/freshness" ||
+      path === "/v1/me/pairing" ||
+      vaultMatch !== null;
+    if (!mine) return undefined;
+    if (!this.freshnessEnabled) return problem(404, "not_found");
+    const checked = (type: string, vaultId?: string): Response | undefined => {
+      const signed = data.freshness;
+      if (user.signing_public_key === null)
+        return problem(409, "signing_key_missing");
+      try {
+        const statement = readFreshness(
+          signed,
+          fromBase64Url(user.signing_public_key, 32),
+        );
+        if (
+          statement.type !== type ||
+          statement.userId !== user.user_id ||
+          (statement.type === "vault_freshness" &&
+            statement.vaultId !== vaultId)
+        )
+          return problem(400, "validation_failed");
+      } catch {
+        return problem(400, "validation_failed");
+      }
+      return undefined;
+    };
+    if (vaultMatch) {
+      if (method !== "PUT") return problem(405, "method_not_allowed");
+      const vaultId = vaultMatch[1] ?? "";
+      const member = this.vaults.get(vaultId)?.members.get(user.user_id);
+      if (!member) return problem(404, "not_found");
+      if (member.state !== "active") return problem(403, "forbidden");
+      const rejected = checked("vault_freshness", vaultId);
+      if (rejected) return rejected;
+      member.freshness = data.freshness as typeof member.freshness;
+      return reply(204);
+    }
+    if (path === "/v1/me/freshness") {
+      if (method !== "PUT") return problem(405, "method_not_allowed");
+      const rejected = checked("user_data_freshness");
+      if (rejected) return rejected;
+      user.freshness = data.freshness as typeof user.freshness;
+      return reply(204);
+    }
+    const stored = this.pairings.get(user.user_id);
+    if (method === "PUT") {
+      const expiresAt = this.now() + 600_000;
+      this.pairings.set(user.user_id, {
+        payload: data.payload as string,
+        expiresAt,
+      });
+      return reply(200, { expires_at: new Date(expiresAt).toISOString() });
+    }
+    if (method === "GET") {
+      if (!stored || stored.expiresAt <= this.now())
+        return problem(404, "not_found");
+      return reply(200, {
+        payload: stored.payload,
+        expires_at: new Date(stored.expiresAt).toISOString(),
+      });
+    }
+    if (method === "DELETE") {
+      this.pairings.delete(user.user_id);
+      return reply(204);
+    }
+    return problem(405, "method_not_allowed");
   }
 
   #reauthed(headers: Headers, session: SessionRecord): boolean {
@@ -1092,6 +1188,8 @@ export class FakeServer {
         if (s.userId === user.user_id) s.revoked = true;
       return reply(204);
     }
+    const freshnessResponse = this.#freshness(method, path, data, user);
+    if (freshnessResponse) return freshnessResponse;
     if (method === "GET" && path === "/v1/vaults") {
       const list = [...this.vaults.values()]
         .filter((v) => v.members.has(user.user_id))
@@ -1118,6 +1216,9 @@ export class FakeServer {
             rotation_required: v.rotation_required,
             ...(this.rolesEnabled
               ? { roles_version: v.roles.at(-1)?.version ?? null }
+              : {}),
+            ...(this.freshnessEnabled
+              ? { freshness: m?.freshness ?? null }
               : {}),
             member_count: [...v.members.values()].filter(
               (x) => x.state === "active",

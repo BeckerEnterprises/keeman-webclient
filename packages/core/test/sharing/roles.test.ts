@@ -17,7 +17,7 @@ import {
 import { deriveSigningKeyPair } from "../../src/crypto/signing";
 import { FakeServer } from "../account/fake-server";
 import { newMember } from "../account/fake-sharing";
-import { PASSWORD, vault } from "../sync/devices";
+import { ManualTimers, PASSWORD, vault } from "../sync/devices";
 import { tv } from "../helpers";
 import { owner, person, posts, share, type Person } from "./people";
 
@@ -39,6 +39,11 @@ async function team(options: { roles?: boolean } = {}) {
   const carol = await person(server, "carol@example.com");
   await share(alice, bob, alice.vaultId);
   await share(alice, carol, alice.vaultId);
+  // Without a roles chain an invitation confirms nothing: the invitees
+  // confirm the state themselves.
+  if (options.roles === false)
+    for (const someone of [bob, carol])
+      await someone.engine.acknowledgeFreshness(alice.vaultId);
   return { server, alice, bob, carol, vaultId: alice.vaultId };
 }
 
@@ -423,10 +428,13 @@ describe("transition of older accounts and vaults", () => {
     const { server, alice, bob, carol, vaultId } = await team({ roles: false });
     await alice.engine.setMemberRole(vaultId, id(carol), "owner");
     server.rolesEnabled = true;
+    const timers = new ManualTimers();
     for (const someone of [alice, bob, carol]) {
       someone.account.lock();
       await someone.account.unlock(PASSWORD);
-      someone.engine = someone.account.startSync();
+      someone.engine = someone.account.startSync(
+        someone === bob ? { timers } : {},
+      );
     }
     // Carol is an outdated contact of Alice: no chain yet.
     await alice.engine.refresh();
@@ -444,11 +452,27 @@ describe("transition of older accounts and vaults", () => {
     );
     // Bob forgets what he remembered: the list needs his confirmation.
     await bob.marks.rememberOwners(id(bob), vaultId, []);
+    const signed = () =>
+      server.log.filter(
+        (r) => r.method === "PUT" && r.path.endsWith(`${vaultId}/freshness`),
+      ).length;
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+    timers.fire(60_000);
+    await settle();
+    const before = signed();
     await bob.engine.refresh();
     expect(vault(bob.engine, vaultId).roles).toMatchObject({
       status: "unanchored",
     });
+    // An unconfirmed owner list is not passed on to the other devices,
+    // not even once the spacing of uploads has passed.
+    timers.fire(60_000);
+    await settle();
+    expect(signed()).toBe(before);
     await bob.engine.confirmRoles(vaultId);
     expect(vault(bob.engine, vaultId).roles.status).toBe("ok");
+    timers.fire(60_000);
+    await settle();
+    expect(signed()).toBe(before + 1);
   });
 });

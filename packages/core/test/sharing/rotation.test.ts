@@ -49,6 +49,11 @@ async function team(options: { roles?: boolean } = {}) {
   const carol = await person(server, "carol@example.com");
   await share(alice, bob, alice.vaultId);
   await share(alice, carol, alice.vaultId);
+  // Without a roles chain an invitation confirms nothing: the invitees
+  // confirm the state themselves.
+  if (options.roles === false)
+    for (const someone of [bob, carol])
+      await someone.engine.acknowledgeFreshness(alice.vaultId);
   await entry(alice, alice.vaultId, "Vorher");
   return { server, alice, bob, carol, vaultId: alice.vaultId };
 }

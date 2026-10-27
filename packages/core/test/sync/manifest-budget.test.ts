@@ -41,6 +41,7 @@ describe("budget of the manifest", () => {
       created: now,
     } as unknown as VaultSummary);
     state.synced = true;
+    state.freshness = { status: "fresh", since: 0 };
     state.since = 1;
     const meta = {
       schema: 1,

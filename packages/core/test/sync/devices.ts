@@ -9,12 +9,35 @@ import type {
   TreeNode,
   VaultView,
 } from "../../src/sync/engine";
+import type { Timers } from "../../src/sync/events";
 import { inMemorySyncMarks, type SyncMarks } from "../../src/sync/marks";
 import {
   FakeServer,
   fastWorker,
   type StoredObject,
 } from "../account/fake-server";
+
+/** Timers a test fires by hand. */
+export class ManualTimers implements Timers {
+  readonly pending = new Map<number, { run: () => void; ms: number }>();
+  #next = 0;
+  setTimeout(run: () => void, ms: number): unknown {
+    const id = ++this.#next;
+    this.pending.set(id, { run, ms });
+    return id;
+  }
+  clearTimeout(handle: unknown): void {
+    this.pending.delete(handle as number);
+  }
+  /** Runs every timer of at most `ms`. */
+  fire(ms: number): void {
+    for (const [id, timer] of [...this.pending])
+      if (timer.ms <= ms) {
+        this.pending.delete(id);
+        timer.run();
+      }
+  }
+}
 
 export const PASSWORD = "correct horse battery staple";
 export const EMAIL = "alice@example.com";

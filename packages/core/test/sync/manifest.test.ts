@@ -151,8 +151,20 @@ describe("vault manifest: detection", () => {
           o.id === a.vaultId ? { ...flagless, revision: o.revision } : o,
         );
     };
+    // A new device learns the root's `seq` from the own attestation.
     const fresh = await secondDevice(server);
-    expect(vault(fresh.engine, a.vaultId).manifest).toBe("unverified");
+    expect(vault(fresh.engine, a.vaultId).manifest).toBe("mismatch");
+    // Without it (withheld), the old vault_meta is all it has: unverified,
+    // and not confirmed either.
+    server.tamperVaults = (list) => {
+      for (const item of list) item.freshness = null;
+    };
+    const blind = await secondDevice(server);
+    expect(vault(blind.engine, a.vaultId)).toMatchObject({
+      manifest: "unverified",
+      freshness: "stale",
+      writable: false,
+    });
     const again = await secondDevice(server, undefined, marks);
     expect(vault(again.engine, a.vaultId).manifest).toBe("mismatch");
   });
@@ -306,6 +318,13 @@ describe("vault manifest: writing", () => {
     expect(vault(b.engine, a.vaultId).manifestIssues).toEqual([
       { id: root, type: "manifest", reason: "corrupt" },
     ]);
+    // The root is not the one a attested, so b cannot confirm the state
+    // and rebuilds nothing until the user does.
+    expect(vault(b.engine, a.vaultId).freshness).toBe("stale");
+    await expect(b.engine.acknowledgeManifest(a.vaultId)).rejects.toMatchObject(
+      { code: "read_only" },
+    );
+    await b.engine.acknowledgeFreshness(a.vaultId);
     await b.engine.acknowledgeManifest(a.vaultId);
     expect(vault(b.engine, a.vaultId).manifest).toBe("verified");
     // a saw the old root: the new one is higher, so no rollback.
