@@ -26,6 +26,8 @@ const warning = computed(() =>
     ? props.candidate.status
     : undefined,
 );
+/** Without a signing key there is nothing to compare yet. */
+const unverifiable = computed(() => !props.candidate.verifiable);
 
 async function confirm(): Promise<void> {
   busy.value = true;
@@ -57,6 +59,20 @@ async function confirm(): Promise<void> {
     >
       {{ t(`fingerprint.${warning}`) }}
     </p>
+    <p
+      v-else-if="candidate.status === 'outdated'"
+      class="notice notice-info"
+      data-test="fingerprint-outdated"
+    >
+      {{ t("fingerprint.outdated") }}
+    </p>
+    <p
+      v-if="unverifiable"
+      class="notice notice-warning"
+      data-test="fingerprint-unverifiable"
+    >
+      {{ t("fingerprint.unverifiable") }}
+    </p>
     <div class="fingerprints">
       <div>
         <h3>{{ t("fingerprint.own") }}</h3>
@@ -78,7 +94,7 @@ async function confirm(): Promise<void> {
     <template #actions>
       <button
         type="button"
-        :disabled="busy || !session.contactsWritable"
+        :disabled="busy || !session.contactsWritable || unverifiable"
         data-test="fingerprint-confirm"
         @click="confirm"
       >

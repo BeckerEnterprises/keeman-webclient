@@ -196,6 +196,26 @@ export default {
       confirm:
         "Den gelieferten Stand übernehmen? Fehlende Objekte gelten danach als nicht vorhanden, und das Manifest wird neu geschrieben. Vergleiche vorher mit einem anderen Gerät.",
     },
+    roles: {
+      rollback: "Der Server hat eine ältere Eigentümerliste geliefert.",
+      fork: "Die Eigentümerliste ist widersprüchlich.",
+      invalid: "Die Eigentümerliste ist widersprüchlich.",
+      blocked:
+        "Bis du bestätigst, nimmt dieses Gerät keine neuen Schlüssel an und ändert keine Rollen. Das kann ein Fehler, die Wiederherstellung des Servers aus einem Backup oder ein Angriff sein; frage einen anderen Eigentümer.",
+      owners: "Eigentümer laut Server: {names}",
+      newOwners: "Neu gegenüber deinem letzten Stand: {names}",
+      ackTitle: "Eigentümerliste übernehmen",
+      ackText:
+        "Die gelieferte Eigentümerliste wird dein neuer Stand. Übernimm sie nur, wenn ein anderer Eigentümer bestätigt, dass sie stimmt.",
+      unanchored:
+        "Diese Datenbank hat jetzt eine signierte Eigentümerliste: {names}. Übernimm sie nur, wenn das die Eigentümer sind.",
+      take: "Übernehmen",
+      verifyOwners:
+        "Vergleiche die Fingerprints der anderen Eigentümer, damit die Eigentümerliste dieser Datenbank signiert werden kann.",
+      mismatch:
+        "Der Server nennt andere Eigentümer als die signierte Liste. Maßgeblich ist die signierte Liste.",
+      unknown: "(unbekannt)",
+    },
     status: {
       loading: "Lädt…",
       error: "Diese Datenbank konnte nicht geladen werden.",
@@ -933,6 +953,7 @@ export default {
     empty: "Noch keine verifizierten Kontakte.",
     verifiedAt: "Geprüft am {date}",
     conflict: "Konflikt – erneut prüfen",
+    outdated: "Veraltet – einmal neu vergleichen",
     recheck: "Erneut prüfen",
     remove: "Entfernen",
     removeTitle: "Kontakt entfernen",
@@ -960,6 +981,10 @@ export default {
       "Achtung: Der Schlüssel dieses Kontos hat sich geändert. Bestätige nur, wenn ihr den neuen Fingerprint gerade verglichen habt.",
     conflict:
       "Achtung: Zu diesem Kontakt gibt es widersprüchliche Angaben. Bestätige nur nach einem erneuten Vergleich.",
+    outdated:
+      "Die Schlüssel dieses Kontos wurden erweitert. Vergleicht den Fingerprint einmal neu.",
+    unverifiable:
+      "Dieses Konto hat noch keinen Signaturschlüssel. Er entsteht, sobald es sich einmal neu anmeldet oder entsperrt; danach könnt ihr die Fingerprints vergleichen.",
     confirm: "Stimmt überein",
     readOnly:
       "Deine Kontodaten sind schreibgeschützt oder beschädigt; die Bestätigung kann nicht gespeichert werden.",
@@ -975,7 +1000,10 @@ export default {
       unverified: "nicht geprüft",
       changed: "Schlüssel geändert",
       conflict: "Konflikt",
+      outdated: "veraltet – neu vergleichen",
     },
+    signed: "signiert",
+    roleMismatch: "Server nennt eine andere Rolle",
     inviteEmail: "E-Mail-Adresse",
     inviteSubmit: "Einladen",
     invited: "Die Einladung an {email} ist verschickt.",
@@ -1026,6 +1054,12 @@ export default {
     decline: "Ablehnen",
     keyText:
       "Ein neuer Schlüssel für „{name}“ von {email} wartet auf deine Prüfung.",
+    keyRolesUnconfirmed:
+      "Ein neuer Schlüssel für „{name}“ wartet. Übernimm zuerst die signierte Eigentümerliste auf der Seite der Datenbank.",
+    keyRolesInvalid:
+      "Ein neuer Schlüssel für „{name}“ wartet, aber die Eigentümerliste dieser Datenbank ist nicht geprüft. Sieh dir zuerst die Warnung auf der Seite der Datenbank an.",
+    keyRejected:
+      "Der neue Schlüssel für „{name}“ ist nicht von der signierten Eigentümerliste gedeckt und wurde nicht angenommen. Das kann ein Angriff auf den Server sein.",
     keyCheck: "Prüfen",
     ownerTitle: "Absender ist kein bekannter Eigentümer",
     ownerText:
@@ -1184,6 +1218,24 @@ export default {
     sync_unknown_owner:
       "Der Absender ist auf diesem Gerät nicht als Eigentümer bekannt. Bestätige den neuen Schlüssel zuerst.",
     sync_self: "Dich selbst kannst du nicht einladen.",
+    sync_unverifiable:
+      "Dieses Konto hat noch keinen Signaturschlüssel und lässt sich deshalb noch nicht prüfen. Er entsteht, sobald es sich einmal neu anmeldet oder entsperrt.",
+    sync_roles_invalid:
+      "Die Eigentümerliste dieser Datenbank ist nicht geprüft. Sieh dir zuerst die Warnung auf der Seite der Datenbank an.",
+    sync_roles_unconfirmed:
+      "Übernimm zuerst die signierte Eigentümerliste dieser Datenbank.",
+    sync_roles_rejected:
+      "Die signierte Eigentümerliste deckt diesen Schlüssel nicht. Er wurde nicht angenommen; das kann ein Angriff auf den Server sein.",
+    sync_owners_unverified:
+      "Vergleiche zuerst die Fingerprints der anderen Eigentümer.",
+    roles_conflict:
+      "Ein anderer Eigentümer hat die Eigentümerliste gleichzeitig geändert. Bitte erneut versuchen.",
+    owner_must_demote:
+      "Als Eigentümer stufst du dich vor dem Austritt selbst herab. Das geht gerade nicht, weil die Eigentümerliste dieser Datenbank nicht geprüft ist.",
+    signing_key_missing:
+      "Dieses Konto hat noch keinen Signaturschlüssel. Es muss sich zuerst einmal neu anmelden oder entsperren.",
+    roles_required:
+      "Die Eigentümerliste dieser Datenbank muss mitsigniert werden. Lade die Seite neu und versuche es erneut.",
     sync_key_box_invalid:
       "Der Schlüssel ließ sich nicht öffnen oder prüfen und wurde nicht angenommen. Das kann ein Fehler oder ein Angriff auf den Server sein.",
     sync_rotation_conflict:

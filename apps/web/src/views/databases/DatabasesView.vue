@@ -10,6 +10,7 @@ import { useI18n } from "vue-i18n";
 import ErrorNotice from "../../components/ErrorNotice.vue";
 import KdbxImportDialog from "../../components/kdbx/KdbxImportDialog.vue";
 import ManifestWarning from "../../components/ManifestWarning.vue";
+import RolesWarning from "../../components/sharing/RolesWarning.vue";
 import VaultDeleteDialog from "../../components/VaultDeleteDialog.vue";
 import VaultEditForm from "../../components/VaultEditForm.vue";
 import WriteNotices from "../../components/WriteNotices.vue";
@@ -196,6 +197,7 @@ function edited(result: ReturnType<typeof describeNotices>): void {
               :busy="busy"
               @acknowledge="acknowledgeManifest(vault.id)"
             />
+            <RolesWarning :vault="vault" />
           </div>
           <div class="actions">
             <button

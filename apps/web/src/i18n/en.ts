@@ -191,6 +191,26 @@ const en: typeof de = {
       confirm:
         "Accept the delivered state? Missing objects then count as gone, and the manifest is written anew. Compare with another device first.",
     },
+    roles: {
+      rollback: "The server delivered an older owner list.",
+      fork: "The owner list is contradictory.",
+      invalid: "The owner list is contradictory.",
+      blocked:
+        "Until you confirm, this device accepts no new keys and changes no roles. This may be an error, a restore of the server from a backup, or an attack; ask another owner.",
+      owners: "Owners according to the server: {names}",
+      newOwners: "New since your last state: {names}",
+      ackTitle: "Take over the owner list",
+      ackText:
+        "The delivered owner list becomes your new state. Take it over only if another owner confirms that it is right.",
+      unanchored:
+        "This database now has a signed owner list: {names}. Take it over only if these are the owners.",
+      take: "Take over",
+      verifyOwners:
+        "Compare the fingerprints of the other owners so that the owner list of this database can be signed.",
+      mismatch:
+        "The server names other owners than the signed list. The signed list counts.",
+      unknown: "(unknown)",
+    },
     status: {
       loading: "Loading…",
       error: "This database could not be loaded.",
@@ -907,6 +927,7 @@ const en: typeof de = {
     empty: "No verified contacts yet.",
     verifiedAt: "Verified on {date}",
     conflict: "Conflict – verify again",
+    outdated: "Outdated – compare once more",
     recheck: "Verify again",
     remove: "Remove",
     removeTitle: "Remove contact",
@@ -934,6 +955,10 @@ const en: typeof de = {
       "Warning: the key of this account has changed. Only confirm if you just compared the new fingerprint.",
     conflict:
       "Warning: this contact has contradicting data. Only confirm after comparing again.",
+    outdated:
+      "The keys of this account were extended. Compare the fingerprint once more.",
+    unverifiable:
+      "This account has no signing key yet. It is created as soon as the account signs in or unlocks again; then you can compare the fingerprints.",
     confirm: "They match",
     readOnly:
       "Your account data is read-only or corrupt; the confirmation cannot be saved.",
@@ -949,7 +974,10 @@ const en: typeof de = {
       unverified: "not verified",
       changed: "key changed",
       conflict: "conflict",
+      outdated: "outdated – compare again",
     },
+    signed: "signed",
+    roleMismatch: "server names another role",
     inviteEmail: "E-mail address",
     inviteSubmit: "Invite",
     invited: "The invitation to {email} has been sent.",
@@ -998,6 +1026,12 @@ const en: typeof de = {
     accept: "Accept",
     decline: "Decline",
     keyText: "A new key for “{name}” from {email} waits for your verification.",
+    keyRolesUnconfirmed:
+      "A new key for “{name}” is waiting. First take over the signed owner list on the database page.",
+    keyRolesInvalid:
+      "A new key for “{name}” is waiting, but the owner list of this database is not checked. First look at the warning on the database page.",
+    keyRejected:
+      "The new key for “{name}” is not covered by the signed owner list and was not accepted. This may be an attack on the server.",
     keyCheck: "Verify",
     ownerTitle: "Sender is not a known owner",
     ownerText:
@@ -1140,6 +1174,24 @@ const en: typeof de = {
     rotation_incomplete: "The members changed. Please review again.",
     sync_unverified:
       "This account is not a verified contact. Compare the fingerprints first.",
+    sync_unverifiable:
+      "This account has no signing key yet and cannot be verified yet. It is created as soon as the account signs in or unlocks again.",
+    sync_roles_invalid:
+      "The owner list of this database is not checked. First look at the warning on the database page.",
+    sync_roles_unconfirmed:
+      "First take over the signed owner list of this database.",
+    sync_roles_rejected:
+      "The signed owner list does not cover this key. It was not accepted; this may be an attack on the server.",
+    sync_owners_unverified:
+      "First compare the fingerprints of the other owners.",
+    roles_conflict:
+      "Another owner changed the owner list at the same time. Please try again.",
+    owner_must_demote:
+      "As an owner you step down yourself before leaving. That is not possible right now because the owner list of this database is not checked.",
+    signing_key_missing:
+      "This account has no signing key yet. It must sign in or unlock again first.",
+    roles_required:
+      "The owner list of this database must be signed along. Reload the page and try again.",
     sync_unknown_owner:
       "The sender is not known as an owner on this device. Confirm the new key first.",
     sync_self: "You cannot invite yourself.",

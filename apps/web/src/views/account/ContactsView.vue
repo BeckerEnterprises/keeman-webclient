@@ -114,6 +114,12 @@ function verified(): void {
         <div>
           <strong data-test="contact-email">{{ contact.email }}</strong>
           <span
+            v-if="contact.outdated && !contact.conflict"
+            class="tag"
+            data-test="contact-outdated"
+            >{{ t("contacts.outdated") }}</span
+          >
+          <span
             v-if="contact.conflict"
             class="tag tag-danger"
             data-test="contact-conflict"

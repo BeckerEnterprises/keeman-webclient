@@ -58,6 +58,10 @@ const API_CODES = new Set([
   "url_not_allowed",
   "favicon_not_found",
   "feature_disabled",
+  "roles_conflict",
+  "owner_must_demote",
+  "signing_key_missing",
+  "roles_required",
 ]);
 
 export function toUiError(error: unknown): UiError {

@@ -30,6 +30,15 @@ const invitations = computed(() => vaults.snapshot?.invitations ?? []);
 const pendingKeys = computed(() =>
   vaults.vaults.filter((v) => v.keyStatus === "pending" && v.pendingSender),
 );
+
+/** A pending key that waits for the owner list, not for a verification. */
+function rolesWait(
+  reason: string | undefined,
+): "roles_unconfirmed" | "roles_invalid" | undefined {
+  return reason === "roles_unconfirmed" || reason === "roles_invalid"
+    ? reason
+    : undefined;
+}
 const invalidKeys = computed(() =>
   vaults.vaults.filter((v) => v.keyStatus === "invalid"),
 );
@@ -136,7 +145,20 @@ function verified(): void {
     class="notice notice-warning"
     data-test="banner-pending-key"
   >
-    <p>
+    <p v-if="rolesWait(vault.pendingReason)">
+      {{
+        t(
+          rolesWait(vault.pendingReason) === "roles_unconfirmed"
+            ? "invitation.keyRolesUnconfirmed"
+            : "invitation.keyRolesInvalid",
+          { name: vault.name ?? t("invitation.unknownName") },
+        )
+      }}
+      <RouterLink :to="`/databases/${vault.id}`">{{
+        t("invitation.rotationAction")
+      }}</RouterLink>
+    </p>
+    <p v-else>
       {{
         t("invitation.keyText", {
           name: vault.name ?? t("invitation.unknownName"),
@@ -145,7 +167,7 @@ function verified(): void {
       }}
     </p>
     <button
-      v-if="vault.pendingSender"
+      v-if="vault.pendingSender && !rolesWait(vault.pendingReason)"
       type="button"
       class="small"
       :disabled="busy"
@@ -169,9 +191,12 @@ function verified(): void {
     data-test="banner-key-invalid"
   >
     {{
-      t("invitation.keyInvalid", {
-        name: vault.name ?? t("invitation.unknownName"),
-      })
+      t(
+        vault.pendingReason === "roles_rejected"
+          ? "invitation.keyRejected"
+          : "invitation.keyInvalid",
+        { name: vault.name ?? t("invitation.unknownName") },
+      )
     }}
   </p>
   <p

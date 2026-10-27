@@ -13,6 +13,7 @@ import KdbxExportDialog from "../../components/kdbx/KdbxExportDialog.vue";
 import KdbxImportDialog from "../../components/kdbx/KdbxImportDialog.vue";
 import ManifestWarning from "../../components/ManifestWarning.vue";
 import MembersSection from "../../components/sharing/MembersSection.vue";
+import RolesWarning from "../../components/sharing/RolesWarning.vue";
 import VaultDeleteDialog from "../../components/VaultDeleteDialog.vue";
 import VaultEditForm from "../../components/VaultEditForm.vue";
 import WriteNotices from "../../components/WriteNotices.vue";
@@ -102,6 +103,7 @@ async function acknowledgeManifest(): Promise<void> {
         :busy="acknowledging"
         @acknowledge="acknowledgeManifest"
       />
+      <RolesWarning :vault="vault" />
       <p
         v-if="
           !vault.rollback &&

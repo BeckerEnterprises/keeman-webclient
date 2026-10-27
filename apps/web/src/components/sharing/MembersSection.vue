@@ -36,7 +36,7 @@ type Dialog =
   | {
       kind: "fingerprint";
       candidate: Candidate;
-      purpose: "invite" | "key";
+      purpose: "invite" | "key" | "contact";
       then: () => Promise<void>;
     }
   | { kind: "rotation"; remove?: string }
@@ -131,10 +131,28 @@ function verified(): void {
 
 function setRole(member: MemberView): Promise<void> {
   const role = member.role === "owner" ? "member" : "owner";
-  return run(() =>
-    vaults.engine().setMemberRole(props.vault.id, member.userId, role),
-  );
+  const change = () =>
+    vaults.engine().setMemberRole(props.vault.id, member.userId, role);
+  // A new owner is signed with keys of a verified contact only.
+  if (role === "owner" && member.candidate.status !== "verified") {
+    dialog.value = {
+      kind: "fingerprint",
+      candidate: member.candidate,
+      purpose: "contact",
+      then: change,
+    };
+    return Promise.resolve();
+  }
+  return run(change);
 }
+
+/** Why a pending key waits, beyond an unverified sender. */
+const keyWait = computed(() =>
+  props.vault.pendingReason === "roles_unconfirmed" ||
+  props.vault.pendingReason === "roles_invalid"
+    ? props.vault.pendingReason
+    : undefined,
+);
 
 function withdraw(member: MemberView): Promise<void> {
   return run(() =>
@@ -176,9 +194,23 @@ onMounted(() => void load());
       class="notice notice-warning"
       data-test="members-key-pending"
     >
-      <p>{{ t("members.keyPending") }}</p>
+      <p v-if="keyWait === 'roles_unconfirmed'">
+        {{
+          t("invitation.keyRolesUnconfirmed", {
+            name: vault.name ?? t("invitation.unknownName"),
+          })
+        }}
+      </p>
+      <p v-else-if="keyWait === 'roles_invalid'">
+        {{
+          t("invitation.keyRolesInvalid", {
+            name: vault.name ?? t("invitation.unknownName"),
+          })
+        }}
+      </p>
+      <p v-else>{{ t("members.keyPending") }}</p>
       <button
-        v-if="vault.pendingSender"
+        v-if="vault.pendingSender && !keyWait"
         type="button"
         class="small"
         data-test="members-key-check"
@@ -192,7 +224,13 @@ onMounted(() => void load());
       class="notice notice-error"
       role="alert"
     >
-      {{ t("members.keyInvalid") }}
+      {{
+        vault.pendingReason === "roles_rejected"
+          ? t("invitation.keyRejected", {
+              name: vault.name ?? t("invitation.unknownName"),
+            })
+          : t("members.keyInvalid")
+      }}
     </p>
     <p v-else-if="vault.keyStatus === 'missing'" class="notice notice-warning">
       {{ t("members.keyMissing") }}
@@ -217,6 +255,18 @@ onMounted(() => void load());
           <span class="tag" data-test="member-role">{{
             t(`members.${member.role}`)
           }}</span>
+          <span
+            v-if="member.signed && member.state === 'active'"
+            class="tag tag-ok"
+            data-test="member-signed"
+            >{{ t("members.signed") }}</span
+          >
+          <span
+            v-if="member.roleMismatch"
+            class="tag tag-danger"
+            data-test="member-role-mismatch"
+            >{{ t("members.roleMismatch") }}</span
+          >
           <span
             v-if="member.state === 'pending'"
             class="tag"

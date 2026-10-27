@@ -1,0 +1,138 @@
+<script setup lang="ts">
+/**
+ * The signed owner list of a database: warnings about an older or
+ * contradictory list with "understood", the one-time take-over of a list
+ * this account has no anchor for, the hint to verify co-owners first, and
+ * a server that names other owners than the signed list.
+ */
+import type { VaultView } from "@keeman/core";
+import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
+import { toUiError, type UiError } from "../../errors";
+import { useServices } from "../../services";
+import { useVaultsStore } from "../../stores/vaults";
+import ErrorNotice from "../ErrorNotice.vue";
+import ConfirmDialog from "../dialogs/ConfirmDialog.vue";
+
+const props = defineProps<{ vault: VaultView }>();
+const { t } = useI18n();
+const vaults = useVaultsStore();
+const busy = ref(false);
+const asking = ref(false);
+const error = ref<UiError>();
+
+const roles = computed(() => props.vault.roles);
+const warning = computed(() =>
+  roles.value.status === "rollback" ||
+  roles.value.status === "fork" ||
+  roles.value.status === "invalid"
+    ? roles.value.status
+    : undefined,
+);
+
+/** A contact's address, else the server's, else a short form of the ID. */
+function names(
+  owners: readonly { userId: string; email: string | undefined }[],
+): string {
+  const { account } = useServices();
+  return owners
+    .map(
+      (o) =>
+        account.contactEmail(o.userId) ??
+        o.email ??
+        t("entry.member", { id: o.userId.slice(0, 8) }),
+    )
+    .join(", ");
+}
+
+async function run(action: () => Promise<void>): Promise<void> {
+  busy.value = true;
+  error.value = undefined;
+  try {
+    await action();
+  } catch (caught) {
+    error.value = toUiError(caught);
+  } finally {
+    busy.value = false;
+    asking.value = false;
+  }
+}
+
+function acknowledge(): Promise<void> {
+  return run(() => vaults.engine().acknowledgeRoles(props.vault.id));
+}
+
+function take(): Promise<void> {
+  return run(() => vaults.engine().confirmRoles(props.vault.id));
+}
+</script>
+
+<template>
+  <div
+    v-if="warning"
+    class="notice notice-error"
+    role="alert"
+    data-test="vault-roles-warning"
+  >
+    <p>{{ t(`vaults.roles.${warning}`) }}</p>
+    <p>{{ t("vaults.roles.blocked") }}</p>
+    <p v-if="roles.owners.length > 0" data-test="vault-roles-owners">
+      {{ t("vaults.roles.owners", { names: names(roles.owners) }) }}
+    </p>
+    <p v-if="roles.newOwners.length > 0" data-test="vault-roles-new">
+      {{ t("vaults.roles.newOwners", { names: names(roles.newOwners) }) }}
+    </p>
+    <button
+      type="button"
+      class="small"
+      :disabled="busy"
+      data-test="vault-roles-ack"
+      @click="asking = true"
+    >
+      {{ t("common.understood") }}
+    </button>
+  </div>
+  <div
+    v-else-if="roles.status === 'unanchored'"
+    class="notice notice-warning"
+    data-test="vault-roles-unanchored"
+  >
+    <p>
+      {{ t("vaults.roles.unanchored", { names: names(roles.owners) }) }}
+    </p>
+    <button
+      type="button"
+      class="small"
+      :disabled="busy"
+      data-test="vault-roles-take"
+      @click="take"
+    >
+      {{ t("vaults.roles.take") }}
+    </button>
+  </div>
+  <p
+    v-else-if="roles.verifyOwners"
+    class="notice notice-info"
+    data-test="vault-roles-verify-owners"
+  >
+    {{ t("vaults.roles.verifyOwners") }}
+  </p>
+  <p
+    v-if="roles.ownersMismatch"
+    class="notice notice-warning"
+    data-test="vault-roles-mismatch"
+  >
+    {{ t("vaults.roles.mismatch") }}
+  </p>
+  <ErrorNotice :error="error" />
+  <ConfirmDialog
+    v-if="asking"
+    :title="t('vaults.roles.ackTitle')"
+    :text="t('vaults.roles.ackText')"
+    :confirm="t('common.understood')"
+    danger
+    :busy="busy"
+    @confirm="acknowledge"
+    @close="asking = false"
+  />
+</template>
