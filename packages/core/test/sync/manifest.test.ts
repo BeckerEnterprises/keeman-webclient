@@ -318,14 +318,11 @@ describe("vault manifest: writing", () => {
     expect(vault(b.engine, a.vaultId).manifestIssues).toEqual([
       { id: root, type: "manifest", reason: "corrupt" },
     ]);
-    // The root is not the one a attested, so b cannot confirm the state
-    // and rebuilds nothing until the user does.
+    // The root is not the one a attested, so b cannot confirm the state;
+    // "understood" takes the delivered state, as confirmed.
     expect(vault(b.engine, a.vaultId).freshness).toBe("stale");
-    await expect(b.engine.acknowledgeManifest(a.vaultId)).rejects.toMatchObject(
-      { code: "read_only" },
-    );
-    await b.engine.acknowledgeFreshness(a.vaultId);
     await b.engine.acknowledgeManifest(a.vaultId);
+    expect(vault(b.engine, a.vaultId).freshness).toBe("fresh");
     expect(vault(b.engine, a.vaultId).manifest).toBe("verified");
     // a saw the old root: the new one is higher, so no rollback.
     await a.engine.pull(a.vaultId);

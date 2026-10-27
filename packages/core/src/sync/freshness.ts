@@ -178,6 +178,8 @@ export class FreshnessKeeper {
   readonly #builders = new Map<string, () => VaultFreshness | undefined>();
   /** Roles points this unlock learned from a pairing, by vault. */
   readonly #paired = new Map<string, RolePoint>();
+  /** Attestations the user overruled ("understood"), by their time. */
+  readonly #overruled = new Map<string, number>();
   #stopped = false;
 
   constructor(port: FreshnessPort) {
@@ -197,6 +199,9 @@ export class FreshnessKeeper {
         signingKey,
       );
       if (!attestation) continue;
+      const overruled = this.#overruled.get(summary.vault_id);
+      if (overruled !== undefined && Date.parse(attestation.time) <= overruled)
+        continue;
       this.#listed.set(summary.vault_id, attestation);
       const stored = this.#stored.get(summary.vault_id);
       if (!stored || Date.parse(stored.time) < Date.parse(attestation.time))
@@ -223,7 +228,16 @@ export class FreshnessKeeper {
     this.#paired.set(vaultId, point);
   }
 
-  forgetPaired(vaultId: string): void {
+  /**
+   * "Understood" at a warning the own attestation contradicts: it counts no
+   * more, and the next upload replaces it at once.
+   */
+  overrule(vaultId: string): void {
+    const listed = this.#listed.get(vaultId);
+    if (listed) this.#overruled.set(vaultId, Date.parse(listed.time));
+    this.#listed.delete(vaultId);
+    this.#stored.delete(vaultId);
+    this.#lastUpload.delete(vaultId);
     this.#paired.delete(vaultId);
   }
 

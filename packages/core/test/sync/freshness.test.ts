@@ -779,3 +779,50 @@ describe("an invitation", () => {
     });
   });
 });
+
+describe("understood at a warning", () => {
+  it("overrules the own attestation that contradicts it, and replaces it", async () => {
+    const a = await first();
+    const userId = a.account.userId ?? "";
+    const before = snapshotVault(a.server, a.vaultId);
+    const beforeUser = structuredClone(a.server.users.get(userId));
+    const review = await a.engine.prepareRotation(a.vaultId);
+    await a.engine.runRotation(review, { remove: [], dropCorrupt: false });
+    await a.account.updateSettings({ autoLockMinutes: 9 });
+    a.clock.advance(61_000);
+    await a.engine.pull(a.vaultId);
+    const own = a.server.vaults.get(a.vaultId)?.members.get(userId)?.freshness;
+    const ownUserData = a.server.users.get(userId)?.freshness;
+    // Restored from a backup, but the newer attestations stayed.
+    a.server.vaults.set(a.vaultId, structuredClone(before));
+    const member = a.server.vaults.get(a.vaultId)?.members.get(userId);
+    const user = a.server.users.get(userId);
+    if (!member || !user || !beforeUser || !own) throw new Error("setup");
+    member.freshness = own;
+    user.user_data = { ...beforeUser.user_data };
+    user.freshness = ownUserData;
+    const marks = inMemorySyncMarks();
+    const b = await another(a.server, a.clock, marks);
+    expect(b.account.userDataRollback).toBe(true);
+    expect(vault(b.engine, a.vaultId)).toMatchObject({ keyRollback: true });
+    expect(vault(b.engine, a.vaultId).roles.status).toBe("rollback");
+    await b.account.acknowledgeUserDataRollback();
+    await b.engine.acknowledgeRoles(a.vaultId);
+    await b.engine.acknowledgeRollback(a.vaultId);
+    await b.engine.refresh();
+    expect(b.account.userDataRollback).toBe(false);
+    expect(vault(b.engine, a.vaultId)).toMatchObject({
+      keyRollback: false,
+      writable: true,
+    });
+    expect(vault(b.engine, a.vaultId).roles.status).toBe("ok");
+    // The device replaced the attestations; a later unlock stays quiet.
+    b.account.lock();
+    const c = await another(a.server, a.clock, marks);
+    expect(c.account.userDataRollback).toBe(false);
+    expect(vault(c.engine, a.vaultId)).toMatchObject({
+      keyRollback: false,
+      writable: true,
+    });
+  });
+});

@@ -787,7 +787,7 @@ export class SyncEngine {
 
   /** "Understood" at a warning about the owner list of a vault. */
   async acknowledgeRoles(vaultId: string): Promise<void> {
-    this.#state(vaultId);
+    await this.#overrule(this.#state(vaultId));
     await this.#roles.acknowledge(vaultId);
     await this.refresh();
   }
@@ -1182,6 +1182,7 @@ export class SyncEngine {
 
   async acknowledgeRollback(vaultId: string): Promise<void> {
     const state = this.#state(vaultId);
+    await this.#overrule(state);
     await state.lock.run(async () => {
       await acknowledgeRollback(this.#context, state);
       this.#evaluate(state);
@@ -1197,6 +1198,7 @@ export class SyncEngine {
    */
   async acknowledgeManifest(vaultId: string): Promise<void> {
     const state = this.#state(vaultId);
+    await this.#overrule(state);
     try {
       await state.lock.run(async () => {
         state.synced = false;
@@ -2998,6 +3000,19 @@ export class SyncEngine {
         ft: 0,
       };
     await this.#context.marks.raise(this.#access.userId, { vaults });
+  }
+
+  /**
+   * "Understood" at a warning takes the delivered state: an own attestation
+   * that contradicts it counts no more, and the state counts as confirmed.
+   */
+  async #overrule(state: VaultState): Promise<void> {
+    this.#freshness.overrule(state.id);
+    const now = this.#access.now();
+    state.confirmedAt = now;
+    await this.#context.marks.raise(this.#access.userId, {
+      vaults: { [state.id]: { rev: 0, obj: {}, ft: now } },
+    });
   }
 
   #requireConfirmed(state: VaultState): void {

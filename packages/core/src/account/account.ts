@@ -244,6 +244,8 @@ export class Account {
   #newDevice = false;
   /** The last uploaded attestation of user_data. */
   #userDataAttested: { at: number; seq: number } | undefined;
+  /** The time of an attestation of user_data the user overruled. */
+  #userDataOverruled: number | undefined;
 
   constructor(options: AccountOptions) {
     this.#api = options.api;
@@ -685,11 +687,7 @@ export class Account {
       state: inspectUserData(unlocked.userData),
       rollback: false,
       stale: false,
-      attestation: ownUserDataAttestation(
-        me.freshness,
-        me.user_id,
-        this.#keys.signingPublicKey(),
-      ),
+      attestation: this.#userDataAttestation(me, me.user_id),
       confirmedSince: undefined,
     };
     if (!weaker) this.#memory.set(me.user_id, cost(kdf));
@@ -787,6 +785,12 @@ export class Account {
     const slot = this.#userData;
     const userId = this.#requireUnlocked();
     if (!slot?.rollback || slot.state.status !== "ok") return;
+    // An own attestation that says otherwise counts no more; a new one
+    // replaces it below.
+    if (slot.attestation)
+      this.#userDataOverruled = Date.parse(slot.attestation.time);
+    slot.attestation = undefined;
+    this.#userDataAttested = undefined;
     await this.#marks.replaceUserData(userId, [
       slot.revision,
       seqOf(slot.state.raw),
@@ -798,6 +802,7 @@ export class Account {
       readOnly: (slot.state.raw.schema as number) > USER_DATA_SCHEMA,
     };
     this.#engine?.contactsChanged();
+    await this.#attestUserData();
   }
 
   /** After `user_data_changed`: loads a newer user_data. */
@@ -814,11 +819,7 @@ export class Account {
       state: inspectUserData(this.#decryptUserData(userId, me)),
       rollback: false,
       stale: false,
-      attestation: ownUserDataAttestation(
-        me.freshness,
-        userId,
-        this.#keys.signingPublicKey(),
-      ),
+      attestation: this.#userDataAttestation(me, userId),
       confirmedSince: undefined,
     };
     const { rollback, stale } = await this.#applyUserDataMarks();
@@ -850,6 +851,7 @@ export class Account {
     this.#periodFloor = undefined;
     this.#newDevice = false;
     this.#userDataAttested = undefined;
+    this.#userDataOverruled = undefined;
   }
 
   /** Locks, forgets the account and revokes the session. */
@@ -1070,11 +1072,7 @@ export class Account {
       state: inspectUserData(unlocked.userData),
       rollback: false,
       stale: false,
-      attestation: ownUserDataAttestation(
-        me.freshness,
-        me.user_id,
-        this.#keys.signingPublicKey(),
-      ),
+      attestation: this.#userDataAttestation(me, me.user_id),
       confirmedSince: undefined,
     };
     // An own password change: the new parameters are the ones to expect.
@@ -1289,6 +1287,21 @@ export class Account {
   /** This device had no marks for the account when it was unlocked. */
   get isNewDevice(): boolean {
     return this.#keys.isUnlocked && this.#newDevice;
+  }
+
+  /** The own attestation of `GET /v1/me`, unless the user overruled it. */
+  #userDataAttestation(me: Me, userId: string): UserDataFreshness | undefined {
+    const attestation = ownUserDataAttestation(
+      me.freshness,
+      userId,
+      this.#keys.signingPublicKey(),
+    );
+    const overruled = this.#userDataOverruled;
+    return attestation &&
+      overruled !== undefined &&
+      Date.parse(attestation.time) <= overruled
+      ? undefined
+      : attestation;
   }
 
   #markStale(slot: UserDataSlot, stale: boolean): void {
