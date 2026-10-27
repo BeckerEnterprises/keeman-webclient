@@ -5,6 +5,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { dirname, join } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
 import {
   Account,
@@ -45,6 +46,26 @@ function cli(args: string[]): string {
 
 export function invite(): string {
   return cli(["invite", "create"]);
+}
+
+/**
+ * Like an account from before signing keys: the test server's database
+ * forgets its signing key (Python's sqlite3, test data only).
+ */
+export function forgetSigningKey(email: string): void {
+  const { KEEMAN_E2E_CONFIG } = process.env;
+  if (!KEEMAN_E2E_CONFIG) throw new Error("global setup did not run");
+  const database = join(dirname(KEEMAN_E2E_CONFIG), "data", "keeman.sqlite");
+  execFileSync("python3", [
+    "-I",
+    "-c",
+    "import sqlite3, sys\n" +
+      "db = sqlite3.connect(sys.argv[1], timeout=10)\n" +
+      "db.execute('UPDATE users SET signing_public_key = NULL WHERE email = ?', (sys.argv[2],))\n" +
+      "db.commit()",
+    database,
+    email,
+  ]);
 }
 
 /** `user reset-2fa`: the account logs in without second factor. */

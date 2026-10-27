@@ -1,8 +1,9 @@
 /**
  * Sharing: two accounts share a database and edit it, a
  * removed member reads nothing new, a substituted public key is detected on
- * both sides, a database over 20 MiB gets a new key, and declining,
- * withdrawing, roles and leaving work. Test data only.
+ * both sides, keys follow the signed owner list, a database over 20 MiB gets
+ * a new key, and declining, withdrawing, roles and leaving work. Test data
+ * only.
  */
 import { generateKeyPairSync } from "node:crypto";
 import { emptyDraft, type SyncEngine } from "@keeman/core";
@@ -11,10 +12,12 @@ import {
   createAccount,
   createAccountWithVault,
   entryRow,
+  forgetSigningKey,
   loginViaUi,
   nodeDevice,
   openAccount,
   openDatabases,
+  openMain,
   openVault,
   rootOf,
   unlockViaUi,
@@ -313,7 +316,7 @@ test.describe("sharing", () => {
     expect(accepts).toEqual([]);
   });
 
-  test("a new key from a sender not known as owner asks first", async ({
+  test("a new owner's key arrives without asking when the signed owner list covers it", async ({
     page,
   }) => {
     test.slow();
@@ -326,7 +329,6 @@ test.describe("sharing", () => {
     ]);
     await shareNode(alice.device, bobDevice, bob.email, alice.vaultId);
     await shareNode(alice.device, carolDevice, carol.email, alice.vaultId);
-    // Carol is a verified contact of everyone, but not an owner.
     await bobDevice.account.verifyContact(
       await bobDevice.engine.lookupUser(carol.email),
     );
@@ -334,15 +336,15 @@ test.describe("sharing", () => {
       await carolDevice.account.verifyContact(
         await carolDevice.engine.lookupUser(email),
       );
-    // Bob's browser remembers Alice as the only owner and hears no events.
+    // Bob's browser checked the owner list with Alice alone and hears no
+    // events.
     await page.routeWebSocket(/\/v1\/events$/, () => undefined);
     await loginViaUi(page, bob);
     await openVault(page, "Persönlich");
     await expect(page.getByTestId("new-group")).toBeEnabled();
 
-    // Meanwhile Carol becomes owner and renews the key: to Bob's browser
-    // the key comes from an account it never saw as owner, as would the
-    // box of a removed member that a lying server passes off as new.
+    // Meanwhile Alice makes Carol owner (signed) and Carol renews the key:
+    // the chain from Bob's anchor covers both steps.
     const carolId = carolDevice.account.userId ?? "";
     await alice.device.engine.refresh();
     await alice.device.engine.setMemberRole(alice.vaultId, carolId, "owner");
@@ -363,20 +365,122 @@ test.describe("sharing", () => {
     });
     await page.reload();
     await unlockViaUi(page, bob.password);
-    const banner = page.getByTestId("banner-pending-key");
-    await expect(banner).toBeVisible();
-    await banner.getByTestId("pending-key-check").click();
-    await expect(page.getByTestId("confirm-text")).toContainText(carol.email);
-    await page.getByTestId("confirm-no").click();
-    // Without the confirmation the key is not taken.
-    await expect(banner).toBeVisible();
-    expect(accepted).toEqual([]);
-    await banner.getByTestId("pending-key-check").click();
-    await page.getByTestId("confirm-yes").click();
-    await expect(banner).toHaveCount(0);
-    expect(accepted).toHaveLength(1);
     await openVault(page, "Persönlich");
     await expect(page.getByTestId("new-group")).toBeEnabled();
+    expect(accepted).toHaveLength(1);
+    await expect(page.getByTestId("banner-pending-key")).toHaveCount(0);
+    await openDatabasePage(page, alice.vaultId);
+    const carolRow = page
+      .getByTestId("member")
+      .filter({ hasText: carol.email });
+    await expect(carolRow.getByTestId("member-role")).toHaveText("Eigentümer");
+    await expect(carolRow.getByTestId("member-signed")).toBeVisible();
+  });
+
+  test("an older owner list blocks new keys until understood", async ({
+    page,
+  }) => {
+    test.slow();
+    const alice = await createAccountWithVault("older-a");
+    const bob = await createAccount("older-b");
+    const bobDevice = await nodeDevice(bob);
+    await shareNode(alice.device, bobDevice, bob.email, alice.vaultId);
+    await alice.device.account.verifyContact(
+      await alice.device.engine.lookupUser(bob.email),
+    );
+    const rotate = async () => {
+      await alice.device.engine.refresh();
+      const review = await alice.device.engine.prepareRotation(alice.vaultId);
+      await alice.device.engine.runRotation(review, {
+        remove: [],
+        dropCorrupt: false,
+      });
+    };
+    // Bob's browser takes key version 2 with statement 2 of the chain.
+    await rotate();
+    await page.routeWebSocket(/\/v1\/events$/, () => undefined);
+    await loginViaUi(page, bob);
+    await openVault(page, "Persönlich");
+    await expect(page.getByTestId("new-group")).toBeEnabled();
+    await page.getByTestId("lock").click();
+
+    // Key version 3 follows; the server delivers only the first statement.
+    await rotate();
+    const accepted: string[] = [];
+    page.on("request", (request) => {
+      if (
+        request.method() === "POST" &&
+        request.url().endsWith(`/v1/vaults/${alice.vaultId}/key`)
+      )
+        accepted.push(request.url());
+    });
+    const rolesPath = (url: URL) =>
+      url.pathname === `/v1/vaults/${alice.vaultId}/roles`;
+    await page.route(rolesPath, async (route) => {
+      const response = await route.fetch();
+      const body = (await response.json()) as { statements: unknown[] };
+      await route.fulfill({
+        response,
+        json: { statements: body.statements.slice(0, 1) },
+      });
+    });
+    await unlockViaUi(page, bob.password);
+    const banner = page.getByTestId("banner-pending-key");
+    await expect(banner).toContainText("nicht geprüft");
+    await expect(banner.getByTestId("pending-key-check")).toHaveCount(0);
+    await openDatabasePage(page, alice.vaultId);
+    const warning = page.getByTestId("vault-roles-warning");
+    await expect(warning).toContainText("ältere Eigentümerliste");
+    // Understood takes the older list; it still does not cover the key.
+    await warning.getByTestId("vault-roles-ack").click();
+    await page.getByTestId("confirm-yes").click();
+    await expect(warning).toHaveCount(0);
+    await expect(page.getByTestId("banner-key-invalid")).toContainText(
+      "nicht von der signierten Eigentümerliste gedeckt",
+    );
+    expect(accepted).toEqual([]);
+
+    // With the whole chain again, the key is covered.
+    await page.unroute(rolesPath);
+    await page.getByTestId("lock").click();
+    await unlockViaUi(page, bob.password);
+    await openMain(page);
+    await openVault(page, "Persönlich");
+    await expect(page.getByTestId("new-group")).toBeEnabled();
+    expect(accepted).toHaveLength(1);
+  });
+
+  test("an account from before signing keys adds one and is verified after", async ({
+    page,
+  }) => {
+    const alice = await createAccountWithVault("signing-a");
+    const bob = await createAccount("signing-b");
+    forgetSigningKey(alice.email);
+    await loginViaUi(page, bob);
+    await openAccount(page, "contacts");
+    await page.getByTestId("contacts-email").fill(alice.email);
+    await page.getByTestId("contacts-check").click();
+    const dialog = page.getByTestId("fingerprint-dialog");
+    await expect(dialog.getByTestId("fingerprint-unverifiable")).toBeVisible();
+    await expect(dialog.getByTestId("fingerprint-confirm")).toBeDisabled();
+    await dialog.getByTestId("fingerprint-cancel").click();
+
+    // Alice unlocks again: her client adds the key derived from her user key.
+    alice.device.account.lock();
+    await alice.device.account.unlock(alice.password);
+    expect((await alice.device.api.me()).signing_public_key).toEqual(
+      expect.any(String),
+    );
+    await page.getByTestId("contacts-email").fill(alice.email);
+    await page.getByTestId("contacts-check").click();
+    await expect(dialog.getByTestId("fingerprint-unverifiable")).toHaveCount(0);
+    await expect(dialog.getByTestId("fingerprint-other")).toHaveText(
+      alice.device.account.ownFingerprint ?? "",
+    );
+    await dialog.getByTestId("fingerprint-confirm").click();
+    await expect(
+      page.getByTestId("contact").filter({ hasText: alice.email }),
+    ).toBeVisible();
   });
 
   test("renews the key of a database over 20 MiB", async ({ page }) => {
@@ -442,10 +546,14 @@ test.describe("sharing", () => {
     const daveRow = members.filter({ hasText: dave.email });
     await daveRow.getByTestId("member-role-toggle").click();
     await expect(daveRow.getByTestId("member-role")).toHaveText("Eigentümer");
+    await expect(daveRow.getByTestId("member-signed")).toBeVisible();
     await daveDevice.engine.refresh();
-    expect(view(daveDevice.engine, alice.vaultId).role).toBe("owner");
+    expect(view(daveDevice.engine, alice.vaultId)).toMatchObject({
+      role: "owner",
+      roles: { status: "ok" },
+    });
 
-    // Dave leaves: Alice is asked to renew the key.
+    // Dave leaves, stepping down first: Alice is asked to renew the key.
     await daveDevice.engine.leaveVault(alice.vaultId);
     await expect(page.getByTestId("banner-rotation-required")).toBeVisible();
     await expect(page.getByTestId("members-rotation-required")).toBeVisible();
