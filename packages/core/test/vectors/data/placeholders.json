@@ -355,7 +355,11 @@
         }
       },
       "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
-      "allowed_schemes": ["http", "https", "ssh"],
+      "allowed_schemes": [
+        "http",
+        "https",
+        "ssh"
+      ],
       "expected": {
         "url": "ssh://root@203.0.113.10:22",
         "display": "ssh://root@203.0.113.10:22",
@@ -431,7 +435,11 @@
         }
       },
       "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
-      "allowed_schemes": ["http", "https", "javascript"],
+      "allowed_schemes": [
+        "http",
+        "https",
+        "javascript"
+      ],
       "expected": {
         "url": "javascript:alert(document.cookie)",
         "display": "javascript:alert(document.cookie)",
@@ -535,7 +543,9 @@
         "url": "https://example.com/{d}{FOO}{S:Nope}",
         "display": "https://example.com/{d}{FOO}{S:Nope}",
         "secret": false,
-        "warnings": ["missing"],
+        "warnings": [
+          "missing"
+        ],
         "open": null
       }
     },
@@ -553,7 +563,9 @@
         "url": "https://example.com/{URL}",
         "display": "https://example.com/{URL}",
         "secret": false,
-        "warnings": ["cycle"],
+        "warnings": [
+          "cycle"
+        ],
         "open": null
       }
     },
@@ -699,7 +711,9 @@
         "url": "https://a.example/{REF:U@I:0192B3A45C6D7E8F9A0B1C2D3E4F5EFF}",
         "display": "https://a.example/{REF:U@I:0192B3A45C6D7E8F9A0B1C2D3E4F5EFF}",
         "secret": false,
-        "warnings": ["missing"],
+        "warnings": [
+          "missing"
+        ],
         "open": null
       }
     },
@@ -718,7 +732,10 @@
       "entry": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5e01",
       "expected": {
         "error": "invalid_url",
-        "warnings": ["cycle", "missing"]
+        "warnings": [
+          "cycle",
+          "missing"
+        ]
       }
     },
     {
@@ -1014,7 +1031,10 @@
         "display": "{REF:T@I:0192B3A45C6D7E8F9A0B1C2D3E4F5EFF}/{REF:T@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E01}",
         "secret": false,
         "refs": true,
-        "warnings": ["cycle", "missing"]
+        "warnings": [
+          "cycle",
+          "missing"
+        ]
       }
     },
     {
@@ -1137,7 +1157,9 @@
         "display": "{REF:T@I:0192B3A45C6D7E8F9A0B000000000010}",
         "secret": false,
         "refs": true,
-        "warnings": ["cycle"]
+        "warnings": [
+          "cycle"
+        ]
       }
     },
     {
@@ -1303,7 +1325,9 @@
         "display": "{REF:T@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}",
         "secret": false,
         "refs": true,
-        "warnings": ["too_complex"]
+        "warnings": [
+          "too_complex"
+        ]
       }
     },
     {
@@ -1332,7 +1356,9 @@
         "display": "••••••",
         "secret": true,
         "refs": true,
-        "warnings": ["too_complex"]
+        "warnings": [
+          "too_complex"
+        ]
       }
     },
     {
@@ -1355,7 +1381,9 @@
         "display": "{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}{REF:N@I:0192B3A45C6D7E8F9A0B1C2D3E4F5E02}",
         "secret": false,
         "refs": true,
-        "warnings": ["too_complex"]
+        "warnings": [
+          "too_complex"
+        ]
       }
     },
     {
