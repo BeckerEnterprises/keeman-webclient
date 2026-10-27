@@ -9,6 +9,7 @@ export const KDF_CONTEXT = {
   account: "keeman01",
   recovery: "keemanRK",
   prf: "keemanPF",
+  signing: "keemanSG",
 } as const;
 
 const CONTEXT_PATTERN = /^[\x20-\x7e]{8}$/;

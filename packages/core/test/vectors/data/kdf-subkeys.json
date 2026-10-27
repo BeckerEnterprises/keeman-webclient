@@ -70,6 +70,16 @@
       "expected": {
         "hash_hex": "133161de60aa6a85fd4a72537cba2610e1c31aa71a584dc1b2e0553bf7199a14"
       }
+    },
+    {
+      "id": "keemanSG-1",
+      "kind": "subkey",
+      "key_hex": "b28c14410afe078e8e295de77e2218ecc31de40734874ef4b32278e8af6484cd",
+      "context": "keemanSG",
+      "subkey_id": 1,
+      "expected": {
+        "subkey_hex": "a08026348d8d6a2b9c982bbca7b9a297e212f13d606e5e754c16c03d9f5735a5"
+      }
     }
   ]
 }

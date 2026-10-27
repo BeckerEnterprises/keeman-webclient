@@ -1,6 +1,7 @@
 import { wipe } from "./bytes";
 import { CryptoError } from "./errors";
 import { KEY_BYTES } from "./kdf";
+import { deriveSigningKeyPair, type SigningKeyPair } from "./signing";
 import { assertUuid } from "./uuid";
 
 export interface AccountKeyMaterial {
@@ -27,6 +28,10 @@ function assertSynchronous<T>(result: T): T {
 export interface Keys {
   useUserKey<T>(use: (userKey: Uint8Array) => T): T;
   usePrivateKey<T>(use: (privateKey: Uint8Array) => T): T;
+  /** The Ed25519 secret key (64 bytes) derived from the user key. */
+  useSigningKey<T>(use: (secretKey: Uint8Array) => T): T;
+  /** spk', public, so a copy may leave the store. */
+  signingPublicKey(): Uint8Array;
   setVaultKey(vaultId: string, keyVersion: number, vaultKey: Uint8Array): void;
   hasVaultKey(vaultId: string, keyVersion: number): boolean;
   useVaultKey<T>(
@@ -44,6 +49,7 @@ export interface Keys {
  */
 export class KeyStore implements Keys {
   #account: AccountKeyMaterial | undefined;
+  #signing: SigningKeyPair | undefined;
   readonly #vaultKeys = new Map<string, Map<number, Uint8Array>>();
   /** Raised by every lock (and so by every unlock). */
   #generation = 0;
@@ -58,6 +64,7 @@ export class KeyStore implements Keys {
     assertKey(material.privateKey, "Private key");
     assertKey(material.publicKey, "Public key");
     this.lock();
+    this.#signing = deriveSigningKeyPair(material.userKey);
     this.#account = material;
   }
 
@@ -76,6 +83,14 @@ export class KeyStore implements Keys {
 
   usePrivateKey<T>(use: (privateKey: Uint8Array) => T): T {
     return assertSynchronous(use(this.#unlocked().privateKey));
+  }
+
+  useSigningKey<T>(use: (secretKey: Uint8Array) => T): T {
+    return assertSynchronous(use(this.#signingPair().secretKey));
+  }
+
+  signingPublicKey(): Uint8Array {
+    return this.#signingPair().publicKey.slice();
   }
 
   /** Stores a vault key; a previous key for the same version is wiped. */
@@ -145,6 +160,8 @@ export class KeyStore implements Keys {
     return {
       useUserKey: (use) => current().useUserKey(use),
       usePrivateKey: (use) => current().usePrivateKey(use),
+      useSigningKey: (use) => current().useSigningKey(use),
+      signingPublicKey: () => current().signingPublicKey(),
       setVaultKey: (vaultId, keyVersion, vaultKey) => {
         try {
           current();
@@ -170,7 +187,9 @@ export class KeyStore implements Keys {
     for (const vaultId of [...this.#vaultKeys.keys()])
       this.forgetVault(vaultId);
     if (this.#account) wipe(this.#account.userKey, this.#account.privateKey);
+    wipe(this.#signing?.secretKey);
     this.#account = undefined;
+    this.#signing = undefined;
   }
 
   toJSON(): never {
@@ -184,5 +203,11 @@ export class KeyStore implements Keys {
   #unlocked(): AccountKeyMaterial {
     if (!this.#account) throw new CryptoError("locked", "Key store is locked");
     return this.#account;
+  }
+
+  #signingPair(): SigningKeyPair {
+    this.#unlocked();
+    if (!this.#signing) throw new CryptoError("locked", "Key store is locked");
+    return this.#signing;
   }
 }

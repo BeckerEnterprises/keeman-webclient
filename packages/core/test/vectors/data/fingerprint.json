@@ -34,6 +34,36 @@
         "fingerprint_hex": "3D2DA2F235CBAF36FD52B83D22BFE80930154ED423A173EFA5924C18561B8514",
         "display": "3D2D A2F2 35CB AF36 FD52 B83D 22BF E809 3015 4ED4"
       }
+    },
+    {
+      "id": "v2-alice",
+      "version": 2,
+      "public_key_hex": "eb37e02d15f4bf6201ace34a6553773e67fa23c33d9b125b529977e361176d6c",
+      "signing_public_key_hex": "0d04799fc954f3ac641d0400d277f5222ec4e5631cd10d87262a811b2bc339df",
+      "expected": {
+        "fingerprint_hex": "0CAE599002FF075C8FCE48590D771F3D2FF5BCC5F3C1B8A4967C0A4D9236B0AD",
+        "display": "0CAE 5990 02FF 075C 8FCE 4859 0D77 1F3D 2FF5 BCC5"
+      }
+    },
+    {
+      "id": "v2-alice-other-signing-key",
+      "version": 2,
+      "public_key_hex": "eb37e02d15f4bf6201ace34a6553773e67fa23c33d9b125b529977e361176d6c",
+      "signing_public_key_hex": "3036764bc22e13ca0f6a38c05922210dcc334faccfdbfc9bdf160fb3dd7797e5",
+      "expected": {
+        "fingerprint_hex": "E5A0ABEB0F09B7D4ECA2AD8380821A6E592C0F41FF3E53F212A83028127292AD",
+        "display": "E5A0 ABEB 0F09 B7D4 ECA2 AD83 8082 1A6E 592C 0F41"
+      }
+    },
+    {
+      "id": "v2-zero",
+      "version": 2,
+      "public_key_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "signing_public_key_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "expected": {
+        "fingerprint_hex": "3AA68F098B1D8992DB22A497533AF863BA6C3E2C6ADD4F187B0E7E66FC52D3D9",
+        "display": "3AA6 8F09 8B1D 8992 DB22 A497 533A F863 BA6C 3E2C"
+      }
     }
   ]
 }

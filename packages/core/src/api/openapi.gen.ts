@@ -342,6 +342,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/signing-key": {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Keeman-Client": components["parameters"]["KeemanClient"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["setSigningKey"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/totp/setup": {
         parameters: {
             query?: never;
@@ -702,6 +720,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/vaults/{vault_id}/roles": {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Keeman-Client": components["parameters"]["KeemanClient"];
+            };
+            path: {
+                vault_id: components["parameters"]["VaultId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getRoles"];
+        put?: never;
+        post: operations["appendRoles"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/vaults/{vault_id}/members/{user_id}": {
         parameters: {
             query?: never;
@@ -974,6 +1012,24 @@ export interface components {
         KeyVersion: number;
         Email: string;
         Key32: string;
+        SignedRoles: {
+            statement: string;
+            signature: string;
+        };
+        RoleStatement: {
+            version: number;
+            statement: string;
+            signature: string;
+        };
+        RoleChain: {
+            statements: components["schemas"]["RoleStatement"][];
+        };
+        SigningKeyRequest: {
+            signing_public_key: components["schemas"]["Key32"];
+        };
+        AppendRolesRequest: {
+            roles: components["schemas"]["SignedRoles"];
+        };
         Token: string;
         Salt: string;
         WrappedKey: string;
@@ -1005,6 +1061,7 @@ export interface components {
             features: {
                 favicon: boolean;
                 manifest?: boolean;
+                roles?: boolean;
             };
             limits: {
                 attachment_max_bytes: number;
@@ -1034,6 +1091,7 @@ export interface components {
             user_key_wrapped: components["schemas"]["WrappedKey"];
             public_key: components["schemas"]["Key32"];
             private_key_wrapped: components["schemas"]["WrappedKey"];
+            signing_public_key: components["schemas"]["Key32"];
             recovery: components["schemas"]["RecoveryMaterial"];
             user_data: components["schemas"]["UserDataEnvelope"];
             device: components["schemas"]["Device"];
@@ -1123,6 +1181,7 @@ export interface components {
             user_key_wrapped: components["schemas"]["WrappedKey"];
             public_key: components["schemas"]["Key32"];
             private_key_wrapped: components["schemas"]["WrappedKey"];
+            signing_public_key: components["schemas"]["Key32"] | null;
             user_data: {
                 revision: components["schemas"]["Revision"];
                 data: components["schemas"]["UserDataEnvelope"];
@@ -1215,6 +1274,7 @@ export interface components {
             user_id: components["schemas"]["Uuid"];
             email: components["schemas"]["Email"];
             public_key: components["schemas"]["Key32"];
+            signing_public_key: components["schemas"]["Key32"] | null;
         };
         Role: "owner" | "member";
         MembershipState: "pending" | "active";
@@ -1234,6 +1294,7 @@ export interface components {
             invitation: components["schemas"]["KeyGrant"] | null;
             revision: components["schemas"]["Revision"];
             rotation_required: boolean;
+            roles_version: number | null;
             member_count: number;
             created: components["schemas"]["Timestamp"];
         };
@@ -1251,6 +1312,7 @@ export interface components {
             vault_id: components["schemas"]["Uuid"];
             key_wrapped: components["schemas"]["WrappedKey"];
             objects: components["schemas"]["ObjectUpload"][];
+            roles: components["schemas"]["SignedRoles"];
         };
         Member: {
             user_id: components["schemas"]["Uuid"];
@@ -1258,6 +1320,7 @@ export interface components {
             role: components["schemas"]["Role"];
             state: components["schemas"]["MembershipState"];
             public_key: components["schemas"]["Key32"];
+            signing_public_key: components["schemas"]["Key32"] | null;
             invited_by: components["schemas"]["Uuid"] | null;
             created: components["schemas"]["Timestamp"];
         };
@@ -1271,6 +1334,7 @@ export interface components {
         };
         UpdateMemberRequest: {
             role: components["schemas"]["Role"];
+            roles?: components["schemas"]["SignedRoles"];
         };
         VaultKeyAcceptance: {
             key_version: components["schemas"]["KeyVersion"];
@@ -1297,6 +1361,7 @@ export interface components {
             invite_keys: components["schemas"]["MemberKey"][];
             remove_user_ids: components["schemas"]["Uuid"][];
             drop_objects: components["schemas"]["DroppedObject"][];
+            roles?: components["schemas"]["SignedRoles"];
         };
         DroppedObject: {
             id: components["schemas"]["Uuid"];
@@ -1367,7 +1432,7 @@ export interface components {
             height: 64;
             origin: string;
         };
-        ProblemCode: "validation_failed" | "url_not_allowed" | "invalid_credentials" | "invalid_second_factor" | "challenge_invalid" | "session_invalid" | "reauth_required" | "forbidden" | "registration_closed" | "invite_invalid" | "account_disabled" | "not_found" | "user_not_found" | "feature_disabled" | "method_not_allowed" | "request_timeout" | "conflict" | "refresh_superseded" | "rotation_invalid" | "stale_key_version" | "key_version_mismatch" | "email_taken" | "already_registered" | "already_member" | "last_owner" | "sole_owner_of_shared_vault" | "use_rotate" | "two_factor_state_invalid" | "resync_required" | "payload_too_large" | "attachment_too_large" | "unsupported_media_type" | "range_not_satisfiable" | "kdf_params_invalid" | "rotation_incomplete" | "favicon_not_found" | "idempotency_key_reused" | "attachment_incomplete" | "manifest_required" | "rate_limited" | "internal_error" | "quota_exceeded";
+        ProblemCode: "validation_failed" | "url_not_allowed" | "invalid_credentials" | "invalid_second_factor" | "challenge_invalid" | "session_invalid" | "reauth_required" | "forbidden" | "registration_closed" | "invite_invalid" | "account_disabled" | "not_found" | "user_not_found" | "feature_disabled" | "method_not_allowed" | "request_timeout" | "conflict" | "refresh_superseded" | "rotation_invalid" | "stale_key_version" | "key_version_mismatch" | "email_taken" | "already_registered" | "already_member" | "last_owner" | "sole_owner_of_shared_vault" | "roles_conflict" | "owner_must_demote" | "signing_key_missing" | "use_rotate" | "two_factor_state_invalid" | "resync_required" | "payload_too_large" | "attachment_too_large" | "unsupported_media_type" | "range_not_satisfiable" | "kdf_params_invalid" | "rotation_incomplete" | "favicon_not_found" | "idempotency_key_reused" | "attachment_incomplete" | "manifest_required" | "roles_required" | "rate_limited" | "internal_error" | "quota_exceeded";
         Problem: {
             type?: string;
             title: string;
@@ -1379,6 +1444,7 @@ export interface components {
             conflicts?: components["schemas"]["BatchConflict"][];
             current_revision?: number;
             current_key_version?: number;
+            current_roles_version?: number;
         };
         ValidationError: {
             pointer?: string;
@@ -2236,6 +2302,40 @@ export interface operations {
             default: components["responses"]["Problem"];
         };
     };
+    setSigningKey: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Keeman-Client": components["parameters"]["KeemanClient"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SigningKeyRequest"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["ReauthRequired"];
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
     setupTotp: {
         parameters: {
             query?: never;
@@ -2940,6 +3040,73 @@ export interface operations {
             default: components["responses"]["Problem"];
         };
     };
+    getRoles: {
+        parameters: {
+            query?: {
+                since?: number;
+            };
+            header: {
+                "X-Keeman-Client": components["parameters"]["KeemanClient"];
+            };
+            path: {
+                vault_id: components["parameters"]["VaultId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoleChain"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    appendRoles: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Keeman-Client": components["parameters"]["KeemanClient"];
+            };
+            path: {
+                vault_id: components["parameters"]["VaultId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppendRolesRequest"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
     withdrawInvitation: {
         parameters: {
             query?: never;
@@ -3004,6 +3171,14 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

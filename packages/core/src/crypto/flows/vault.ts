@@ -3,7 +3,7 @@
 import type { components } from "../../api/openapi.gen";
 import { aad, type ObjectType } from "../aad";
 import { openVaultKeyBox, sealVaultKeyBox, type KeyGrantContext } from "../box";
-import { wipe, type JsonObject } from "../bytes";
+import { fromBase64Url, wipe, type JsonObject } from "../bytes";
 import { openKey, sealKey } from "../envelope";
 import { CryptoError } from "../errors";
 import { KEY_BYTES } from "../kdf";
@@ -23,6 +23,16 @@ import {
   type ManifestEntry,
 } from "../../model/manifest";
 import { scoped, type Randomness } from "../random";
+import {
+  genesisStatement,
+  roleStatementHash,
+  signRoleStatement,
+  successorStatement,
+  type RoleOwner,
+  type RolePoint,
+  type SignedRoles,
+  type VerifiedRoles,
+} from "../roles";
 import { assertUuid, isUuid } from "../uuid";
 
 type Schemas = components["schemas"];
@@ -46,14 +56,26 @@ export interface NewObject {
 export interface VaultCreation {
   vaultId: string;
   vaultKey: Uint8Array;
-  request: Schemas["CreateVaultRequest"];
+  /** `roles` is missing for servers without roles chains. */
+  request: Omit<Schemas["CreateVaultRequest"], "roles"> & {
+    roles?: SignedRoles;
+  };
+}
+
+/** What signs a roles statement: the own owner entry and signing key. */
+export interface RolesSigner {
+  owner: RoleOwner;
+  /** Ed25519 secret key (64 bytes) of `owner`. */
+  signingSecretKey: Uint8Array;
+  created: string;
 }
 
 /**
  * Body of `POST /v1/vaults`: new vault key with key version 1; the
  * `vault_meta` object gets the vault ID, all others new IDs. With
  * `manifest`, the manifest root and the shards of these objects come along
- * (the caller sets `manifest: true` in `vault_meta`).
+ * (the caller sets `manifest: true` in `vault_meta`). With `roles`, the
+ * first statement of the roles chain names the creator as the only owner.
  */
 export function buildVaultCreation(
   randomness: Randomness,
@@ -62,8 +84,11 @@ export function buildVaultCreation(
     userKey: Uint8Array;
     objects: NewObject[];
     manifest?: boolean;
+    roles?: RolesSigner;
   },
 ): VaultCreation {
+  if (input.roles && input.roles.owner.userId !== input.userId)
+    throw new CryptoError("validation", "The creator signs the first roles");
   if (
     input.objects.filter((object) => object.type === "vault_meta").length !== 1
   ) {
@@ -118,22 +143,31 @@ export function buildVaultCreation(
   });
   if (input.manifest === true)
     objects.push(...manifestObjects(randomness, vaultKey, vaultId, objects));
-  return {
-    vaultId,
-    vaultKey,
-    request: {
-      vault_id: vaultId,
-      key_wrapped: wrapVaultKey(
-        scoped(randomness, "key_wrapped"),
-        input.userKey,
-        vaultKey,
-        vaultId,
-        input.userId,
-        1,
-      ),
-      objects,
-    },
+  const request: VaultCreation["request"] = {
+    vault_id: vaultId,
+    key_wrapped: wrapVaultKey(
+      scoped(randomness, "key_wrapped"),
+      input.userKey,
+      vaultKey,
+      vaultId,
+      input.userId,
+      1,
+    ),
+    objects,
   };
+  if (input.roles)
+    request.roles = signRoleStatement(
+      genesisStatement({
+        vaultId,
+        owners: [input.roles.owner],
+        signer: input.userId,
+        keyVersion: 1,
+        vaultKey,
+        created: input.roles.created,
+      }),
+      input.roles.signingSecretKey,
+    );
+  return { vaultId, vaultKey, request };
 }
 
 /** Root and shards (`seq` 1) listing the given objects of a new vault. */
@@ -229,6 +263,8 @@ export interface KeyBoxInput {
   vaultKey: Uint8Array;
   vaultName: string;
   created: string;
+  /** The checked roles statement the sender vouches for. */
+  roles?: RolePoint | undefined;
 }
 
 /** `key_box` for an invitation or after a rotation. Fingerprint policy: caller. */
@@ -248,6 +284,7 @@ export function buildKeyBox(
       recipientId: input.recipientId,
       vaultName: input.vaultName,
       created: input.created,
+      roles: input.roles,
     },
   );
 }
@@ -255,6 +292,8 @@ export function buildKeyBox(
 export interface KeyGrantAcceptance {
   vaultKey: Uint8Array;
   vaultName: string;
+  /** The roles statement the box names, if any. */
+  roles: RolePoint | undefined;
   /** Body of `POST /v1/vaults/{id}/accept` or `/key`. */
   request: Schemas["VaultKeyAcceptance"];
 }
@@ -291,6 +330,7 @@ export function acceptKeyGrant(
   return {
     vaultKey: opened.vaultKey,
     vaultName: opened.vaultName,
+    roles: opened.roles,
     request: {
       key_version: input.grant.key_version,
       key_wrapped: wrapVaultKey(
@@ -335,6 +375,14 @@ export interface RotationInput {
   /** Remaining active members except the owner, and pending invitations. */
   members: RotationRecipient[];
   invites: RotationRecipient[];
+  /**
+   * The checked head of the roles chain and the owners after the rotation;
+   * the commit then carries the next statement and the boxes name it.
+   */
+  roles?: { head: VerifiedRoles; owners: readonly RoleOwner[] } & Omit<
+    RolesSigner,
+    "owner"
+  >;
 }
 
 export interface Rotation {
@@ -557,7 +605,31 @@ export function dropTombstone(
   };
 }
 
-/** Own `key_wrapped` and the boxes for members and invites. */
+/** The statement of a rotation: new key version, its commitment, the owners after it. */
+export function rotationRoles(
+  input: Pick<RotationInput, "vaultId" | "ownerId" | "newKeyVersion"> & {
+    roles: NonNullable<RotationInput["roles"]>;
+  },
+  vaultKey: Uint8Array,
+): SignedRoles {
+  const { roles } = input;
+  if (roles.head.statement.vaultId !== input.vaultId)
+    throw new CryptoError("validation", "Roles of another vault");
+  return signRoleStatement(
+    successorStatement(roles.head, {
+      owners: roles.owners,
+      signer: input.ownerId,
+      created: roles.created,
+      rotation: { keyVersion: input.newKeyVersion, vaultKey },
+    }),
+    roles.signingSecretKey,
+  );
+}
+
+/**
+ * Own `key_wrapped` and the boxes for members and invites; with `roles` also
+ * the next roles statement, which every box names.
+ */
 export function rotationCommit(
   randomness: Randomness,
   input: Omit<RotationInput, "oldVaultKey" | "objects" | "dropObjectIds">,
@@ -566,6 +638,16 @@ export function rotationCommit(
 ): Rotation["commit"] {
   assertUuid(input.vaultId, "vault_id");
   assertNewKeyVersion(input.newKeyVersion);
+  const roles = input.roles
+    ? rotationRoles({ ...input, roles: input.roles }, vaultKey)
+    : undefined;
+  const point =
+    roles && input.roles
+      ? {
+          version: input.roles.head.statement.version + 1,
+          hash: roleStatementHash(fromBase64Url(roles.statement)),
+        }
+      : undefined;
   const box = (recipient: RotationRecipient, kind: string) => ({
     user_id: recipient.userId,
     key_box: buildKeyBox(scoped(randomness, `${kind}.${recipient.userId}`), {
@@ -578,6 +660,7 @@ export function rotationCommit(
       vaultKey,
       vaultName: input.vaultName,
       created: input.created,
+      roles: point,
     }),
   });
   return {
@@ -592,6 +675,7 @@ export function rotationCommit(
     member_keys: input.members.map((member) => box(member, "member")),
     invite_keys: input.invites.map((invite) => box(invite, "invite")),
     drop_objects: dropObjects,
+    ...(roles ? { roles } : {}),
   };
 }
 

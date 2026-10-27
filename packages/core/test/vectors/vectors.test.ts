@@ -33,6 +33,7 @@ import {
 } from "../../src/crypto/envelope";
 import { CryptoError } from "../../src/crypto/errors";
 import {
+  fingerprint2Hex,
   fingerprintHex,
   formatFingerprint,
 } from "../../src/crypto/fingerprint";
@@ -75,7 +76,27 @@ import {
   formatRecoveryKey,
   parseRecoveryKey,
 } from "../../src/crypto/recovery-key";
+import {
+  checkGrantRoles,
+  checkRoleChain,
+  decodeRoleStatement,
+  encodeRoleStatement,
+  keyCommitment,
+  readSignedRoles,
+  roleStatementHash,
+  signRoleStatement,
+  successorStatement,
+  type RoleOwner,
+  type RoleStatement,
+  type SignedRoles,
+} from "../../src/crypto/roles";
 import { decryptBlob } from "../../src/crypto/secretstream";
+import {
+  deriveSigningKeyPair,
+  sign,
+  verifySignature,
+  type SignatureContext,
+} from "../../src/crypto/signing";
 import { sodium } from "../../src/crypto/sodium";
 import { isUuid, uuidv7 } from "../../src/crypto/uuid";
 import {
@@ -267,6 +288,47 @@ const flowRandomness = (r: Case) =>
 const loginKeys = (password: string, salt: Uint8Array, kdf: KdfParams) =>
   deriveLoginKeys(password, salt, kdf);
 
+/** A statement in the field names of the API, as the vectors write it. */
+const fromWire = (w: Case): RoleStatement => ({
+  vaultId: w.vault_id,
+  version: w.version,
+  previous: w.previous,
+  keyVersion: w.key_version,
+  keyCommitment: w.key_commitment,
+  owners: (w.owners as Case[]).map((o) => ({
+    userId: o.user_id,
+    publicKey: o.public_key,
+    signingKey: o.signing_key,
+  })),
+  signer: w.signer,
+  created: w.created,
+});
+const toWire = (st: RoleStatement) => ({
+  v: 1,
+  type: "vault_roles",
+  vault_id: st.vaultId,
+  version: st.version,
+  previous: st.previous,
+  key_version: st.keyVersion,
+  key_commitment: st.keyCommitment,
+  owners: st.owners.map((o) => ({
+    user_id: o.userId,
+    public_key: o.publicKey,
+    signing_key: o.signingKey,
+  })),
+  signer: st.signer,
+  created: st.created,
+});
+const ownerOf = (o: Case): RoleOwner => ({
+  userId: o.user_id,
+  publicKey: toBase64Url(fromHex(o.public_key_hex)),
+  signingKey: toBase64Url(fromHex(o.signing_public_key_hex)),
+});
+const verifiedRoles = (signed: SignedRoles) => {
+  const read = readSignedRoles(signed);
+  return { statement: read.statement, hash: read.hash, signed };
+};
+
 describe("test vectors", () => {
   it("encoding.json", () => {
     for (const c of load("encoding").cases) {
@@ -411,10 +473,12 @@ describe("test vectors", () => {
           toHex(opened.vaultKey),
           opened.vaultName,
           opened.created,
+          opened.roles,
         ]).toEqual([
           c.expected.vault_key_hex,
           c.expected.vault_name,
           c.expected.created,
+          c.expected.roles,
         ]);
       };
       if (c.kind === "box" && base === undefined) {
@@ -431,6 +495,7 @@ describe("test vectors", () => {
             recipientId: m.recipient_id,
             vaultName: m.vault_name,
             created: m.created,
+            roles: m.roles,
           },
         );
         expect(envelope, c.id).toBe(c.expected.envelope_b64);
@@ -668,7 +733,13 @@ describe("test vectors", () => {
 
   it("fingerprint.json", () => {
     for (const c of load("fingerprint").cases) {
-      const full = fingerprintHex(fromHex(c.public_key_hex));
+      const full =
+        c.version === 2
+          ? fingerprint2Hex(
+              fromHex(c.public_key_hex),
+              fromHex(c.signing_public_key_hex),
+            )
+          : fingerprintHex(fromHex(c.public_key_hex));
       expect([full, formatFingerprint(full)]).toEqual([
         c.expected.fingerprint_hex,
         c.expected.display,
@@ -696,6 +767,125 @@ describe("test vectors", () => {
             c.expected.recovery_key_hex,
           );
         });
+      }
+    }
+  });
+
+  it("signing.json", () => {
+    const { cases, byId } = load("signing");
+    for (const c of cases) {
+      if (c.kind === "derive") {
+        const userKey = fromHex(c.user_key_hex);
+        expect([
+          toHex(deriveSubkey(userKey, 1, "keemanSG")),
+          toHex(deriveSigningKeyPair(userKey).publicKey),
+        ]).toEqual([c.expected.seed_hex, c.expected.public_key_hex]);
+        continue;
+      }
+      const { effective, base } = resolve(c, byId);
+      let signature: Uint8Array;
+      if (base === undefined) {
+        const pair = sodium().crypto_sign_seed_keypair(fromHex(c.seed_hex));
+        signature = sign(
+          pair.privateKey,
+          c.context as SignatureContext,
+          fromHex(c.message_hex),
+        );
+        expect(toHex(signature), c.id).toBe(c.expected.signature_hex);
+        expect(toHex(pair.publicKey)).toBe(c.public_key_hex);
+      } else {
+        signature = fromHex(base.expected.signature_hex);
+        if (c.mutations) signature = mutate(signature, c.mutations);
+      }
+      expectOutcome(c, () => {
+        verifySignature(
+          fromHex(effective.public_key_hex),
+          effective.context as SignatureContext,
+          fromHex(effective.message_hex),
+          signature,
+        );
+      });
+    }
+  });
+
+  it("roles.json", () => {
+    for (const c of load("roles").cases) {
+      const e = c.expected;
+      switch (c.kind) {
+        case "commitment":
+          expect(
+            keyCommitment(c.vault_id, c.key_version, fromHex(c.vault_key_hex)),
+          ).toBe(e.commitment);
+          break;
+        case "statement": {
+          const statement = fromWire(c.statement);
+          const bytes = encodeRoleStatement(statement);
+          const signed = signRoleStatement(
+            statement,
+            deriveSigningKeyPair(fromHex(c.signer_user_key_hex)).secretKey,
+          );
+          expect([
+            toBase64Url(bytes),
+            roleStatementHash(bytes),
+            signed,
+          ]).toEqual([
+            e.statement,
+            e.hash,
+            { statement: e.statement, signature: e.signature },
+          ]);
+          break;
+        }
+        case "decode":
+          expectOutcome(c, () => {
+            const statement = decodeRoleStatement(
+              fromBase64Url(c.statement_b64),
+            );
+            expect(toWire(statement)).toEqual(e.statement);
+          });
+          break;
+        case "chain":
+        case "grant": {
+          const chain = checkRoleChain({
+            vaultId: c.vault_id,
+            statements: c.statements,
+            anchor: c.anchor ?? undefined,
+          });
+          if (chain.status !== "ok") {
+            expect({ status: chain.status }, c.id).toEqual(e);
+            break;
+          }
+          const head = {
+            version: chain.head.statement.version,
+            hash: chain.head.hash,
+          };
+          if (c.kind === "chain") {
+            expect({ status: "ok", head }, c.id).toEqual(e);
+            break;
+          }
+          const rejection = checkGrantRoles({
+            statements: chain.statements,
+            roles: c.roles ?? undefined,
+            vaultId: c.vault_id,
+            keyVersion: c.key_version,
+            vaultKey: fromHex(c.vault_key_hex),
+          });
+          expect(
+            rejection === undefined
+              ? {
+                  status: "ok",
+                  anchor: [
+                    head.version,
+                    head.hash,
+                    chain.head.statement.owners.map((o) => o.userId),
+                  ],
+                }
+              : { status: "rejected", reason: rejection },
+            c.id,
+          ).toEqual(e);
+          break;
+        }
+        default:
+          throw new Error(`unknown kind ${String(c.kind)}`);
       }
     }
   });
@@ -796,11 +986,26 @@ describe("test vectors", () => {
         }
         case "create_vault": {
           const rnd = flowRandomness(i.randomness);
+          const userKey = fromHex(i.user_key_hex);
+          const signing = deriveSigningKeyPair(userKey);
           const vault = buildVaultCreation(rnd, {
             userId: i.user_id,
-            userKey: fromHex(i.user_key_hex),
+            userKey,
             objects: i.objects as NewObject[],
             manifest: i.manifest === true,
+            ...(i.roles
+              ? {
+                  roles: {
+                    owner: ownerOf({
+                      user_id: i.user_id,
+                      public_key_hex: i.roles.public_key_hex,
+                      signing_public_key_hex: toHex(signing.publicKey),
+                    }),
+                    signingSecretKey: signing.secretKey,
+                    created: i.roles.created,
+                  },
+                }
+              : {}),
           });
           expect(rnd.unused()).toEqual([]);
           expect(toHex(vault.vaultKey)).toBe(e.vault_key_hex);
@@ -867,6 +1072,18 @@ describe("test vectors", () => {
                 publicKey: fromHex(m.public_key_hex),
               })),
               invites: [],
+              ...(i.roles
+                ? {
+                    roles: {
+                      head: verifiedRoles(i.roles.head),
+                      owners: (i.roles.owners as Case[]).map(ownerOf),
+                      signingSecretKey: deriveSigningKeyPair(
+                        fromHex(i.owner.user_key_hex),
+                      ).secretKey,
+                      created: i.roles.created,
+                    },
+                  }
+                : {}),
             },
             i.now as string | undefined,
           );
@@ -974,6 +1191,20 @@ describe("test vectors", () => {
           });
           expect(rnd.unused()).toEqual([]);
           expect(ops).toEqual(e.ops);
+          break;
+        }
+        case "role_change": {
+          const roles = signRoleStatement(
+            successorStatement(verifiedRoles(i.head), {
+              owners: (i.owners as Case[]).map(ownerOf),
+              signer: i.signer.user_id,
+              created: i.created,
+            }),
+            deriveSigningKeyPair(fromHex(i.signer.user_key_hex)).secretKey,
+          );
+          expect(roles).toEqual(e.roles);
+          expect(verifiedRoles(roles).hash).toBe(e.hash);
+          expect(verifiedRoles(i.head).statement.vaultId).toBe(i.vault_id);
           break;
         }
         case "tombstone": {

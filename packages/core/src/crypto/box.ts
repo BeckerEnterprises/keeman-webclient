@@ -10,6 +10,7 @@ import { CryptoError } from "./errors";
 import { KEY_BYTES } from "./kdf";
 import { pad, unpad } from "./padding";
 import type { Randomness } from "./random";
+import { isRolePoint, type RolePoint } from "./roles";
 import { sodium } from "./sodium";
 import { isTimestamp } from "./time";
 import { assertUuid, isUuid } from "./uuid";
@@ -28,6 +29,8 @@ export interface VaultKeyMessage {
   recipientId: string;
   vaultName: string;
   created: string;
+  /** Version and hash of the newest roles statement the sender checked. */
+  roles?: RolePoint | undefined;
 }
 
 function assertKeyVersion(value: unknown): asserts value is number {
@@ -51,6 +54,8 @@ export function sealVaultKeyBox(
     throw new CryptoError("validation", "Vault key must be 32 bytes");
   if (!isTimestamp(message.created))
     throw new CryptoError("validation", "Invalid created timestamp");
+  if (message.roles !== undefined && !isRolePoint(message.roles))
+    throw new CryptoError("validation", "Invalid roles");
   if (
     senderPrivateKey.length !== KEY_BYTES ||
     recipientPublicKey.length !== KEY_BYTES
@@ -70,6 +75,8 @@ export function sealVaultKeyBox(
       .join(""),
     created: message.created,
   };
+  if (message.roles)
+    json.roles = { version: message.roles.version, hash: message.roles.hash };
   const nonce = randomness.bytes("nonce", NONCE_BYTES);
   if (nonce.length !== NONCE_BYTES)
     throw new CryptoError("validation", "Nonce must be 24 bytes");
@@ -99,6 +106,8 @@ export interface OpenedVaultKey {
   vaultKey: Uint8Array;
   vaultName: string;
   created: string;
+  /** The roles statement the sender vouches for; missing in older boxes. */
+  roles: RolePoint | undefined;
 }
 
 function validateMessage(
@@ -135,6 +144,11 @@ function validateMessage(
     fail("recipient_id");
   if (!isTimestamp(message.created)) fail("created");
   if (typeof message.vault_name !== "string") fail("vault_name");
+  let roles: RolePoint | undefined;
+  if (message.roles !== undefined) {
+    if (!isRolePoint(message.roles)) return fail("roles");
+    roles = { version: message.roles.version, hash: message.roles.hash };
+  }
   let vaultKey: Uint8Array | undefined;
   try {
     vaultKey =
@@ -149,6 +163,7 @@ function validateMessage(
     vaultKey,
     vaultName: message.vault_name as string,
     created: message.created as string,
+    roles,
   };
 }
 

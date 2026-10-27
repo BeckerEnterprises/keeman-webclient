@@ -14,6 +14,7 @@ import { openJson, openKey, sealJson, sealKey } from "../envelope";
 import { CryptoError } from "../errors";
 import { deriveRecoveryKeys, type AccountKeys } from "../kdf";
 import { generateKeyPair, verifyOwnPublicKey } from "../keypair";
+import { checkOwnSigningKey, signingPublicKeyOf } from "../signing";
 import type { AccountKeyMaterial } from "../keystore";
 import { normalizeEmail } from "../normalize";
 import { scoped, type Randomness } from "../random";
@@ -151,12 +152,15 @@ export type MeKeys = Pick<
   | "private_key_wrapped"
   | "public_key"
   | "user_data"
->;
+> &
+  Partial<Pick<Schemas["Me"], "signing_public_key">>;
 
 export interface UnlockedAccount {
   account: AccountKeyMaterial;
   /** `undefined` if user_data could not be decrypted (it then counts as corrupt). */
   userData: JsonObject | undefined;
+  /** `missing` for accounts without a signing key yet; the client adds it. */
+  signingKey: "match" | "missing";
 }
 
 /**
@@ -202,13 +206,21 @@ export function unlockWithUserKey(
       );
     }
     const publicKey = verifyOwnPublicKey(privateKey, me.public_key);
+    const signingKey = checkOwnSigningKey(
+      signingPublicKeyOf(userKey),
+      me.signing_public_key,
+    );
     let userData: JsonObject | undefined;
     try {
       userData = openJson(userKey, me.user_data.data, aad.userData(userId));
     } catch {
       userData = undefined;
     }
-    return { account: { userId, userKey, privateKey, publicKey }, userData };
+    return {
+      account: { userId, userKey, privateKey, publicKey },
+      userData,
+      signingKey,
+    };
   } catch (error) {
     wipe(userKey, privateKey);
     throw error;
