@@ -7,6 +7,7 @@ import {
   inspectUserData,
   isRecoveryKeyConfirmed,
   mergeUserData,
+  roleAnchorOf,
   SETTING_DEFAULTS,
   vaultOrderOf,
 } from "../../src/model/user-data";
@@ -361,6 +362,7 @@ describe("mergeUserData", () => {
           userId: ALICE,
           email: "alice@example.com",
           fingerprint: FP_B,
+          fingerprint2: FP_A,
           verifiedAt: "2026-10-25T08:00:00.000Z",
         },
         {
@@ -368,6 +370,7 @@ describe("mergeUserData", () => {
           userId: BOB,
           email: "bob@example.com",
           fingerprint: FP_A,
+          fingerprint2: FP_B,
           verifiedAt: "2026-10-25T08:00:00.000Z",
         },
       ],
@@ -378,6 +381,7 @@ describe("mergeUserData", () => {
         userId: ALICE,
         email: "alice@example.com",
         fingerprint: FP_B,
+        fingerprint2: FP_A,
         verifiedAt: "2026-10-25T08:00:00.000Z",
         note: "x",
       },
@@ -385,6 +389,7 @@ describe("mergeUserData", () => {
         userId: BOB,
         email: "bob@example.com",
         fingerprint: FP_A,
+        fingerprint2: FP_B,
         verifiedAt: "2026-10-25T08:00:00.000Z",
       },
     ]);
@@ -409,6 +414,7 @@ describe("mergeUserData", () => {
             userId: BOB,
             email: "b",
             fingerprint: "abc",
+            fingerprint2: FP_A,
             verifiedAt: "x",
           },
         ],
@@ -473,5 +479,102 @@ describe("vaultOrder", () => {
       A,
       C,
     ]);
+  });
+});
+
+describe("roles anchors", () => {
+  const VAULT = "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01";
+  const OTHER = "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b02";
+  const H1 = "A".repeat(43);
+  const H2 = "Q".repeat(42) + "A";
+  const base = { schema: 1, seq: 1 };
+
+  it("writes, reads and removes anchors; invalid entries count as missing", () => {
+    const raw = applyUserDataChange(base, {
+      roles: { [VAULT]: { version: 2, hash: H1, owners: [ALICE] } },
+    });
+    expect(roleAnchorOf(raw, VAULT)).toEqual({
+      version: 2,
+      hash: H1,
+      owners: [ALICE],
+    });
+    expect(roleAnchorOf(raw, OTHER)).toBeUndefined();
+    const removed = applyUserDataChange(raw, { roles: { [VAULT]: null } });
+    expect(roleAnchorOf(removed, VAULT)).toBeUndefined();
+    for (const entry of [
+      [0, H1, []],
+      [1, "short", []],
+      [1, H1, ["nope"]],
+      [1, H1],
+      "x",
+    ])
+      expect(
+        roleAnchorOf({ ...base, roles: { [VAULT]: entry } }, VAULT),
+      ).toBeUndefined();
+    expect(roleAnchorOf({ ...base, roles: [] }, VAULT)).toBeUndefined();
+    expect(() =>
+      applyUserDataChange(base, {
+        roles: { nope: { version: 1, hash: H1, owners: [] } },
+      }),
+    ).toThrow();
+    expect(() =>
+      applyUserDataChange(base, {
+        roles: { [VAULT]: { version: 0, hash: H1, owners: [] } },
+      }),
+    ).toThrow();
+  });
+
+  it("merges per vault: the higher version wins, the server's at a tie", () => {
+    const at = (version: number, hash: string) => ({
+      [VAULT]: { version, hash, owners: [ALICE] },
+    });
+    const start = applyUserDataChange(base, { roles: at(1, H1) });
+    const local = applyUserDataChange(start, { roles: at(3, H1) });
+    const lower = applyUserDataChange(start, { roles: at(2, H2) });
+    expect(
+      roleAnchorOf(mergeUserData(start, local, lower), VAULT),
+    ).toMatchObject({ version: 3 });
+    const higher = applyUserDataChange(start, { roles: at(4, H2) });
+    expect(
+      roleAnchorOf(mergeUserData(start, local, higher), VAULT),
+    ).toMatchObject({ version: 4 });
+    const tie = applyUserDataChange(start, { roles: at(3, H2) });
+    expect(roleAnchorOf(mergeUserData(start, local, tie), VAULT)).toMatchObject(
+      {
+        version: 3,
+        hash: H2,
+      },
+    );
+    // Unchanged locally: the server's stays, also without roles locally.
+    expect(
+      roleAnchorOf(mergeUserData(start, start, higher), VAULT),
+    ).toMatchObject({ version: 4 });
+    expect(mergeUserData(base, base, base).roles).toBeUndefined();
+  });
+
+  it("merges contacts by fingerprint version 2 where both have it", () => {
+    const contact = (fingerprint2: string) => ({
+      userId: BOB,
+      email: "bob@example.com",
+      fingerprint: FP_A,
+      fingerprint2,
+      verifiedAt: "2026-10-25T08:00:00.000Z",
+    });
+    const start = { ...base, contacts: [contact(FP_A)] };
+    const mine = { ...base, contacts: [{ ...contact(FP_B), verifiedAt: "x" }] };
+    const theirs = {
+      ...base,
+      contacts: [{ ...contact(FP_B), verifiedAt: "y" }],
+    };
+    expect(contactsOf(mergeUserData(start, mine, theirs))[0]?.conflict).toBe(
+      undefined,
+    );
+    const other = {
+      ...base,
+      contacts: [{ ...contact(FP_A), verifiedAt: "y" }],
+    };
+    expect(contactsOf(mergeUserData(start, mine, other))[0]?.conflict).toBe(
+      true,
+    );
   });
 });

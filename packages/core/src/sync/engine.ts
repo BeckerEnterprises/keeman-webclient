@@ -5,7 +5,7 @@
  */
 import type { ApiClient } from "../api/client";
 import { ApiError } from "../api/errors";
-import type { PublicUser, VaultSummary } from "../api/schemas";
+import type { Member, PublicUser, VaultSummary } from "../api/schemas";
 import { referencedAttachments, unreferenced } from "../attachments/refs";
 import { fromBase64Url, type JsonObject } from "../crypto/bytes";
 import { CryptoError } from "../crypto/errors";
@@ -14,7 +14,9 @@ import {
   unwrapVaultKey,
   type NewObject,
 } from "../crypto/flows/vault";
+import { derivePublicKey } from "../crypto/keypair";
 import type { Keys } from "../crypto/keystore";
+import { checkGrantRoles, roleOwner } from "../crypto/roles";
 import { systemRandomness } from "../crypto/random";
 import {
   applyEntryEdit,
@@ -61,9 +63,14 @@ import { planKdbxImport } from "../kdbx/plan";
 import type { KdbxExportModel, KdbxFile, KdbxTimes } from "../kdbx/types";
 import { SearchIndex, type SearchQuery } from "../search/index";
 import { searchTerms } from "../search/normalize";
-import type { Contact } from "../model/user-data";
-import { toCandidate, type Candidate } from "../sharing/candidate";
-import { acceptGrant, grantName } from "../sharing/grants";
+import type { Contact, RoleAnchor } from "../model/user-data";
+import {
+  keyOf,
+  statusNow,
+  toCandidate,
+  type Candidate,
+} from "../sharing/candidate";
+import { acceptGrant, grantName, type RolesCheck } from "../sharing/grants";
 import {
   decline,
   invite,
@@ -100,7 +107,8 @@ import {
 } from "./attachments";
 import { IdMap } from "./id-map";
 import { KdbxImportJob, type KdbxImportPort } from "./kdbx-import";
-import type { SyncMarks } from "./marks";
+import type { SyncMarks, UserMarks } from "./marks";
+import { RolesKeeper } from "./roles";
 import { Serial } from "./serial";
 import {
   basesOf,
@@ -210,6 +218,10 @@ export interface AccountAccess {
   reloadUserData(revision: number): Promise<void>;
   /** Contacts that count; empty while user_data is unreadable. */
   contacts(): readonly Contact[];
+  /** The roles anchor of a vault in user_data; none while it is unreadable. */
+  roleAnchor(vaultId: string): RoleAnchor | undefined;
+  /** Stores roles anchors in user_data (`null` removes one); best effort. */
+  saveRoleAnchors(anchors: Record<string, RoleAnchor | null>): Promise<void>;
 }
 
 /** A pending invitation as the engine keeps it. */
@@ -298,6 +310,9 @@ export class SyncEngine {
   #manifestFeature: Promise<boolean> | undefined;
   /** Vaults whose manifest this unlock tried to create. */
   readonly #manifestTried = new Set<string>();
+  /** Whether the server knows signing keys and roles chains, asked once. */
+  #rolesFeature: Promise<boolean> | undefined;
+  readonly #roles: RolesKeeper;
 
   constructor(access: AccountAccess, options: SyncEngineOptions = {}) {
     this.#access = access;
@@ -325,10 +340,21 @@ export class SyncEngine {
           track(await marks.replaceUserData(userId, ud)),
         rememberOwners: async (userId, id, owners) =>
           track(await marks.rememberOwners(userId, id, owners)),
+        replaceRoles: async (userId, id, rl) =>
+          track(await marks.replaceRoles(userId, id, rl)),
         forgetVault: (userId, id) => marks.forgetVault(userId, id),
         forgetUser: (userId) => marks.forgetUser(userId),
       },
     };
+    this.#roles = new RolesKeeper({
+      api: access.api,
+      keys: access.keys,
+      userId: access.userId,
+      marks: this.#context.marks,
+      anchor: (vaultId) => access.roleAnchor(vaultId),
+      saveAnchors: (anchors) => access.saveRoleAnchors(anchors),
+      contacts: () => access.contacts(),
+    });
     this.#clock = new TotpClock({
       time: () => access.api.time(),
       timers: options.timers ?? systemTimers,
@@ -501,6 +527,14 @@ export class SyncEngine {
     return this.#manifestFeature;
   }
 
+  #rolesSupported(): Promise<boolean> {
+    this.#rolesFeature ??= this.#access.api.config().then(
+      (config) => config.features.roles === true,
+      () => false,
+    );
+    return this.#rolesFeature;
+  }
+
   #operation(
     state: VaultState,
     plan: Plan,
@@ -584,13 +618,29 @@ export class SyncEngine {
             : withFlag(content),
       };
     });
+    const roles = await this.#rolesSupported();
     const creation = access.keys.useUserKey((userKey) =>
-      buildVaultCreation(systemRandomness, {
-        userId: access.userId,
-        userKey,
-        objects: flagged,
-        manifest,
-      }),
+      access.keys.useSigningKey((signingSecretKey) =>
+        buildVaultCreation(systemRandomness, {
+          userId: access.userId,
+          userKey,
+          objects: flagged,
+          manifest,
+          ...(roles
+            ? {
+                roles: {
+                  owner: roleOwner(
+                    access.userId,
+                    access.keys.usePrivateKey(derivePublicKey),
+                    access.keys.signingPublicKey(),
+                  ),
+                  signingSecretKey,
+                  created: new Date().toISOString(),
+                },
+              }
+            : {}),
+        }),
+      ),
     );
     const vaultId = creation.vaultId;
     access.keys.setVaultKey(vaultId, 1, creation.vaultKey);
@@ -635,10 +685,85 @@ export class SyncEngine {
     return lookup(this.#access, email);
   }
 
-  /** Members and invitations of a vault with their status. */
+  /**
+   * Members and invitations of a vault with their status; with a checked
+   * roles chain the roles come from it.
+   */
   async members(vaultId: string): Promise<MemberView[]> {
+    const state = this.#state(vaultId);
+    const views = await memberViews(this.#access, vaultId);
+    const head = state.roles?.status === "ok" ? state.roles.head : undefined;
+    if (!head) return views;
+    const owners = new Set(head.statement.owners.map((o) => o.userId));
+    return views.map((view) =>
+      view.state !== "active"
+        ? view
+        : {
+            ...view,
+            role: owners.has(view.userId) ? "owner" : "member",
+            signed: true,
+            roleMismatch: (view.role === "owner") !== owners.has(view.userId),
+          },
+    );
+  }
+
+  /**
+   * The roles chain of an owned vault before a change: started first where
+   * the vault has none yet (`undefined` if that is not possible); a warning
+   * blocks.
+   */
+  async #ensureRoles(
+    state: VaultState,
+  ): Promise<{ version: number; hash: string } | undefined> {
+    let roles = state.roles;
+    if (!(await this.#rolesSupported()) || !roles) return undefined;
+    if (roles.status === "none") {
+      const members =
+        state.members ?? (await this.#access.api.members(state.id));
+      const started = await this.#roles.ownerDuties(
+        state.id,
+        state.summary.vault_key_version,
+        members,
+      );
+      if (started) roles = state.roles = await this.#roles.reload(state.id);
+      await this.#roles.flush();
+    }
+    if (roles.status === "none") return undefined;
+    const point = this.#roles.point(state.id);
+    if (!point) throw new SyncError("roles_invalid");
+    return point;
+  }
+
+  /** Takes over the delivered owner list of a vault without anchor. */
+  async confirmRoles(vaultId: string): Promise<void> {
     this.#state(vaultId);
-    return memberViews(this.#access, vaultId);
+    await this.#roles.confirm(vaultId);
+    await this.refresh();
+  }
+
+  /** "Understood" at a warning about the owner list of a vault. */
+  async acknowledgeRoles(vaultId: string): Promise<void> {
+    this.#state(vaultId);
+    await this.#roles.acknowledge(vaultId);
+    await this.refresh();
+  }
+
+  /**
+   * Before the account is deleted: steps down as owner, signed, wherever
+   * others own the vault too.
+   */
+  async stepDownEverywhere(): Promise<void> {
+    const self = this.#access.userId;
+    for (const state of this.#states.values()) {
+      const head = state.roles?.status === "ok" ? state.roles.head : undefined;
+      if (state.summary.role !== "owner" || !head) continue;
+      const owners = head.statement.owners.map((o) => o.userId);
+      if (!owners.includes(self) || owners.length < 2) continue;
+      await this.#roles.changeRole(state.id, self, "member", (roles) =>
+        setRole(this.#access, state.id, self, "member", roles),
+      );
+    }
+    await this.refresh();
   }
 
   #owned(vaultId: string): VaultState {
@@ -652,15 +777,17 @@ export class SyncEngine {
     return this.#projection(state).view(state, this.#collator).name ?? "";
   }
 
-  /** Invites a verified contact. */
+  /** Invites a verified contact; the box vouches for the checked roles. */
   async invite(vaultId: string, candidate: Candidate): Promise<void> {
     const state = this.#owned(vaultId);
+    const roles = await this.#ensureRoles(state);
     await invite(
       this.#access,
       {
         vaultId,
         keyVersion: state.summary.vault_key_version,
         vaultName: this.#vaultName(state),
+        roles,
       },
       candidate,
     );
@@ -673,36 +800,99 @@ export class SyncEngine {
     await this.refresh();
   }
 
+  /**
+   * Changes a role; with a roles chain the next statement is signed, and a
+   * promotion needs a verified contact (fingerprint version 2).
+   */
   async setMemberRole(
     vaultId: string,
     userId: string,
     role: "owner" | "member",
   ): Promise<void> {
-    this.#owned(vaultId);
-    await setRole(this.#access, vaultId, userId, role);
+    const state = this.#owned(vaultId);
+    const access = this.#access;
+    if (!(await this.#ensureRoles(state))) {
+      await setRole(access, vaultId, userId, role);
+      await this.refresh();
+      return;
+    }
+    let target: { publicKey: Uint8Array; signingKey: Uint8Array } | undefined;
+    if (role === "owner" && userId !== access.userId) {
+      const member = (await access.api.members(vaultId)).find(
+        (m) => m.user_id === userId && m.state === "active",
+      );
+      if (!member) throw new SyncError("not_found");
+      const candidate = this.#candidate(member);
+      const keys = keyOf(candidate);
+      if (statusNow(candidate, access.contacts()) !== "verified")
+        throw new SyncError("unverified");
+      if (!keys.signingKey) throw new SyncError("unverifiable");
+      target = { publicKey: keys.publicKey, signingKey: keys.signingKey };
+    }
+    await this.#roles.changeRole(
+      vaultId,
+      userId,
+      role,
+      (roles) => setRole(access, vaultId, userId, role, roles),
+      target,
+    );
     await this.refresh();
   }
 
-  /** Leaves the vault; owners are asked to renew its key. */
+  /**
+   * Leaves the vault; an owner of a vault with roles chain steps down first,
+   * signed. Owners are asked to renew its key.
+   */
   async leaveVault(vaultId: string): Promise<void> {
-    this.#state(vaultId);
+    const state = this.#state(vaultId);
+    const self = this.#access.userId;
+    const head = state.roles?.status === "ok" ? state.roles.head : undefined;
+    if (
+      state.summary.role === "owner" &&
+      head?.statement.owners.some((o) => o.userId === self)
+    )
+      await this.#roles.changeRole(vaultId, self, "member", (roles) =>
+        setRole(this.#access, vaultId, self, "member", roles),
+      );
     await leave(this.#access, vaultId);
     await this.refresh();
   }
 
-  /** Accepts an invitation from a verified contact. */
+  /**
+   * Accepts an invitation from a verified contact. With a roles chain the
+   * box must name a statement of it and the chain must commit to the boxed
+   * key; the chain's head then becomes the account's anchor.
+   */
   async acceptInvitation(vaultId: string): Promise<void> {
     const invitation = this.#invitations.find(
       (i) => i.summary.vault_id === vaultId,
     );
     if (!invitation) throw new SyncError("not_found");
     if (!invitation.sender) throw new SyncError("unverified");
+    const grant = invitation.summary.invitation;
+    const chain = (await this.#rolesSupported())
+      ? await this.#roles.invitationChain(vaultId)
+      : undefined;
+    const roles: RolesCheck = (opened) => {
+      if (!chain) return opened.roles ? "roles_invalid" : undefined;
+      return checkGrantRoles({
+        statements: chain,
+        roles: opened.roles,
+        vaultId,
+        keyVersion: grant?.key_version ?? 0,
+        vaultKey: opened.vaultKey,
+      })
+        ? "roles_rejected"
+        : undefined;
+    };
     await acceptGrant(
       this.#access,
       "invitation",
       invitation.summary,
       this.#candidate(invitation.sender),
+      { roles },
     );
+    if (chain) await this.#roles.anchorInvitation(vaultId, chain);
     await this.refresh();
   }
 
@@ -712,8 +902,9 @@ export class SyncEngine {
   }
 
   /**
-   * Accepts a pending key after the sender was verified; a sender who is
-   * not a known owner needs `confirmOwner` (the user's confirmation).
+   * Accepts a pending key after the sender was verified. With a roles chain
+   * the chain decides; without one a sender who is not a known owner needs
+   * `confirmOwner` (the user's confirmation).
    */
   async acceptPendingKey(
     vaultId: string,
@@ -730,12 +921,29 @@ export class SyncEngine {
       "key",
       state.summary,
       this.#candidate(user),
-      {
+      this.#keyChecks(state, pending.key_version, {
         owners: marks.vaults[vaultId]?.ow ?? [],
         confirmed: options.confirmOwner === true,
-      },
+      }),
     );
     await this.refresh();
+  }
+
+  /** The roles check where the vault has a chain, else the known owners. */
+  #keyChecks(
+    state: VaultState,
+    keyVersion: number,
+    senders: { owners: readonly string[]; confirmed: boolean },
+  ): { senders?: typeof senders; roles?: RolesCheck } {
+    const roles = state.roles;
+    if (!roles || roles.status === "none") return { senders };
+    return {
+      roles: (opened) => {
+        const result = this.#roles.check(state.id, keyVersion, opened);
+        if (result === undefined) return undefined;
+        return result === "unchecked" ? "roles_invalid" : "roles_rejected";
+      },
+    };
   }
 
   /**
@@ -751,8 +959,17 @@ export class SyncEngine {
     if (rollback) throw new SyncError("rollback_open");
     if (state.manifest.status === "mismatch")
       throw new SyncError("manifest_mismatch");
-    // The rotation renews the manifest; one that is missing comes first.
+    // The rotation renews the manifest; one that is missing comes first,
+    // and so does a roles chain.
     await this.#ensureManifest(state);
+    await this.#ensureRoles(state);
+    // Only an owner of the signed list can sign the rotation's statement.
+    const head = state.roles?.status === "ok" ? state.roles.head : undefined;
+    if (
+      head &&
+      !head.statement.owners.some((o) => o.userId === this.#access.userId)
+    )
+      throw new SyncError("read_only");
     return prepareRotation(
       this.#access,
       vaultId,
@@ -768,9 +985,21 @@ export class SyncEngine {
     onProgress?: (progress: { done: number; total: number }) => void,
   ): Promise<void> {
     const state = this.#owned(review.vaultId);
+    const roles = await this.#rolesSupported();
     await runRotation(this.#access, review, decisions, {
       onProgress,
       stale: (base) => state.since > base,
+      ...(roles
+        ? {
+            roles: (members, removed, reload) =>
+              this.#roles.rotationRoles(
+                review.vaultId,
+                members,
+                removed,
+                reload,
+              ),
+          }
+        : {}),
     });
     await this.refresh();
   }
@@ -2162,6 +2391,11 @@ export class SyncEngine {
       )
         state.rollback = true;
     }
+    // The roles chain first: a pending key is accepted only against it.
+    const roles = await this.#rolesSupported();
+    for (const state of this.#states.values())
+      await this.#updateRoles(state, marks, roles);
+    if (roles) await this.#roles.flush();
     for (const state of this.#states.values())
       await this.#checkKey(state, marks.vaults[state.id]?.ow ?? []);
     if (this.#isStopped()) return;
@@ -2172,6 +2406,8 @@ export class SyncEngine {
         .filter((s) => s.keyStatus === "ok" && s.summary.pending_key === null)
         .map((s) => this.#rememberOwners(s)),
     );
+    if (this.#isStopped()) return;
+    if (roles && (await this.#ownerDuties())) void this.refresh();
     if (this.#isStopped()) return;
     this.#loaded = true;
     this.#emit();
@@ -2225,24 +2461,112 @@ export class SyncEngine {
   }
 
   /**
+   * The roles chain of a vault, loaded when the vault list names another
+   * head; a key version below the chain's is a rollback.
+   */
+  async #updateRoles(
+    state: VaultState,
+    marks: UserMarks,
+    supported: boolean,
+  ): Promise<void> {
+    const version = state.summary.roles_version;
+    if (!supported || version === undefined) {
+      // A server that hides the chain of an anchored vault does not get the
+      // older rules back: that is a rollback.
+      const anchor =
+        this.#access.roleAnchor(state.id) ??
+        (marks.vaults[state.id]?.rl ? { owners: [] } : undefined);
+      state.roles = anchor
+        ? {
+            version: null,
+            status: "rollback",
+            statements: [],
+            head: undefined,
+            anchor: undefined,
+            deliveredOwners: [],
+            verifyOwners: false,
+          }
+        : undefined;
+      return;
+    }
+    try {
+      state.roles = await this.#roles.update(
+        state.id,
+        version,
+        marks.vaults[state.id]?.ow,
+      );
+    } catch (error) {
+      if (error instanceof CryptoError && error.code === "locked") throw error;
+      state.error = error;
+    }
+    const head = state.roles?.status === "ok" ? state.roles.head : undefined;
+    if (head) {
+      state.keyFloor = Math.max(state.keyFloor, head.statement.keyVersion);
+      if (state.summary.vault_key_version < state.keyFloor)
+        state.rollback = true;
+    }
+  }
+
+  /**
+   * Owners start a chain for older vaults and drop departed owners from it;
+   * `true` if the chain changed.
+   */
+  async #ownerDuties(): Promise<boolean> {
+    let changed = false;
+    for (const state of this.#states.values()) {
+      if (
+        state.summary.role !== "owner" ||
+        state.keyStatus !== "ok" ||
+        state.rollback ||
+        !state.roles
+      )
+        continue;
+      try {
+        if (
+          await this.#roles.ownerDuties(
+            state.id,
+            state.summary.vault_key_version,
+            state.members,
+          )
+        )
+          changed = true;
+        state.roles = this.#roles.get(state.id) ?? state.roles;
+      } catch (error) {
+        if (error instanceof CryptoError && error.code === "locked")
+          throw error;
+      }
+    }
+    return changed;
+  }
+
+  /**
    * Remembers the owners of a vault whose current key this device holds:
    * only the own account if it is the only member, else the active owners
-   * of the member list. A failed request keeps the remembered ones.
+   * of the member list, which also stays for the roles checks. A failed
+   * request keeps the remembered ones.
    */
   async #rememberOwners(state: VaultState): Promise<void> {
     const { summary } = state;
     const access = this.#access;
+    const head = state.roles?.status === "ok" ? state.roles.head : undefined;
+    const othersInChain = head?.statement.owners.some(
+      (o) => o.userId !== access.userId,
+    );
     let owners: string[];
-    if (summary.member_count <= 1) {
+    if (summary.member_count <= 1 && !othersInChain) {
+      state.members = undefined;
       owners = summary.role === "owner" ? [access.userId] : [];
     } else {
+      let members: Member[];
       try {
-        owners = (await access.api.members(state.id))
-          .filter((m) => m.role === "owner" && m.state === "active")
-          .map((m) => m.user_id);
+        members = await access.api.members(state.id);
       } catch {
         return;
       }
+      state.members = members;
+      owners = members
+        .filter((m) => m.role === "owner" && m.state === "active")
+        .map((m) => m.user_id);
     }
     await this.#context.marks.rememberOwners(access.userId, state.id, owners);
   }
@@ -2271,18 +2595,37 @@ export class SyncEngine {
       return;
     }
     const sender = this.#candidate(user);
-    if (sender.status !== "verified" || !owners.includes(sender.userId)) {
+    const roles = state.roles;
+    const chained = roles !== undefined && roles.status !== "none";
+    const waiting =
+      sender.status !== "verified"
+        ? "unverified"
+        : !chained
+          ? owners.includes(sender.userId)
+            ? undefined
+            : "unknown_owner"
+          : roles.status === "ok"
+            ? undefined
+            : roles.status === "unanchored"
+              ? "roles_unconfirmed"
+              : "roles_invalid";
+    if (waiting) {
       state.keyStatus = "pending";
       state.pendingSender = sender;
-      state.pendingReason =
-        sender.status !== "verified" ? "unverified" : "unknown_owner";
+      state.pendingReason = waiting;
       return;
     }
     try {
-      await acceptGrant(this.#access, "key", summary, sender, {
-        owners,
-        confirmed: false,
-      });
+      await acceptGrant(
+        this.#access,
+        "key",
+        summary,
+        sender,
+        this.#keyChecks(state, pending.key_version, {
+          owners,
+          confirmed: false,
+        }),
+      );
       state.keyStatus = "ok";
       state.summary = {
         ...summary,
@@ -2291,10 +2634,13 @@ export class SyncEngine {
       };
     } catch (error) {
       if (error instanceof CryptoError && error.code === "locked") throw error;
+      const code = error instanceof SyncError ? error.code : undefined;
       state.keyStatus =
-        error instanceof SyncError && error.code === "key_box_invalid"
+        code === "key_box_invalid" || code === "roles_rejected"
           ? "invalid"
           : "pending";
+      if (code === "roles_rejected" || code === "roles_invalid")
+        state.pendingReason = code;
       state.pendingSender = sender;
     }
   }

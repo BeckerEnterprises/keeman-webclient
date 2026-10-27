@@ -20,6 +20,7 @@ import {
 } from "../crypto/flows/vault";
 import { decryptObject } from "../crypto/objects";
 import { systemRandomness } from "../crypto/random";
+import type { RoleOwner, VerifiedRoles } from "../crypto/roles";
 import {
   bucketOf,
   checkManifest,
@@ -72,6 +73,15 @@ export interface RotationRun {
   onProgress?: (progress: { done: number; total: number }) => void;
   /** The vault changed beyond the base revision: start over early. */
   stale?: (baseRevision: number) => boolean;
+  /**
+   * The checked head of the roles chain and the owners after the rotation
+   * (`reload` after `roles_conflict`); `undefined` without a chain.
+   */
+  roles?: (
+    members: readonly Member[],
+    removed: ReadonlySet<string>,
+    reload: boolean,
+  ) => Promise<{ head: VerifiedRoles; owners: RoleOwner[] } | undefined>;
 }
 
 interface Collected {
@@ -453,32 +463,53 @@ async function attempt(
       userId: c.userId,
       publicKey: keyOf(c).publicKey,
     });
-    const commit = ctx.keys.useUserKey((userKey) =>
-      ctx.keys.usePrivateKey((ownerPrivateKey) =>
-        rotationCommit(
-          systemRandomness,
-          {
-            ...owner,
-            ownerPrivateKey,
-            userKey,
-            vaultName,
-            created: now,
-            members: kept.members.map(recipient),
-            invites: kept.invites.map(recipient),
-          },
-          vaultKey,
-          drops,
-        ),
-      ),
-    );
     const removeIds = members
       .map((m) => m.user_id)
       .filter((id) => remove.has(id));
-    const body = JSON.stringify({ ...commit, remove_user_ids: removeIds });
-    const key = systemRandomness.id("idempotency_key");
-    await call(() =>
-      ctx.api.commitRotation(vaultId, opened.rotation_id, key, body),
-    );
+    // A changed roles chain only needs a new statement and new boxes.
+    for (let attempt = 1; ; attempt++) {
+      const roles = await run.roles?.(members, remove, attempt > 1);
+      const commit = ctx.keys.useUserKey((userKey) =>
+        ctx.keys.usePrivateKey((ownerPrivateKey) =>
+          ctx.keys.useSigningKey((signingSecretKey) =>
+            rotationCommit(
+              systemRandomness,
+              {
+                ...owner,
+                ownerPrivateKey,
+                userKey,
+                vaultName,
+                created: now,
+                members: kept.members.map(recipient),
+                invites: kept.invites.map(recipient),
+                ...(roles
+                  ? { roles: { ...roles, signingSecretKey, created: now } }
+                  : {}),
+              },
+              vaultKey,
+              drops,
+            ),
+          ),
+        ),
+      );
+      const body = JSON.stringify({ ...commit, remove_user_ids: removeIds });
+      const key = systemRandomness.id("idempotency_key");
+      try {
+        await call(() =>
+          ctx.api.commitRotation(vaultId, opened.rotation_id, key, body),
+        );
+        break;
+      } catch (error) {
+        if (
+          !(
+            error instanceof ApiError &&
+            (error.code === "roles_conflict" || error.code === "roles_required")
+          ) ||
+          attempt >= MAX_ATTEMPTS
+        )
+          throw error;
+      }
+    }
     ctx.keys.setVaultKey(vaultId, newKeyVersion, vaultKey);
     stored = true;
     return newKeyVersion;

@@ -81,6 +81,7 @@ describe("contacts and fingerprints", () => {
       fingerprint: "AAAA",
       status: "verified" as const,
       self: false,
+      verifiable: true,
     };
     await expect(alice.account.verifyContact(fake)).rejects.toMatchObject({
       code: "unverified",

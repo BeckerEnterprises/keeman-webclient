@@ -15,10 +15,11 @@ import { isManifestId, manifestIds } from "../../src/model/manifest";
 import { decodeTotpSecret } from "../../src/totp/uri";
 import { iconPng } from "../helpers";
 import {
+  checkRoles,
   newMember,
   sharing,
   type FakeRotation,
-  type SharingUser,
+  type PublicSharingUser,
 } from "./fake-sharing";
 
 interface UserRecord {
@@ -30,6 +31,8 @@ interface UserRecord {
   user_key_wrapped: string;
   public_key: string;
   private_key_wrapped: string;
+  /** `null` for an account from before signing keys. */
+  signing_public_key: string | null;
   recovery: { auth_key: string; user_key_wrapped: string };
   user_data: { revision: number; data: string };
   twoFactor: TwoFactorRecord;
@@ -122,10 +125,20 @@ export interface MemberRecord {
   created: string;
 }
 
+/** A statement of the roles chain as the server stores it. */
+export interface RoleRecord {
+  version: number;
+  statement: string;
+  signature: string;
+  hash: string;
+}
+
 export interface VaultRecord {
   id: string;
   revision: number;
   key_version: number;
+  /** The roles chain, ascending. */
+  roles: RoleRecord[];
   horizon: number;
   created: string;
   rotation_required: boolean;
@@ -246,12 +259,14 @@ export class FakeServer {
   /** Runs before each request is handled, e.g. to change the vault meanwhile. */
   onRequest: (method: string, path: string) => void = () => undefined;
   /** Change a lookup or public-key answer before it is sent. */
-  tamperLookup: (user: SharingUser) => void = () => undefined;
-  tamperPublicKey: (user: SharingUser) => void = () => undefined;
+  tamperLookup: (user: PublicSharingUser) => void = () => undefined;
+  tamperPublicKey: (user: PublicSharingUser) => void = () => undefined;
   /** Open login and recovery challenges. */
   faviconEnabled = true;
   /** `features.manifest` of `GET /v1/config`; off like an older server. */
   manifestEnabled = true;
+  /** `features.roles`: signing keys and roles chains; off like an older server. */
+  rolesEnabled = true;
   /** URLs sent to `POST /v1/favicon`. */
   readonly faviconRequests: string[] = [];
   /** The favicon proxy's answer; by default a valid icon. */
@@ -718,6 +733,7 @@ export class FakeServer {
         features: {
           favicon: this.faviconEnabled,
           ...(this.manifestEnabled ? { manifest: true } : {}),
+          ...(this.rolesEnabled ? { roles: true } : {}),
         },
         limits: {
           attachment_max_bytes: this.attachmentMaxBytes,
@@ -753,6 +769,10 @@ export class FakeServer {
         user_key_wrapped: data.user_key_wrapped as string,
         public_key: data.public_key as string,
         private_key_wrapped: data.private_key_wrapped as string,
+        signing_public_key:
+          typeof data.signing_public_key === "string"
+            ? data.signing_public_key
+            : null,
         recovery: data.recovery as UserRecord["recovery"],
         user_data: { revision: 1, data: data.user_data as string },
         twoFactor: {
@@ -838,6 +858,9 @@ export class FakeServer {
         user_key_wrapped: user.user_key_wrapped,
         public_key: user.public_key,
         private_key_wrapped: user.private_key_wrapped,
+        ...(this.rolesEnabled
+          ? { signing_public_key: user.signing_public_key }
+          : {}),
         user_data: { ...user.user_data },
         two_factor: {
           totp: user.twoFactor.totpSecret !== undefined,
@@ -850,6 +873,15 @@ export class FakeServer {
       };
       this.tamperMe(me);
       return reply(200, me);
+    }
+    if (method === "PUT" && path === "/v1/me/signing-key") {
+      if (!this.#reauthed(headers, session))
+        return problem(401, "reauth_required");
+      const key = data.signing_public_key as string;
+      if (user.signing_public_key !== null && user.signing_public_key !== key)
+        return problem(409, "conflict");
+      user.signing_public_key = key;
+      return reply(204);
     }
     if (method === "POST" && path === "/v1/me/reauth") {
       if (data.auth_key !== user.auth_key)
@@ -1044,6 +1076,15 @@ export class FakeServer {
     if (method === "DELETE" && path === "/v1/me") {
       if (!this.#reauthed(headers, session))
         return problem(401, "reauth_required");
+      for (const vault of this.vaults.values()) {
+        const own = vault.members.get(user.user_id);
+        const owners = [...vault.members.entries()].filter(
+          ([id, m]) =>
+            id !== user.user_id && m.role === "owner" && m.state === "active",
+        );
+        if (own?.role === "owner" && vault.roles.length > 0 && owners.length)
+          return problem(409, "owner_must_demote");
+      }
       for (const [id, vault] of this.vaults)
         if (vault.members.has(user.user_id)) this.vaults.delete(id);
       this.users.delete(user.user_id);
@@ -1075,6 +1116,9 @@ export class FakeServer {
                 : null,
             revision: v.revision,
             rotation_required: v.rotation_required,
+            ...(this.rolesEnabled
+              ? { roles_version: v.roles.at(-1)?.version ?? null }
+              : {}),
             member_count: [...v.members.values()].filter(
               (x) => x.state === "active",
             ).length,
@@ -1111,10 +1155,15 @@ export class FakeServer {
         )
           return problem(400, "validation_failed");
         if (this.vaults.has(id)) return problem(409, "conflict");
+        if (this.rolesEnabled && data.roles === undefined)
+          return problem(400, "validation_failed");
+        if (!this.rolesEnabled && data.roles !== undefined)
+          return problem(400, "validation_failed");
         const vault: VaultRecord = {
           id,
           revision: 1,
           key_version: 1,
+          roles: [],
           horizon: 0,
           created: now,
           rotation_required: false,
@@ -1144,6 +1193,25 @@ export class FakeServer {
             updated_at: now,
             updated_by: user.user_id,
           });
+        if (data.roles !== undefined) {
+          if (!user.signing_public_key)
+            return problem(409, "signing_key_missing");
+          const refused = checkRoles(
+            {
+              users: () => [...this.users.values()],
+              problem,
+            },
+            vault,
+            data.roles as { statement: string; signature: string },
+            {
+              caller: user.user_id,
+              owners: [user.user_id],
+              keyVersion: 1,
+              keyChange: true,
+            },
+          );
+          if (refused) return refused;
+        }
         this.vaults.set(id, vault);
         return reply(201, { revision: 1 });
       });
@@ -1173,6 +1241,7 @@ export class FakeServer {
           this.tamperPublicKey(u);
         },
         rotationUploads: this.rotationUploads,
+        rolesEnabled: () => this.rolesEnabled,
       },
       method,
       path,

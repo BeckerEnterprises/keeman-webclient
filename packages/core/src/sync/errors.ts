@@ -31,8 +31,18 @@ export type SyncErrorCode =
   | "cancelled"
   /** The account is not a verified contact. */
   | "unverified"
+  /** The account has no signing key yet, so it cannot be verified. */
+  | "unverifiable"
   /** The sender of a pending key is not a known owner; confirm first. */
   | "unknown_owner"
+  /** The roles chain is missing, rolled back or contradictory; nothing is signed or accepted. */
+  | "roles_invalid"
+  /** The vault's new owner list has not been taken over yet; confirm first. */
+  | "roles_unconfirmed"
+  /** The roles chain does not commit to the boxed key. */
+  | "roles_rejected"
+  /** Co-owners must be verified before the owner list can be signed. */
+  | "owners_unverified"
   /** The own account cannot be invited. */
   | "self"
   /** An invitation or pending key fails the checks of its key box. */

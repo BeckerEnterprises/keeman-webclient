@@ -4,7 +4,7 @@
  * survive; only known places of a copy are changed.
  */
 import * as v from "valibot";
-import { isJsonObject, type JsonObject } from "../crypto/bytes";
+import { fromBase64Url, isJsonObject, type JsonObject } from "../crypto/bytes";
 import { UUID_PATTERN } from "../crypto/uuid";
 import {
   GENERATOR_DEFAULTS,
@@ -58,9 +58,22 @@ export type ContactChange =
       userId: string;
       email: string;
       fingerprint: string;
+      /**
+       * Fingerprint version 2, over both public keys; missing only where
+       * the server knows no signing keys.
+       */
+      fingerprint2: string | undefined;
       verifiedAt: string;
     }
   | { kind: "remove"; userId: string };
+
+/** The newest roles statement this account checked for a vault. */
+export interface RoleAnchor {
+  version: number;
+  hash: string;
+  /** Owner IDs of that statement, for the warning after a restore. */
+  owners: readonly string[];
+}
 
 export interface UserDataChange {
   settings?: SettingsChange;
@@ -68,6 +81,8 @@ export interface UserDataChange {
   /** The order of all vaults known when the user sorts. */
   vaultOrder?: string[];
   contacts?: ContactChange[];
+  /** New anchors by vault ID; `null` removes one. */
+  roles?: Record<string, RoleAnchor | null>;
 }
 
 export type UserDataState =
@@ -79,6 +94,8 @@ const ContactSchema = v.looseObject({
   userId: v.pipe(v.string(), v.regex(UUID_PATTERN)),
   email: v.string(),
   fingerprint: v.pipe(v.string(), v.regex(/^[0-9A-F]{64}$/)),
+  // Any other value counts as a different fingerprint.
+  fingerprint2: v.optional(v.unknown()),
   verifiedAt: v.string(),
   conflict: v.optional(v.boolean()),
 });
@@ -149,13 +166,20 @@ function applyContactChange(contacts: JsonObject[], change: ContactChange) {
     if (index >= 0) contacts.splice(index, 1);
     return;
   }
-  if (!FINGERPRINT_PATTERN.test(change.fingerprint))
+  if (
+    !FINGERPRINT_PATTERN.test(change.fingerprint) ||
+    (change.fingerprint2 !== undefined &&
+      !FINGERPRINT_PATTERN.test(change.fingerprint2))
+  )
     throw new Error("Invalid contact fingerprint");
   // Unknown fields of an existing contact survive.
   const contact = index >= 0 ? clone(contacts[index] ?? {}) : {};
   setOwn(contact, "userId", change.userId);
   setOwn(contact, "email", change.email);
   setOwn(contact, "fingerprint", change.fingerprint);
+  if (change.fingerprint2 === undefined)
+    Reflect.deleteProperty(contact, "fingerprint2");
+  else setOwn(contact, "fingerprint2", change.fingerprint2);
   setOwn(contact, "verifiedAt", change.verifiedAt);
   Reflect.deleteProperty(contact, "conflict");
   if (index >= 0) contacts[index] = contact;
@@ -216,6 +240,44 @@ export function vaultOrderOf(raw: JsonObject): string[] {
   );
 }
 
+function isHash(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    fromBase64Url(value, 32);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function anchorOf(value: unknown): RoleAnchor | undefined {
+  if (!Array.isArray(value) || value.length !== 3) return undefined;
+  const [version, hash, owners] = value as unknown[];
+  if (
+    typeof version !== "number" ||
+    !Number.isSafeInteger(version) ||
+    version < 1 ||
+    !isHash(hash) ||
+    !Array.isArray(owners) ||
+    !owners.every((id) => typeof id === "string" && UUID_PATTERN.test(id))
+  )
+    return undefined;
+  return { version, hash, owners: [...(owners as string[])] };
+}
+
+function rolesOfRaw(raw: JsonObject): JsonObject {
+  const roles = own(raw, "roles");
+  return isJsonObject(roles) ? roles : {};
+}
+
+/** The valid anchor of a vault; an invalid entry counts as missing. */
+export function roleAnchorOf(
+  raw: JsonObject,
+  vaultId: string,
+): RoleAnchor | undefined {
+  return anchorOf(own(rolesOfRaw(raw), vaultId));
+}
+
 /** A missing or invalid flag counts as confirmed. */
 export function isRecoveryKeyConfirmed(raw: JsonObject): boolean {
   return own(raw, "recoveryKeyConfirmed") !== false;
@@ -257,6 +319,20 @@ export function applyUserDataChange(
       applyContactChange(contacts, contactChange);
     setOwn(next, "contacts", contacts);
   }
+  if (change.roles !== undefined) {
+    const roles = clone(rolesOfRaw(next));
+    for (const [vaultId, anchor] of Object.entries(change.roles)) {
+      if (!UUID_PATTERN.test(vaultId)) throw new Error("Invalid roles anchor");
+      if (anchor === null) {
+        Reflect.deleteProperty(roles, vaultId);
+        continue;
+      }
+      const entry = [anchor.version, anchor.hash, [...anchor.owners]];
+      if (!anchorOf(entry)) throw new Error("Invalid roles anchor");
+      setOwn(roles, vaultId, entry);
+    }
+    setOwn(next, "roles", roles);
+  }
   setOwn(next, "seq", seqOf(raw) + 1);
   return next;
 }
@@ -289,7 +365,10 @@ function mergeContacts(
     else if (same(theirs, before)) result = mine;
     else if (mine && theirs) {
       result = theirs;
-      conflict = mine.fingerprint !== theirs.fingerprint;
+      conflict =
+        mine.fingerprint2 !== undefined && theirs.fingerprint2 !== undefined
+          ? mine.fingerprint2 !== theirs.fingerprint2
+          : mine.fingerprint !== theirs.fingerprint;
     } else {
       result = mine ?? theirs;
       conflict = result !== undefined;
@@ -303,9 +382,32 @@ function mergeContacts(
 }
 
 /**
+ * Anchors changed locally go in unless the server has a higher version; at
+ * the same version with another hash the server's stays (a fork, which the
+ * roles check then reports).
+ */
+function mergeRoles(
+  base: JsonObject,
+  local: JsonObject,
+  server: JsonObject,
+): JsonObject {
+  const merged = clone(rolesOfRaw(server));
+  const before = rolesOfRaw(base);
+  for (const [vaultId, entry] of Object.entries(rolesOfRaw(local))) {
+    if (same(own(before, vaultId), entry)) continue;
+    const mine = anchorOf(entry);
+    if (!mine) continue;
+    const theirs = anchorOf(own(merged, vaultId));
+    if (theirs && theirs.version >= mine.version) continue;
+    setOwn(merged, vaultId, [mine.version, mine.hash, [...mine.owners]]);
+  }
+  return merged;
+}
+
+/**
  * Three-way merge: the server copy plus the local changes against
  * the base; settings, the recovery key flag and the vault order: the local
- * change wins; contacts are merged per contact.
+ * change wins; contacts are merged per contact, roles anchors per vault.
  */
 export function mergeUserData(
   base: JsonObject,
@@ -345,6 +447,8 @@ export function mergeUserData(
   }
 
   setOwn(merged, "contacts", mergeContacts(base, local, server));
+  if (own(local, "roles") !== undefined || own(server, "roles") !== undefined)
+    setOwn(merged, "roles", mergeRoles(base, local, server));
 
   setOwn(merged, "seq", Math.max(seqOf(base), seqOf(server)) + 1);
   return merged;

@@ -46,7 +46,8 @@ import {
 import type { Candidate } from "../sharing/candidate";
 import type { ConnectionState } from "./events";
 import type { ManifestIssue, ManifestStatus } from "./manifest";
-import type { ObjectEntry, VaultState } from "./vault";
+import type { RolesStatus } from "./roles";
+import type { ObjectEntry, PendingReason, VaultState } from "./vault";
 import { objectWritable, vaultWritable } from "./writer";
 
 export interface CorruptObjectView {
@@ -215,13 +216,39 @@ export interface VaultView {
   /** The sender of a pending key, for the fingerprint dialog. */
   readonly pendingSender: Candidate | undefined;
   /** Why the pending key waits for the user. */
-  readonly pendingReason: "unverified" | "unknown_owner" | undefined;
+  readonly pendingReason: PendingReason | undefined;
+  /** The owner-signed roles chain on this device. */
+  readonly roles: RolesView;
   /** A member left; owners renew the key. */
   readonly rotationRequired: boolean;
   readonly created: string;
   readonly error: unknown;
   readonly tree: VaultTree;
   readonly entries: ReadonlyMap<string, EntrySummary>;
+}
+
+/** An owner in the roles view. */
+export interface RoleOwnerView {
+  readonly userId: string;
+  /** The contact's address, else the server's; `undefined` if unknown. */
+  readonly email: string | undefined;
+}
+
+/** The roles chain of a vault as this device checked it. */
+export interface RolesView {
+  /** `unsupported`: the server has no roles chains. */
+  readonly status: RolesStatus | "unsupported";
+  /**
+   * Owners of the checked head; with a warning or before taking the list
+   * over, those of the delivered head.
+   */
+  readonly owners: readonly RoleOwnerView[];
+  /** Owners of the delivered head the anchor did not name. */
+  readonly newOwners: readonly RoleOwnerView[];
+  /** Co-owners must be verified before the owner list can be signed. */
+  readonly verifyOwners: boolean;
+  /** The server names other owners than the checked chain. */
+  readonly ownersMismatch: boolean;
 }
 
 /** A custom icon of a vault's library. */
@@ -584,6 +611,7 @@ export class VaultProjection {
       state.rollback ||
       state.rollbackDeletes.size > 0 ||
       [...state.objects.values()].some((o) => o.rollback);
+    const roles = rolesView(state);
     let status: VaultView["status"] = "ready";
     if (!state.keyOk) status = "corrupt";
     else if (state.error !== undefined) status = "error";
@@ -659,6 +687,10 @@ export class VaultProjection {
       keyStatus: state.keyStatus,
       pendingSender: state.pendingSender,
       pendingReason: state.pendingReason,
+      roles:
+        previous && JSON.stringify(previous.roles) === JSON.stringify(roles)
+          ? previous.roles
+          : roles,
       rotationRequired: state.summary.rotation_required,
       created: state.summary.created,
       error: state.error,
@@ -800,4 +832,47 @@ export function usedIcons(state: VaultState): Set<string> {
     if (object.type !== "icon" && object.type !== "manifest")
       for (const id of iconRefs(object.raw)) used.add(id);
   return used;
+}
+
+/** The roles chain for display; owners are named by contact or server. */
+function rolesView(state: VaultState): RolesView {
+  const roles = state.roles;
+  if (!roles)
+    return {
+      status: "unsupported",
+      owners: [],
+      newOwners: [],
+      verifyOwners: false,
+      ownersMismatch: false,
+    };
+  const members = state.members ?? [];
+  const named = (userId: string): RoleOwnerView => ({
+    userId,
+    email: members.find((m) => m.user_id === userId)?.email,
+  });
+  const ids = roles.head
+    ? roles.head.statement.owners.map((o) => o.userId)
+    : [...roles.deliveredOwners];
+  const known = new Set(roles.anchor?.owners ?? []);
+  const active = members.filter((m) => m.state === "active");
+  const serverOwners = new Set(
+    active.filter((m) => m.role === "owner").map((m) => m.user_id),
+  );
+  // Owners who left are dropped from the chain; that is no mismatch.
+  const listed = ids.filter((id) => active.some((m) => m.user_id === id));
+  const ownersMismatch =
+    roles.status === "ok" &&
+    state.members !== undefined &&
+    (listed.some((id) => !serverOwners.has(id)) ||
+      [...serverOwners].some((id) => !ids.includes(id)));
+  return {
+    status: roles.status,
+    owners: ids.map(named),
+    newOwners:
+      roles.status === "ok" || roles.anchor === undefined
+        ? []
+        : roles.deliveredOwners.filter((id) => !known.has(id)).map(named),
+    verifyOwners: roles.verifyOwners,
+    ownersMismatch,
+  };
 }

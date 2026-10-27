@@ -42,6 +42,10 @@ const PROBLEM_CODES: ReadonlySet<string> = new Set<ProblemCode>([
   "idempotency_key_reused",
   "attachment_incomplete",
   "manifest_required",
+  "roles_conflict",
+  "owner_must_demote",
+  "signing_key_missing",
+  "roles_required",
   "rate_limited",
   "internal_error",
   "quota_exceeded",
@@ -68,6 +72,8 @@ export interface ApiErrorDetails {
   currentRevision?: number;
   /** `current_key_version` of `stale_key_version` and `key_version_mismatch`. */
   currentKeyVersion?: number;
+  /** `current_roles_version` of `roles_conflict`; `null` without a chain. */
+  currentRolesVersion?: number | null;
   /** `conflicts` of a batch conflict. */
   conflicts?: BatchConflict[];
 }

@@ -14,6 +14,7 @@ import { flipped, rootOf } from "../sync/devices";
 import { owner, person, share } from "./people";
 
 const FP = "A".repeat(64);
+const FP2 = "C".repeat(64);
 
 /** An unlocked store that holds no vault key. */
 function unlockedWithoutVaults(userId: string): KeyStore {
@@ -37,14 +38,39 @@ describe("contact status", () => {
       fingerprint: FP,
       verifiedAt: "2026-10-23T08:00:00.000Z",
     };
-    expect(contactStatus([{ ...contact, conflict: true }], USER, FP)).toBe(
+    const both = { v1: FP, v2: FP2 };
+    const v2 = { ...contact, fingerprint2: FP2 };
+    expect(contactStatus([{ ...v2, conflict: true }], USER, both)).toBe(
       "conflict",
     );
-    expect(contactStatus([contact], USER, "B".repeat(64))).toBe("changed");
-    expect(contactStatus([contact], USER, FP)).toBe("verified");
+    expect(contactStatus([v2], USER, { v1: FP, v2: "B".repeat(64) })).toBe(
+      "changed",
+    );
+    expect(contactStatus([v2], USER, { v1: FP, v2: undefined })).toBe(
+      "changed",
+    );
+    expect(contactStatus([v2], USER, both)).toBe("verified");
+    // Checked before fingerprint version 2: compare once more.
+    expect(contactStatus([contact], USER, both)).toBe("outdated");
+    expect(contactStatus([contact], USER, { v1: FP, v2: undefined })).toBe(
+      "outdated",
+    );
+    expect(
+      contactStatus([contact], USER, { ...both, v1: "B".repeat(64) }),
+    ).toBe("changed");
+    expect(contactStatus([], USER, both)).toBe("unverified");
     expect(contactViews([{ ...contact, conflict: true }])[0]).toMatchObject({
       fingerprint: "AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA",
       conflict: true,
+      outdated: true,
+    });
+    expect(contactViews([v2])[0]).toMatchObject({
+      fingerprint: "CCCC CCCC CCCC CCCC CCCC CCCC CCCC CCCC CCCC CCCC",
+      outdated: false,
+    });
+    expect(contactViews([{ ...v2, fingerprint2: 7 }])[0]).toMatchObject({
+      fingerprint: "AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA",
+      outdated: false,
     });
   });
 });
@@ -80,7 +106,8 @@ describe("grants", () => {
         {
           userId: sender.userId,
           email: sender.email,
-          fingerprint: keyOf(sender).fingerprint,
+          fingerprint: keyOf(sender).fingerprints.v1,
+          fingerprint2: keyOf(sender).fingerprints.v2,
           verifiedAt: "2026-10-23T08:00:00.000Z",
         },
       ],
@@ -138,7 +165,8 @@ describe("members", () => {
         {
           userId: candidate.userId,
           email: candidate.email,
-          fingerprint: keyOf(candidate).fingerprint,
+          fingerprint: keyOf(candidate).fingerprints.v1,
+          fingerprint2: keyOf(candidate).fingerprints.v2,
           verifiedAt: "2026-10-23T08:00:00.000Z",
         },
       ],

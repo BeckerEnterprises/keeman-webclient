@@ -700,7 +700,8 @@ describe("rollback detection", () => {
     await a.account.acknowledgeUserDataRollback();
     expect(a.account.userDataRollback).toBe(false);
     server.tamperMe = () => undefined;
-    expect(current?.revision).toBe(3);
+    // The roles anchor of the first vault is one write before the settings.
+    expect(current?.revision).toBe(4);
     await a.account.acknowledgeUserDataRollback();
   });
 });
@@ -742,7 +743,10 @@ describe("events and lifecycle", () => {
       expect(engine.snapshot.vaults.some((v) => v.id === other)).toBe(true);
     });
     await a.account.updateSettings({ autoLockMinutes: 9 });
-    socket.message({ type: "user_data_changed", revision: 2 });
+    socket.message({
+      type: "user_data_changed",
+      revision: a.server.userByEmail(EMAIL)?.user_data.revision ?? 0,
+    });
     await vi.waitFor(() => {
       expect(onUserDataChanged).toHaveBeenCalled();
     });

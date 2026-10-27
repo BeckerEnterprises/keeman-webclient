@@ -16,6 +16,7 @@ import {
   ReauthSchema,
   RecoveryPayloadSchema,
   RevisionSchema,
+  RoleChainSchema,
   SecondFactorSchema,
   ServerConfigSchema,
   SessionListSchema,
@@ -37,6 +38,7 @@ import {
   type PasskeyInfo,
   type Favicon,
   type PublicUser,
+  type RoleChain,
   type SecondFactorMethod,
   type ServerConfig,
   type SessionInfo,
@@ -280,6 +282,11 @@ async function toApiError(response: Response): Promise<ApiError> {
       currentKeyVersion: Number.isSafeInteger(problem.current_key_version)
         ? (problem.current_key_version as number)
         : undefined,
+      currentRolesVersion: Number.isSafeInteger(problem.current_roles_version)
+        ? (problem.current_roles_version as number)
+        : problem.current_roles_version === null
+          ? null
+          : undefined,
       conflicts: parseConflicts(problem.conflicts),
     },
   );
@@ -581,6 +588,18 @@ export class ApiClient {
     });
   }
 
+  /** Set-once: the same value again answers 204, another one 409. */
+  async putSigningKey(reauthToken: string, signingKey: string): Promise<void> {
+    await this.#request({
+      method: "PUT",
+      path: "/v1/me/signing-key",
+      body: JSON.stringify({ signing_public_key: signingKey }),
+      auth: true,
+      idempotent: true,
+      headers: { "X-Keeman-Reauth": reauthToken },
+    });
+  }
+
   // ------------------------------------------------------------ own 2FA
 
   async totpSetup(
@@ -843,18 +862,48 @@ export class ApiClient {
     });
   }
 
-  /** Setting the same role again changes nothing, so retries are safe. */
+  /**
+   * Setting the same role again changes nothing, so retries are safe; with
+   * a roles chain, `roles` is the next statement.
+   */
   async updateMember(
     vaultId: string,
     userId: string,
     role: Schemas["Role"],
+    roles?: Schemas["SignedRoles"],
   ): Promise<void> {
     await this.#request({
       method: "PATCH",
       path: `${vaultPath(vaultId)}/members/${encodeURIComponent(userId)}`,
-      body: JSON.stringify({ role }),
+      body: JSON.stringify(roles ? { role, roles } : { role }),
       auth: true,
       idempotent: true,
+    });
+  }
+
+  /** The roles chain after version `since`. */
+  async roles(vaultId: string, since = 0): Promise<RoleChain["statements"]> {
+    const data = await this.#request({
+      method: "GET",
+      path: `${vaultPath(vaultId)}/roles?since=${String(since)}`,
+      auth: true,
+    });
+    return parse(RoleChainSchema, data).statements;
+  }
+
+  /**
+   * Not retried: a repetition answers `409 roles_conflict`, and the caller
+   * finds its statement at the head.
+   */
+  async appendRoles(
+    vaultId: string,
+    roles: Schemas["SignedRoles"],
+  ): Promise<void> {
+    await this.#request({
+      method: "POST",
+      path: `${vaultPath(vaultId)}/roles`,
+      body: JSON.stringify({ roles }),
+      auth: true,
     });
   }
 

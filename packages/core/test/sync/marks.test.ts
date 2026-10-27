@@ -301,3 +301,58 @@ describe("stored marks", () => {
     expect((await marks.read(U(3))).ud).toEqual([5, 5]);
   });
 });
+
+describe("roles floor", () => {
+  const H1 = "A".repeat(43);
+  const H2 = "Q".repeat(42) + "A";
+  const USER = U(1);
+
+  it("only rises when merged and keeps the first at the same version", () => {
+    const merged = mergeMarks(
+      { vaults: { [VAULT]: { rev: 1, obj: {}, rl: [2, H1] } } },
+      { vaults: { [VAULT]: { rev: 1, obj: {}, rl: [3, H2] } } },
+    );
+    expect(merged.vaults[VAULT]?.rl).toEqual([3, H2]);
+    expect(
+      mergeMarks(
+        { vaults: { [VAULT]: { rev: 1, obj: {}, rl: [3, H1] } } },
+        { vaults: { [VAULT]: { rev: 1, obj: {}, rl: [3, H2] } } },
+      ).vaults[VAULT]?.rl,
+    ).toEqual([3, H1]);
+    expect(
+      mergeMarks(
+        { vaults: { [VAULT]: { rev: 1, obj: {} } } },
+        { vaults: { [VAULT]: { rev: 1, obj: {}, rl: [1, H2] } } },
+      ).vaults[VAULT]?.rl,
+    ).toEqual([1, H2]);
+  });
+
+  it("is lowered only by replaceRoles, also in storage", async () => {
+    for (const marks of [
+      inMemorySyncMarks(),
+      storedSyncMarks(memoryStore(), lock),
+    ]) {
+      await marks.raise(USER, {
+        vaults: { [VAULT]: { rev: 5, obj: {}, rl: [4, H1] } },
+      });
+      await marks.replaceVault(USER, VAULT, { rev: 1, obj: {} });
+      expect((await marks.read(USER)).vaults[VAULT]?.rl).toEqual([4, H1]);
+      await marks.replaceRoles(USER, VAULT, [2, H2]);
+      expect((await marks.read(USER)).vaults[VAULT]?.rl).toEqual([2, H2]);
+      await marks.replaceRoles(USER, VAULT, undefined);
+      expect((await marks.read(USER)).vaults[VAULT]?.rl).toBeUndefined();
+    }
+  });
+
+  it("drops stored marks with an invalid floor", async () => {
+    const store = memoryStore();
+    store.text = JSON.stringify({
+      v: 1,
+      users: {
+        [USER]: { vaults: { [VAULT]: { rev: 1, obj: {}, rl: [0, H1] } } },
+      },
+    });
+    const marks = storedSyncMarks(store, lock);
+    expect((await marks.read(USER)).vaults[VAULT]).toBeUndefined();
+  });
+});

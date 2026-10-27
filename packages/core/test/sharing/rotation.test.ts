@@ -40,8 +40,10 @@ async function rotate(
   return review;
 }
 
-async function team() {
+async function team(options: { roles?: boolean } = {}) {
   const server = new FakeServer();
+  // Without roles chains, like a server from before signing keys.
+  server.rolesEnabled = options.roles ?? true;
   const alice = await owner(server);
   const bob = await person(server, "bob@example.com");
   const carol = await person(server, "carol@example.com");
@@ -177,8 +179,40 @@ describe("removing a member", () => {
     expect(posts(server, "/batch")).toBe(batches);
   });
 
-  it("asks before taking a key from a sender not known as owner", async () => {
+  it("takes a key from a newly promoted owner when the roles chain commits to it", async () => {
     const { server, alice, bob, carol, vaultId } = await team();
+    const carolId = carol.account.userId ?? "";
+    await bob.account.verifyContact(await bob.engine.lookupUser(carol.email));
+    for (const other of [alice, bob])
+      await carol.account.verifyContact(
+        await carol.engine.lookupUser(other.email),
+      );
+    // Bob does not sync while Carol is made owner (signed by Alice) and
+    // renews the key; the chain from his anchor names both steps.
+    await alice.engine.setMemberRole(vaultId, carolId, "owner");
+    await carol.engine.refresh();
+    await rotate(carol, vaultId);
+    const accepted = posts(server, "/key");
+    await bob.engine.refresh();
+    expect(vault(bob.engine, vaultId)).toMatchObject({
+      vaultKeyVersion: 2,
+      keyStatus: "ok",
+      pendingReason: undefined,
+      writable: true,
+    });
+    expect(posts(server, "/key")).toBe(accepted + 1);
+    expect(vault(bob.engine, vaultId).roles).toMatchObject({
+      status: "ok",
+      owners: [{ userId: alice.account.userId }, { userId: carolId }].sort(
+        (a, b) => ((a.userId ?? "") < (b.userId ?? "") ? -1 : 1),
+      ),
+    });
+  });
+
+  it("asks before taking a key from a sender not known as owner (no roles chain)", async () => {
+    const { server, alice, bob, carol, vaultId } = await team({
+      roles: false,
+    });
     const carolId = carol.account.userId ?? "";
     // Carol is a verified contact of everyone, but only Alice is an owner
     // as far as Bob knows.
@@ -222,8 +256,8 @@ describe("removing a member", () => {
     ).toEqual([alice.account.userId, carolId].sort());
   });
 
-  it("takes a key without asking from an owner promoted while the key was current", async () => {
-    const { alice, bob, carol, vaultId } = await team();
+  it("takes a key without asking from an owner promoted while the key was current (no roles chain)", async () => {
+    const { alice, bob, carol, vaultId } = await team({ roles: false });
     const carolId = carol.account.userId ?? "";
     await bob.account.verifyContact(await bob.engine.lookupUser(carol.email));
     for (const other of [alice, bob])
@@ -243,7 +277,9 @@ describe("removing a member", () => {
   });
 
   it('keeps the owners and takes the delivered key version on "understood"', async () => {
-    const { server, alice, bob, carol, vaultId } = await team();
+    const { server, alice, bob, carol, vaultId } = await team({
+      roles: false,
+    });
     const bobId = bob.account.userId ?? "";
     const oldKey = server.vaults.get(vaultId)?.members.get(bobId)?.key_wrapped;
     await rotate(alice, vaultId, [carol.account.userId ?? ""]);

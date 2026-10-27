@@ -5,7 +5,7 @@
  */
 import type { ApiClient } from "../api/client";
 import { ApiError } from "../api/errors";
-import type { ChangedObject, VaultSummary } from "../api/schemas";
+import type { ChangedObject, Member, VaultSummary } from "../api/schemas";
 import type { ObjectType } from "../crypto/aad";
 import type { JsonObject } from "../crypto/bytes";
 import { CryptoError } from "../crypto/errors";
@@ -22,6 +22,7 @@ import {
 } from "../model/vault";
 import type { Candidate } from "../sharing/candidate";
 import { Mutex } from "./lock";
+import type { VaultRoles } from "./roles";
 import {
   currentRoot,
   rootFloor,
@@ -72,6 +73,13 @@ export interface SyncContext {
   pageLimit?: number;
 }
 
+export type PendingReason =
+  | "unverified"
+  | "unknown_owner"
+  | "roles_unconfirmed"
+  | "roles_invalid"
+  | "roles_rejected";
+
 export class VaultState {
   readonly id: string;
   summary: VaultSummary;
@@ -84,8 +92,16 @@ export class VaultState {
   keyStatus: "ok" | "pending" | "missing" | "invalid" = "ok";
   /** The sender of a pending key, for the fingerprint dialog. */
   pendingSender: Candidate | undefined = undefined;
-  /** Why a pending key waits: an unverified sender or not a known owner. */
-  pendingReason: "unverified" | "unknown_owner" | undefined = undefined;
+  /**
+   * Why a pending key waits: an unverified sender, not a known owner (vaults
+   * without roles chain), an owner list not taken over yet, a roles warning,
+   * or a key the roles chain does not commit to.
+   */
+  pendingReason: PendingReason | undefined = undefined;
+  /** The roles chain as last checked; `undefined` on servers without one. */
+  roles: VaultRoles | undefined = undefined;
+  /** The last member list loaded for this vault. */
+  members: Member[] | undefined = undefined;
   /** Last completely seen revision. */
   since = 0;
   synced = false;

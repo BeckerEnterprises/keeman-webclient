@@ -25,6 +25,8 @@ export const ServerConfigSchema = v.object({
     favicon: v.boolean(),
     /** Absent on servers that do not know the vault manifest. */
     manifest: v.optional(v.boolean()),
+    /** Absent on servers without signing keys and roles chains. */
+    roles: v.optional(v.boolean()),
   }),
   limits: v.object({ attachment_max_bytes: Count }),
 });
@@ -136,6 +138,8 @@ export const MeSchema = v.object({
   user_key_wrapped: base64url(98),
   public_key: base64url(43),
   private_key_wrapped: base64url(98),
+  /** `null` until an older account adds it; absent on older servers. */
+  signing_public_key: v.optional(v.nullable(base64url(43))),
   user_data: v.object({
     revision: PositiveInteger,
     data: v.pipe(v.string(), v.regex(/^[A-Za-z0-9_-]+$/)),
@@ -191,6 +195,8 @@ export const VaultListSchema = v.object({
       invitation: v.nullable(KeyGrantSchema),
       revision: PositiveInteger,
       rotation_required: v.boolean(),
+      /** Version of the roles chain's head; `null` without a chain. */
+      roles_version: v.optional(v.nullable(PositiveInteger)),
       member_count: Count,
       created: v.string(),
     }),
@@ -215,6 +221,7 @@ export const PublicUserSchema = v.object({
   user_id: Uuid,
   email: v.string(),
   public_key: base64url(43),
+  signing_public_key: v.optional(v.nullable(base64url(43))),
 });
 export type PublicUser = v.InferOutput<typeof PublicUserSchema>;
 
@@ -226,12 +233,25 @@ export const MemberListSchema = v.object({
       role: v.picklist(["owner", "member"]),
       state: v.picklist(["pending", "active"]),
       public_key: base64url(43),
+      signing_public_key: v.optional(v.nullable(base64url(43))),
       invited_by: v.nullable(Uuid),
       created: v.string(),
     }),
   ),
 });
 export type Member = v.InferOutput<typeof MemberListSchema>["members"][number];
+
+/** `GET /v1/vaults/{id}/roles`: statements after `since`, ascending. */
+export const RoleChainSchema = v.object({
+  statements: v.array(
+    v.object({
+      version: PositiveInteger,
+      statement: v.pipe(Base64Text, v.maxLength(65_536)),
+      signature: base64url(86),
+    }),
+  ),
+});
+export type RoleChain = v.InferOutput<typeof RoleChainSchema>;
 
 export const OpenRotationSchema = v.object({
   rotation_id: Uuid,

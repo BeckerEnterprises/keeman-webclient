@@ -2,6 +2,9 @@
  * Sharing endpoints of the fake server with the server's
  * checks and orders, enough to drive the core's sharing flows. Test data only.
  */
+import { fromBase64Url } from "../../src/crypto/bytes";
+import { readSignedRoles } from "../../src/crypto/roles";
+import { SIGNATURE_CONTEXT, verifySignature } from "../../src/crypto/signing";
 import { isManifestId } from "../../src/model/manifest";
 import type { MemberRecord, StoredObject, VaultRecord } from "./fake-server";
 
@@ -9,6 +12,88 @@ export interface SharingUser {
   user_id: string;
   email: string;
   public_key: string;
+  signing_public_key: string | null;
+}
+
+/** An account as the server names it; without roles, no signing key. */
+export type PublicSharingUser = Omit<SharingUser, "signing_public_key"> & {
+  signing_public_key?: string | null;
+};
+
+/**
+ * The server's check of a roles statement against the stored head and the
+ * owners after the operation; appends it on success.
+ */
+export function checkRoles(
+  ctx: Pick<SharingContext, "users" | "problem">,
+  vault: VaultRecord,
+  signed: { statement: string; signature: string },
+  rule: {
+    caller: string;
+    owners: readonly string[];
+    keyVersion: number;
+    keyChange: boolean;
+  },
+): Response | undefined {
+  const invalid = () => ctx.problem(400, "validation_failed");
+  let read: ReturnType<typeof readSignedRoles>;
+  try {
+    read = readSignedRoles(signed);
+  } catch {
+    return invalid();
+  }
+  const st = read.statement;
+  const head = vault.roles.at(-1);
+  const headStatement = head ? readSignedRoles(head).statement : undefined;
+  if (st.vaultId !== vault.id) return invalid();
+  if (
+    head
+      ? st.version !== head.version + 1 || st.previous !== head.hash
+      : st.version !== 1
+  )
+    return ctx.problem(409, "roles_conflict", {
+      current_roles_version: head?.version ?? null,
+    });
+  if (st.signer !== rule.caller) return invalid();
+  const signer = (headStatement ?? st).owners.find(
+    (o) => o.userId === st.signer,
+  );
+  if (!signer) return invalid();
+  try {
+    verifySignature(
+      fromBase64Url(signer.signingKey, 32),
+      SIGNATURE_CONTEXT.roles,
+      read.bytes,
+      read.signature,
+    );
+  } catch {
+    return invalid();
+  }
+  const ids = st.owners.map((o) => o.userId);
+  if (JSON.stringify(ids) !== JSON.stringify([...rule.owners].sort()))
+    return invalid();
+  for (const owner of st.owners) {
+    const user = ctx.users().find((u) => u.user_id === owner.userId);
+    if (
+      user?.public_key !== owner.publicKey ||
+      user.signing_public_key !== owner.signingKey
+    )
+      return invalid();
+  }
+  if (st.keyVersion !== rule.keyVersion) return invalid();
+  if (
+    !rule.keyChange &&
+    headStatement &&
+    st.keyCommitment !== headStatement.keyCommitment
+  )
+    return invalid();
+  vault.roles.push({
+    version: st.version,
+    statement: signed.statement,
+    signature: signed.signature,
+    hash: read.hash,
+  });
+  return undefined;
 }
 
 export interface FakeRotation {
@@ -30,9 +115,11 @@ export interface SharingContext {
   idempotent: (endpoint: string, run: () => Response) => Response;
   reply: (status: number, body?: unknown) => Response;
   problem: (status: number, code: string, extra?: object) => Response;
-  tamperLookup: (user: SharingUser) => void;
-  tamperPublicKey: (user: SharingUser) => void;
+  tamperLookup: (user: PublicSharingUser) => void;
+  tamperPublicKey: (user: PublicSharingUser) => void;
   rotationUploads: { objects: number; bytes: number }[];
+  /** `features.roles`; without it the server names no signing keys. */
+  rolesEnabled: () => boolean;
 }
 
 const TIMESTAMP = "2026-10-23T08:00:00.000Z";
@@ -73,10 +160,11 @@ export function sharing(
 ): Response | undefined {
   const { reply, problem } = ctx;
   const userOf = (id: string) => ctx.users().find((u) => u.user_id === id);
-  const publicUser = (u: SharingUser): SharingUser => ({
+  const publicUser = (u: SharingUser): PublicSharingUser => ({
     user_id: u.user_id,
     email: u.email,
     public_key: u.public_key,
+    ...(ctx.rolesEnabled() ? { signing_public_key: u.signing_public_key } : {}),
   });
 
   if (method === "POST" && path === "/v1/users/lookup") {
@@ -102,7 +190,7 @@ export function sharing(
   }
 
   const match =
-    /^\/v1\/vaults\/([0-9a-f-]{36})\/(members|members\/me|members\/([0-9a-f-]{36})|accept|decline|key|rotations|rotations\/([0-9a-f-]{36})\/(objects|commit))$/.exec(
+    /^\/v1\/vaults\/([0-9a-f-]{36})\/(members|members\/me|members\/([0-9a-f-]{36})|accept|decline|key|roles|roles\?since=\d+|rotations|rotations\/([0-9a-f-]{36})\/(objects|commit))$/.exec(
       path,
     );
   if (!match) return undefined;
@@ -127,10 +215,28 @@ export function sharing(
     return reply(204);
   }
   if (!vault || !own) return notFound();
+  const activeOwners = () =>
+    [...vault.members.entries()]
+      .filter(([, m]) => m.role === "owner" && m.state === "active")
+      .map(([id]) => id);
+  if (area.startsWith("roles") && method === "GET") {
+    const since = Number(/since=(\d+)/.exec(path)?.[1] ?? "0");
+    return reply(200, {
+      statements: vault.roles
+        .filter((r) => r.version > since)
+        .map((r) => ({
+          version: r.version,
+          statement: r.statement,
+          signature: r.signature,
+        })),
+    });
+  }
   if (area === "members/me" && method === "DELETE") {
     if (own.state !== "active") return problem(403, "forbidden");
     if (own.role === "owner" && owners(vault) <= 1)
       return problem(409, "last_owner");
+    if (own.role === "owner" && vault.roles.length > 0)
+      return problem(409, "owner_must_demote");
     vault.members.delete(userId);
     vault.rotation_required = true;
     for (const [id, m] of vault.members) {
@@ -143,6 +249,22 @@ export function sharing(
   if (own.state !== "active") return problem(403, "forbidden");
   const ownerOnly = () =>
     own.role === "owner" ? undefined : problem(403, "forbidden");
+
+  if (area === "roles" && method === "POST") {
+    const denied = ownerOnly();
+    if (denied) return denied;
+    const after = activeOwners();
+    if (after.some((id) => !userOf(id)?.signing_public_key))
+      return problem(409, "signing_key_missing");
+    return (
+      checkRoles(ctx, vault, data.roles as never, {
+        caller: userId,
+        owners: after,
+        keyVersion: vault.key_version,
+        keyChange: false,
+      }) ?? reply(204)
+    );
+  }
 
   if (area === "key" && method === "POST") {
     const pending = own.pending_key;
@@ -168,6 +290,9 @@ export function sharing(
         role: m.role,
         state: m.state,
         public_key: user?.public_key,
+        ...(ctx.rolesEnabled()
+          ? { signing_public_key: user?.signing_public_key ?? null }
+          : {}),
         invited_by: m.sender_id,
         created: m.created,
       }));
@@ -200,6 +325,22 @@ export function sharing(
       if (target.role === data.role) return reply(204);
       if (target.role === "owner" && owners(vault) <= 1)
         return problem(409, "last_owner");
+      const after = activeOwners().filter((id) => id !== match[3]);
+      if (data.role === "owner") after.push(match[3]);
+      if (vault.roles.length > 0) {
+        if (after.some((id) => !userOf(id)?.signing_public_key))
+          return problem(409, "signing_key_missing");
+        if (data.roles === undefined) return problem(422, "roles_required");
+        const refused = checkRoles(ctx, vault, data.roles as never, {
+          caller: userId,
+          owners: after,
+          keyVersion: vault.key_version,
+          keyChange: false,
+        });
+        if (refused) return refused;
+      } else if (data.roles !== undefined) {
+        return problem(400, "validation_failed");
+      }
       target.role = data.role as string;
       return reply(204);
     }
@@ -330,6 +471,18 @@ export function sharing(
         )
       )
         return problem(422, "rotation_incomplete");
+      if (vault.roles.length > 0) {
+        if (data.roles === undefined) return problem(422, "roles_required");
+        const refused = checkRoles(ctx, vault, data.roles as never, {
+          caller: userId,
+          owners: activeOwners().filter((id) => !removed.has(id)),
+          keyVersion: rotation.newKeyVersion,
+          keyChange: true,
+        });
+        if (refused) return refused;
+      } else if (data.roles !== undefined) {
+        return problem(400, "validation_failed");
+      }
       const revision = rotation.base + 1;
       const key = rotation.newKeyVersion;
       const stamp = new Date(ctx.now()).toISOString();

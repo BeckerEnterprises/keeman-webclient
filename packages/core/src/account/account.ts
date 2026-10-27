@@ -32,7 +32,11 @@ import {
 } from "../crypto/bytes";
 import { openKey } from "../crypto/envelope";
 import { CryptoError } from "../crypto/errors";
-import { fingerprintHex, formatFingerprint } from "../crypto/fingerprint";
+import {
+  fingerprint2Hex,
+  fingerprintHex,
+  formatFingerprint,
+} from "../crypto/fingerprint";
 import {
   buildPasswordChange,
   buildRecoveryFinish,
@@ -50,6 +54,7 @@ import { KeyStore, type AccountKeyMaterial } from "../crypto/keystore";
 import { normalizeEmail } from "../crypto/normalize";
 import { decryptUserData, encryptUserData } from "../crypto/objects";
 import { systemRandomness } from "../crypto/random";
+import { signingPublicKeyOf } from "../crypto/signing";
 import {
   applyUserDataChange,
   effectiveSettings,
@@ -66,10 +71,16 @@ import {
   type UserDataState,
 } from "../model/user-data";
 import { seqOf } from "../model/json";
-import { contactsOf, vaultOrderOf, type Contact } from "../model/user-data";
+import {
+  contactsOf,
+  roleAnchorOf,
+  vaultOrderOf,
+  type Contact,
+} from "../model/user-data";
 import { keyOf, type Candidate } from "../sharing/candidate";
 import { contactViews, type ContactView } from "../sharing/contacts";
 import { SyncEngine, type SyncEngineOptions } from "../sync/engine";
+import { SyncError } from "../sync/errors";
 import {
   inMemorySyncMarks,
   isUserDataOlder,
@@ -191,6 +202,12 @@ export class Account {
   #userId: string | undefined;
   #kdf: KdfParams | undefined;
   #userData: UserDataSlot | undefined;
+  /** The server has no signing key of this account yet. */
+  #signingKeyMissing = false;
+  /** Whether the server knows signing keys and roles chains, asked once. */
+  #rolesFeature: Promise<boolean> | undefined;
+  /** The answer, once there is one. */
+  #rolesKnown: boolean | undefined;
 
   constructor(options: AccountOptions) {
     this.#api = options.api;
@@ -265,7 +282,12 @@ export class Account {
    */
   get ownFingerprint(): string | undefined {
     if (!this.#keys.isUnlocked) return undefined;
-    return formatFingerprint(fingerprintHex(this.#keys.publicKey));
+    // A server without signing keys: others compare version 1.
+    if (this.#rolesKnown === false)
+      return formatFingerprint(fingerprintHex(this.#keys.publicKey));
+    return formatFingerprint(
+      fingerprint2Hex(this.#keys.publicKey, this.#keys.signingPublicKey()),
+    );
   }
 
   /**
@@ -301,14 +323,19 @@ export class Account {
    */
   async verifyContact(candidate: Candidate): Promise<void> {
     this.#requireContactsWritable();
-    const { fingerprint } = keyOf(candidate);
+    const { fingerprints } = keyOf(candidate);
+    // Without a signing key there is nothing to compare yet, unless the
+    // server knows no signing keys at all.
+    if (fingerprints.v2 === undefined && fingerprints.legacy !== true)
+      throw new SyncError("unverifiable");
     await this.#updateUserData({
       contacts: [
         {
           kind: "verify",
           userId: candidate.userId,
           email: candidate.email,
-          fingerprint,
+          fingerprint: fingerprints.v1,
+          fingerprint2: fingerprints.v2,
           verifiedAt: new Date().toISOString(),
         },
       ],
@@ -348,11 +375,15 @@ export class Account {
         loginKeys,
         userData,
       });
+      const signingKey = (await this.#rolesSupported())
+        ? toBase64Url(signingPublicKeyOf(registration.account.userKey))
+        : undefined;
       const body = JSON.stringify({
         ...(input.inviteCode === undefined
           ? {}
           : { invite_code: input.inviteCode }),
         ...registration.request,
+        ...(signingKey ? { signing_public_key: signingKey } : {}),
         device: this.#device,
       });
       return new PendingRegistration(body, registration, userData, {
@@ -461,6 +492,7 @@ export class Account {
         kdf,
         epoch,
       );
+      await this.#addSigningKey(toBase64Url(keys.authKey), epoch);
       return { kind: "unlocked", report };
     } finally {
       wipe(keys.authKey, keys.wrapKey);
@@ -517,9 +549,51 @@ export class Account {
     try {
       this.#current(epoch);
       const report = this.#unlockWith(me, keys.wrapKey, kdf, false);
-      return await this.#checkUserDataMarks(report, epoch);
+      const checked = await this.#checkUserDataMarks(report, epoch);
+      await this.#addSigningKey(toBase64Url(keys.authKey), epoch);
+      return checked;
     } finally {
       wipe(keys.authKey, keys.wrapKey);
+    }
+  }
+
+  #rolesSupported(): Promise<boolean> {
+    this.#rolesFeature ??= this.#api.config().then(
+      (config) => {
+        this.#rolesKnown = config.features.roles === true;
+        return this.#rolesKnown;
+      },
+      () => {
+        this.#rolesFeature = undefined;
+        return false;
+      },
+    );
+    return this.#rolesFeature;
+  }
+
+  /**
+   * An account from before signing keys adds its key, derived from the user
+   * key, with a reauth token for the auth key just derived. Network errors
+   * leave it for the next unlock; a different stored key is an integrity
+   * error. After a login with a second factor the auth key is gone, so the
+   * key follows at the next unlock.
+   */
+  async #addSigningKey(authKey: string, epoch: number): Promise<void> {
+    if (!this.#signingKeyMissing || !(await this.#rolesSupported())) return;
+    this.#current(epoch);
+    const signingKey = toBase64Url(this.#keys.signingPublicKey());
+    try {
+      const token = await this.#api.reauth(authKey);
+      this.#current(epoch);
+      await this.#api.putSigningKey(token, signingKey);
+      this.#current(epoch);
+      this.#signingKeyMissing = false;
+    } catch (error) {
+      if (error instanceof AccountError) throw error;
+      if (error instanceof ApiError && error.code === "conflict") {
+        this.lock();
+        throw new AccountError("integrity");
+      }
     }
   }
 
@@ -557,6 +631,7 @@ export class Account {
     this.#userId = me.user_id;
     this.#email = me.email;
     this.#kdf = kdf;
+    this.#signingKeyMissing = unlocked.signingKey === "missing";
     this.#userData = {
       revision: me.user_data.revision,
       state: inspectUserData(unlocked.userData),
@@ -659,6 +734,10 @@ export class Account {
     this.#engine = undefined;
     this.#keys.lock();
     this.#userData = undefined;
+    this.#signingKeyMissing = false;
+    // The server may be updated before the next unlock.
+    this.#rolesFeature = undefined;
+    this.#rolesKnown = undefined;
   }
 
   /** Locks, forgets the account and revokes the session. */
@@ -837,8 +916,11 @@ export class Account {
         now: this.#now,
         device: this.#device,
         derive: (password, salt, kdf) => this.#derive(password, salt, kdf),
-        unlock: (me, userKey, kdf) =>
-          this.#adoptRecovered(me, userKey, kdf, epoch),
+        unlock: async (me, userKey, kdf, authKey) => {
+          const report = await this.#adoptRecovered(me, userKey, kdf, epoch);
+          await this.#addSigningKey(authKey, epoch);
+          return report;
+        },
         release: (step) => {
           this.#pending.delete(step);
         },
@@ -870,6 +952,7 @@ export class Account {
     this.#userId = me.user_id;
     this.#email = me.email;
     this.#kdf = kdf;
+    this.#signingKeyMissing = unlocked.signingKey === "missing";
     this.#userData = {
       revision: me.user_data.revision,
       state: inspectUserData(unlocked.userData),
@@ -1022,6 +1105,20 @@ export class Account {
         },
         reloadUserData: (revision) => this.reloadUserData(revision),
         contacts: () => this.#trustedContacts(),
+        roleAnchor: (vaultId) => {
+          const slot = this.#slot();
+          if (slot?.state.status !== "ok" || slot.rollback) return undefined;
+          return roleAnchorOf(slot.state.raw, vaultId);
+        },
+        saveRoleAnchors: async (anchors) => {
+          if (!this.contactsWritable) return;
+          try {
+            await this.#updateUserData({ roles: anchors });
+          } catch (error) {
+            if (error instanceof AccountError && error.code === "locked")
+              throw error;
+          }
+        },
       },
       options,
     );
@@ -1042,6 +1139,10 @@ export class Account {
     const check = await this.#checkPassword(password);
     this.#current(epoch);
     const reauthToken = await this.#api.reauth(check.authKey);
+    this.#current(epoch);
+    // Owners of vaults with a roles chain step down, signed, where others
+    // own the vault too; the server refuses the deletion otherwise.
+    await this.#engine?.stepDownEverywhere();
     this.#current(epoch);
     await this.#api.deleteMe(reauthToken);
     // What the device keeps about the deleted account goes in any case;
@@ -1332,7 +1433,13 @@ interface RecoverySteps {
     salt: Uint8Array,
     kdf: KdfParams,
   ): Promise<AccountKeys>;
-  unlock(me: Me, userKey: Uint8Array, kdf: KdfParams): Promise<UnlockReport>;
+  /** `authKey` of the new password, for the reauth of follow-up steps. */
+  unlock(
+    me: Me,
+    userKey: Uint8Array,
+    kdf: KdfParams,
+    authKey: string,
+  ): Promise<UnlockReport>;
   release(step: Discardable): void;
 }
 
@@ -1570,6 +1677,7 @@ export class RecoveryProcess {
         me,
         userKey.slice(),
         prepared.kdf,
+        prepared.authKey,
       );
       this.#stage = "done";
       return { stage: "done", report };

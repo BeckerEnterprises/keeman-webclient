@@ -5,6 +5,7 @@
 import { ApiError } from "../api/errors";
 import { buildKeyBox } from "../crypto/flows/vault";
 import { systemRandomness } from "../crypto/random";
+import type { RolePoint, SignedRoles } from "../crypto/roles";
 import { SyncError } from "../sync/errors";
 import { keyOf, statusNow, toCandidate, type Candidate } from "./candidate";
 import type { SharingContext } from "./context";
@@ -13,7 +14,12 @@ export interface MemberView {
   readonly userId: string;
   /** The contact's address if there is one, else the server's. */
   readonly email: string;
+  /** From the checked roles chain where the vault has one (`signed`). */
   readonly role: "owner" | "member";
+  /** The role comes from the checked roles chain. */
+  readonly signed: boolean;
+  /** The server names another role than the roles chain. */
+  readonly roleMismatch: boolean;
   readonly state: "pending" | "active";
   readonly invitedBy: string | null;
   readonly created: string;
@@ -43,6 +49,8 @@ export async function memberViews(
       userId: m.user_id,
       email: contact?.email ?? m.email,
       role: m.role,
+      signed: false,
+      roleMismatch: false,
       state: m.state,
       invitedBy: m.invited_by,
       created: m.created,
@@ -56,6 +64,8 @@ export interface InviteTarget {
   vaultId: string;
   keyVersion: number;
   vaultName: string;
+  /** The checked head of the roles chain the box vouches for. */
+  roles?: RolePoint | undefined;
 }
 
 /** A box with the current vault key for a verified contact. */
@@ -81,6 +91,7 @@ export async function invite(
         vaultKey,
         vaultName: target.vaultName,
         created: new Date().toISOString(),
+        roles: target.roles,
       }),
     ),
   );
@@ -119,13 +130,15 @@ export async function withdraw(
   }
 }
 
+/** With a roles chain, `roles` is the signed next statement. */
 export async function setRole(
   ctx: SharingContext,
   vaultId: string,
   userId: string,
   role: "owner" | "member",
+  roles?: SignedRoles,
 ): Promise<void> {
-  await ctx.api.updateMember(vaultId, userId, role);
+  await ctx.api.updateMember(vaultId, userId, role, roles);
 }
 
 /** Leaving; `404` after a lost answer means the membership is gone. */

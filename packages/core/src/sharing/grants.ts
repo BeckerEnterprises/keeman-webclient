@@ -1,7 +1,9 @@
 /**
  * Invitations and pending keys: opened with the
- * sender's key, accepted only from verified contacts, re-wrapped with the
- * own user key. The vault key enters the KeyStore after the server agreed.
+ * sender's key, accepted only from verified contacts and, where the vault
+ * has a roles chain, only when the chain commits to the boxed key;
+ * re-wrapped with the own user key. The vault key enters the KeyStore
+ * after the server agreed.
  */
 import { ApiError } from "../api/errors";
 import type { components } from "../api/openapi.gen";
@@ -11,7 +13,8 @@ import { wipe } from "../crypto/bytes";
 import { CryptoError } from "../crypto/errors";
 import { acceptKeyGrant, type KeyGrantAcceptance } from "../crypto/flows/vault";
 import { systemRandomness } from "../crypto/random";
-import { SyncError } from "../sync/errors";
+import type { RolePoint } from "../crypto/roles";
+import { SyncError, type SyncErrorCode } from "../sync/errors";
 import { keyOf, statusNow, type Candidate } from "./candidate";
 import type { SharingContext } from "./context";
 
@@ -45,26 +48,35 @@ export function grantName(
 }
 
 /**
- * Who may send a pending key: the owners this device remembers, or anyone
- * once the user confirmed that the sender really is an owner.
+ * Who may send a pending key of a vault without roles chain: the owners
+ * this device remembers, or anyone once the user confirmed that the sender
+ * really is an owner.
  */
 export interface KeySenders {
   owners: readonly string[];
   confirmed: boolean;
 }
 
+/** Checks the opened box against the roles chain: the rejection, if any. */
+export type RolesCheck = (opened: {
+  vaultKey: Uint8Array;
+  roles: RolePoint | undefined;
+}) => SyncErrorCode | undefined;
+
 /**
- * Accepts the invitation (`invitation`) or the pending key (`key`, from a
- * known owner or with the user's confirmation, so a server cannot pass off
- * the box of a removed member as a new key version).
+ * Accepts the invitation (`invitation`) or the pending key (`key`). With
+ * `roles` the chain must commit to the boxed key; without a chain a pending
+ * key needs a known owner or the user's confirmation, so a server cannot
+ * pass off the box of a removed member as a new key version.
  */
 export async function acceptGrant(
   ctx: SharingContext,
   kind: "invitation" | "key",
   summary: VaultSummary,
   sender: Candidate,
-  senders?: KeySenders,
+  checks: { senders?: KeySenders; roles?: RolesCheck } = {},
 ): Promise<void> {
+  const { senders, roles } = checks;
   const vaultId = summary.vault_id;
   const grant =
     kind === "invitation" ? summary.invitation : summary.pending_key;
@@ -76,6 +88,7 @@ export async function acceptGrant(
     throw new SyncError("unverified");
   if (
     kind === "key" &&
+    !roles &&
     !senders?.confirmed &&
     !senders?.owners.includes(sender.userId)
   )
@@ -100,6 +113,11 @@ export async function acceptGrant(
   } catch (error) {
     if (error instanceof CryptoError && error.code === "locked") throw error;
     throw new SyncError("key_box_invalid");
+  }
+  const rejected = roles?.(accepted);
+  if (rejected) {
+    wipe(accepted.vaultKey);
+    throw new SyncError(rejected);
   }
   try {
     await (kind === "invitation"

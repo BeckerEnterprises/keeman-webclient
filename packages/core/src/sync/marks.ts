@@ -1,7 +1,7 @@
 /**
  * High-water marks for the rollback detection: per vault
- * the highest revision and key version, the owners and the highest root
- * `seq` of the manifest, per object the
+ * the highest revision and key version, the owners, the highest root
+ * `seq` of the manifest and the checked head of the roles chain, per object the
  * highest `seq` (negative for a tombstone), per account revision and `seq`
  * of `user_data`. Only IDs and counters, nothing secret.
  */
@@ -25,6 +25,11 @@ export interface VaultMarks {
    * acknowledgement lowers, so a root `seq` is never given out twice.
    */
   mf?: number;
+  /**
+   * Version and hash of the newest roles statement checked on this device;
+   * only "understood" at a roles warning lowers it.
+   */
+  rl?: [number, string];
   /** Object ID → `seq`; negative: a tombstone with this `seq`. */
   obj: Record<string, number>;
 }
@@ -52,6 +57,12 @@ export interface SyncMarks {
     userId: string,
     vaultId: string,
     owners: readonly string[],
+  ): Promise<boolean>;
+  /** Replaces the roles floor of a vault; `undefined` removes it. */
+  replaceRoles(
+    userId: string,
+    vaultId: string,
+    rl: [number, string] | undefined,
   ): Promise<boolean>;
   forgetVault(userId: string, vaultId: string): Promise<boolean>;
   forgetUser(userId: string): Promise<boolean>;
@@ -91,6 +102,16 @@ function emptyMarks(): UserMarks {
   return { vaults: {} };
 }
 
+/** The higher roles floor; at the same version the first one stays. */
+function higherRoles(
+  a: [number, string] | undefined,
+  b: [number, string] | undefined,
+): [number, string] | undefined {
+  if (!a) return b ? [b[0], b[1]] : undefined;
+  if (!b || b[0] <= a[0]) return [a[0], a[1]];
+  return [b[0], b[1]];
+}
+
 /**
  * Per-entry maximum of two mark sets. Owners are not a maximum: those of
  * `a` win, so stored owners come before the ones in memory.
@@ -114,11 +135,13 @@ export function mergeMarks(a: UserMarks, b: UserMarks): UserMarks {
     const kv = Math.max(left?.kv ?? 0, right?.kv ?? 0);
     const ow = left?.ow ?? right?.ow;
     const mf = Math.max(left?.mf ?? 0, right?.mf ?? 0);
+    const rl = higherRoles(left?.rl, right?.rl);
     result.vaults[id] = {
       rev: Math.max(left?.rev ?? 0, right?.rev ?? 0),
       ...(kv > 0 ? { kv } : {}),
       ...(ow ? { ow: [...ow] } : {}),
       ...(mf > 0 ? { mf } : {}),
+      ...(rl ? { rl } : {}),
       obj,
     };
   }
@@ -129,13 +152,21 @@ function copy(marks: UserMarks): UserMarks {
   return mergeMarks(marks, emptyMarks());
 }
 
-/** `marks` replacing `current`; the manifest floor never goes down. */
+/**
+ * `marks` replacing `current`; the manifest floor never goes down, and the
+ * roles floor only changes through `replaceRoles`.
+ */
 function replacing(
   current: VaultMarks | undefined,
   marks: VaultMarks,
 ): VaultMarks {
   const mf = Math.max(current?.mf ?? 0, marks.mf ?? 0);
-  return copyVault({ ...marks, ...(mf > 0 ? { mf } : {}) });
+  const rl = higherRoles(current?.rl, marks.rl);
+  return copyVault({
+    ...marks,
+    ...(mf > 0 ? { mf } : {}),
+    ...(rl ? { rl } : {}),
+  });
 }
 
 function copyVault(marks: VaultMarks): VaultMarks {
@@ -144,8 +175,22 @@ function copyVault(marks: VaultMarks): VaultMarks {
     ...(marks.kv !== undefined ? { kv: marks.kv } : {}),
     ...(marks.ow !== undefined ? { ow: [...marks.ow] } : {}),
     ...(marks.mf !== undefined ? { mf: marks.mf } : {}),
+    ...(marks.rl !== undefined ? { rl: [marks.rl[0], marks.rl[1]] } : {}),
     obj: { ...marks.obj },
   };
+}
+
+function withRoles(
+  marks: UserMarks,
+  vaultId: string,
+  rl: [number, string] | undefined,
+): UserMarks {
+  const next = copy(marks);
+  const vault = { ...(next.vaults[vaultId] ?? { rev: 0, obj: {} }) };
+  if (rl) vault.rl = [rl[0], rl[1]];
+  else Reflect.deleteProperty(vault, "rl");
+  next.vaults[vaultId] = vault;
+  return next;
 }
 
 function withOwners(
@@ -187,6 +232,10 @@ export function inMemorySyncMarks(): SyncMarks {
       users.set(userId, withOwners(get(userId), vaultId, owners));
       return Promise.resolve(true);
     },
+    replaceRoles: (userId, vaultId, rl) => {
+      users.set(userId, withRoles(get(userId), vaultId, rl));
+      return Promise.resolve(true);
+    },
     forgetVault: (userId, vaultId) => {
       const current = get(userId);
       Reflect.deleteProperty(current.vaults, vaultId);
@@ -225,6 +274,12 @@ const StoredSchema = v.object({
           kv: v.optional(Counter),
           ow: v.optional(v.array(Id)),
           mf: v.optional(Counter),
+          rl: v.optional(
+            v.tuple([
+              v.pipe(Counter, v.minValue(1)),
+              v.pipe(v.string(), v.regex(/^[A-Za-z0-9_-]{43}$/)),
+            ]),
+          ),
           obj: v.record(Id, ObjectMark),
         }),
       ),
@@ -321,6 +376,12 @@ export function storedSyncMarks(store: MarksStore, lock: MarksLock): SyncMarks {
       await memory.rememberOwners(userId, vaultId, owners);
       return update(userId, (current) =>
         withOwners(current ?? emptyMarks(), vaultId, owners),
+      );
+    },
+    async replaceRoles(userId, vaultId, rl) {
+      await memory.replaceRoles(userId, vaultId, rl);
+      return update(userId, (current) =>
+        withRoles(current ?? emptyMarks(), vaultId, rl),
       );
     },
     async forgetVault(userId, vaultId) {

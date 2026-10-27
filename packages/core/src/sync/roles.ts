@@ -1,0 +1,578 @@
+/**
+ * The roles chain of each vault on this device: loaded when the server
+ * names another head, checked forward from the account's anchor, and the
+ * anchor raised after every checked extension. Owners start a chain for
+ * older vaults, drop owners who are no longer members and sign every role
+ * change; pending keys are accepted only when the chain commits to them.
+ */
+import type { ApiClient } from "../api/client";
+import { ApiError } from "../api/errors";
+import type { Member } from "../api/schemas";
+import { fromBase64Url } from "../crypto/bytes";
+import { CryptoError } from "../crypto/errors";
+import { fingerprint2Hex, fingerprintHex } from "../crypto/fingerprint";
+import { derivePublicKey } from "../crypto/keypair";
+import type { Keys } from "../crypto/keystore";
+import {
+  checkGrantRoles,
+  checkRoleChain,
+  genesisStatement,
+  roleOwner,
+  signRoleStatement,
+  successorStatement,
+  type DeliveredRoles,
+  type GrantRolesRejection,
+  type RoleOwner,
+  type RolePoint,
+  type SignedRoles,
+  type VerifiedRoles,
+} from "../crypto/roles";
+import type { Contact, RoleAnchor } from "../model/user-data";
+import { keyOf, statusNow, toCandidate } from "../sharing/candidate";
+import { contactStatus } from "../sharing/contacts";
+import { SyncError } from "./errors";
+import type { SyncMarks } from "./marks";
+
+/** Attempts after `409 roles_conflict`. */
+const MAX_ATTEMPTS = 3;
+
+/**
+ * `none`: the vault has no chain; `ok`: checked from the anchor;
+ * `unanchored`: a chain this account has no anchor for yet and cannot take
+ * over on its own; the others are warnings.
+ */
+export type RolesStatus =
+  "none" | "ok" | "unanchored" | "rollback" | "fork" | "invalid";
+
+export interface VaultRoles {
+  /** `roles_version` of the vault list the check is for. */
+  readonly version: number | null;
+  readonly status: RolesStatus;
+  /** Authenticated statements of the last good check. */
+  readonly statements: readonly VerifiedRoles[];
+  readonly head: VerifiedRoles | undefined;
+  /** The anchor the check started from. */
+  readonly anchor: RoleAnchor | undefined;
+  /** Owners of the delivered head (also for warnings), if it can be read. */
+  readonly deliveredOwners: readonly string[];
+  /** Co-owners need to be verified before this owner can start a chain. */
+  readonly verifyOwners: boolean;
+}
+
+/** What the keeper needs from the account and the engine. */
+export interface RolesPort {
+  api: ApiClient;
+  keys: Keys;
+  userId: string;
+  marks: SyncMarks;
+  /** The anchor of a vault in user_data. */
+  anchor(vaultId: string): RoleAnchor | undefined;
+  /** Stores anchors in user_data (`null` removes one); best effort. */
+  saveAnchors(anchors: Record<string, RoleAnchor | null>): Promise<void>;
+  contacts(): readonly Contact[];
+}
+
+function pointOf(head: VerifiedRoles): RolePoint {
+  return { version: head.statement.version, hash: head.hash };
+}
+
+function anchorOfHead(head: VerifiedRoles): RoleAnchor {
+  return {
+    version: head.statement.version,
+    hash: head.hash,
+    owners: head.statement.owners.map((o) => o.userId),
+  };
+}
+
+/** The higher of the account's anchor and the device's floor. */
+function effectiveAnchor(
+  stored: RoleAnchor | undefined,
+  floor: [number, string] | undefined,
+): { anchor: RoleAnchor | undefined; lower: RolePoint | undefined } {
+  const fromFloor: RoleAnchor | undefined = floor
+    ? { version: floor[0], hash: floor[1], owners: stored?.owners ?? [] }
+    : undefined;
+  if (!stored) return { anchor: fromFloor, lower: undefined };
+  if (!fromFloor || fromFloor.version <= stored.version)
+    return { anchor: stored, lower: fromFloor };
+  return { anchor: fromFloor, lower: stored };
+}
+
+function ownerIds(statement: VerifiedRoles | undefined): string[] {
+  return statement?.statement.owners.map((o) => o.userId) ?? [];
+}
+
+export class RolesKeeper {
+  readonly #port: RolesPort;
+  readonly #vaults = new Map<string, VaultRoles>();
+  /** Delivered statements by vault, for the `roles_version` they belong to. */
+  readonly #delivered = new Map<
+    string,
+    { version: number | null; statements: DeliveredRoles[] }
+  >();
+  /** Chains this unlock tried to start, and heads it tried to repair. */
+  readonly #tried = new Set<string>();
+  #pendingAnchors: Record<string, RoleAnchor | null> = {};
+  #pendingFloors: Record<string, [number, string]> = {};
+
+  constructor(port: RolesPort) {
+    this.#port = port;
+  }
+
+  get(vaultId: string): VaultRoles | undefined {
+    return this.#vaults.get(vaultId);
+  }
+
+  forget(vaultId: string): void {
+    this.#vaults.delete(vaultId);
+    this.#delivered.delete(vaultId);
+  }
+
+  async #load(
+    vaultId: string,
+    version: number | null,
+  ): Promise<DeliveredRoles[]> {
+    if (version === null) return [];
+    const known = this.#delivered.get(vaultId);
+    if (known && known.version === version) return known.statements;
+    const statements = await this.#port.api.roles(vaultId, 0);
+    this.#delivered.set(vaultId, { version, statements });
+    return statements;
+  }
+
+  /**
+   * Loads the chain if the head changed and checks it. `owners` are the
+   * owners this device remembers (for the transition of older vaults).
+   */
+  async update(
+    vaultId: string,
+    version: number | null,
+    owners: readonly string[] | undefined,
+  ): Promise<VaultRoles> {
+    const previous = this.#vaults.get(vaultId);
+    let delivered: DeliveredRoles[];
+    try {
+      delivered = await this.#load(vaultId, version);
+    } catch (error) {
+      if (error instanceof CryptoError && error.code === "locked") throw error;
+      // Keep the last result; nothing is accepted on a stale one.
+      if (previous) return previous;
+      throw error;
+    }
+    const marks = await this.#port.marks.read(this.#port.userId);
+    const floor = marks.vaults[vaultId]?.rl;
+    const stored = this.#port.anchor(vaultId);
+    const fork =
+      stored !== undefined &&
+      floor !== undefined &&
+      stored.version === floor[0] &&
+      stored.hash !== floor[1];
+    const { anchor, lower } = effectiveAnchor(stored, floor);
+    const roles = this.#check(vaultId, version, delivered, anchor, lower, fork);
+    let result = roles;
+    if (roles.status === "unanchored" && roles.head) {
+      if (this.#adoptable(roles.head, roles.statements, owners ?? [])) {
+        this.#raise(vaultId, roles.head, stored);
+        result = { ...roles, status: "ok", anchor: anchorOfHead(roles.head) };
+      }
+    } else if (roles.status === "ok" && roles.head) {
+      this.#raise(vaultId, roles.head, stored, floor);
+    }
+    this.#vaults.set(vaultId, {
+      ...result,
+      verifyOwners: previous?.verifyOwners ?? false,
+    });
+    return this.#vaults.get(vaultId) ?? result;
+  }
+
+  #check(
+    vaultId: string,
+    version: number | null,
+    delivered: DeliveredRoles[],
+    anchor: RoleAnchor | undefined,
+    lower: RolePoint | undefined,
+    fork: boolean,
+  ): VaultRoles {
+    const base = {
+      version,
+      statements: [] as VerifiedRoles[],
+      head: undefined,
+      anchor,
+      deliveredOwners: [] as string[],
+      verifyOwners: false,
+    };
+    // Even with a warning the delivered head's owners are shown.
+    const plain = checkRoleChain({ vaultId, statements: delivered });
+    const deliveredOwners =
+      plain.status === "ok" ? ownerIds(plain.head) : ([] as string[]);
+    if (fork) return { ...base, status: "fork", deliveredOwners };
+    const result = checkRoleChain({
+      vaultId,
+      statements: delivered,
+      anchor: anchor
+        ? { version: anchor.version, hash: anchor.hash }
+        : undefined,
+    });
+    if (result.status === "empty")
+      return { ...base, status: "none", deliveredOwners };
+    if (result.status !== "ok")
+      return { ...base, status: result.status, deliveredOwners };
+    if (
+      lower &&
+      result.statements.some(
+        (s) => s.statement.version === lower.version && s.hash !== lower.hash,
+      )
+    )
+      return { ...base, status: "fork", deliveredOwners };
+    return {
+      ...base,
+      status: anchor ? "ok" : "unanchored",
+      statements: result.statements,
+      head: result.head,
+      deliveredOwners: ownerIds(result.head),
+    };
+  }
+
+  /**
+   * Transition of a chain without anchor: taken over when its head was
+   * signed by this account, or by a remembered owner who is a contact
+   * (verified, or checked before fingerprint version 2).
+   */
+  #adoptable(
+    head: VerifiedRoles,
+    statements: readonly VerifiedRoles[],
+    owners: readonly string[],
+  ): boolean {
+    const { signer } = head.statement;
+    if (signer === this.#port.userId) return true;
+    if (!owners.includes(signer)) return false;
+    const before =
+      statements.find(
+        (s) => s.statement.version === head.statement.version - 1,
+      ) ?? head;
+    const entry = before.statement.owners.find((o) => o.userId === signer);
+    if (!entry) return false;
+    const publicKey = fromBase64Url(entry.publicKey, 32);
+    const status = contactStatus(this.#port.contacts(), signer, {
+      v1: fingerprintHex(publicKey),
+      v2: fingerprint2Hex(publicKey, fromBase64Url(entry.signingKey, 32)),
+    });
+    return status === "verified" || status === "outdated";
+  }
+
+  /** Queues the head as new anchor where it is newer than the stored one. */
+  #raise(
+    vaultId: string,
+    head: VerifiedRoles,
+    stored: RoleAnchor | undefined,
+    floor?: [number, string],
+  ): void {
+    const version = head.statement.version;
+    if (!stored || stored.version < version)
+      this.#pendingAnchors[vaultId] = anchorOfHead(head);
+    if (!floor || floor[0] < version)
+      this.#pendingFloors[vaultId] = [version, head.hash];
+  }
+
+  /** Writes the anchors and floors queued by the last updates in one go. */
+  async flush(): Promise<void> {
+    const anchors = this.#pendingAnchors;
+    const floors = this.#pendingFloors;
+    this.#pendingAnchors = {};
+    this.#pendingFloors = {};
+    if (Object.keys(floors).length > 0)
+      await this.#port.marks.raise(this.#port.userId, {
+        vaults: Object.fromEntries(
+          Object.entries(floors).map(([id, rl]) => [
+            id,
+            { rev: 0, obj: {}, rl },
+          ]),
+        ),
+      });
+    if (Object.keys(anchors).length > 0) await this.#port.saveAnchors(anchors);
+  }
+
+  /** Takes the delivered head as anchor ("take over the owner list"). */
+  async confirm(vaultId: string): Promise<void> {
+    const roles = this.#vaults.get(vaultId);
+    if (roles?.status !== "unanchored" || !roles.head)
+      throw new SyncError("not_found");
+    await this.#adopt(vaultId, roles.head);
+  }
+
+  /**
+   * "Understood" at a roles warning: the delivered chain becomes the anchor,
+   * also lowering the floor; it must be valid from its first statement.
+   */
+  async acknowledge(vaultId: string): Promise<void> {
+    const roles = this.#vaults.get(vaultId);
+    if (!roles) throw new SyncError("not_found");
+    const delivered = this.#delivered.get(vaultId)?.statements ?? [];
+    const result = checkRoleChain({ vaultId, statements: delivered });
+    if (result.status === "empty") {
+      await this.#port.marks.replaceRoles(
+        this.#port.userId,
+        vaultId,
+        undefined,
+      );
+      await this.#port.saveAnchors({ [vaultId]: null });
+      return;
+    }
+    if (result.status !== "ok") throw new SyncError("roles_invalid");
+    await this.#adopt(vaultId, result.head);
+  }
+
+  async #adopt(vaultId: string, head: VerifiedRoles): Promise<void> {
+    await this.#port.marks.replaceRoles(this.#port.userId, vaultId, [
+      head.statement.version,
+      head.hash,
+    ]);
+    await this.#port.saveAnchors({ [vaultId]: anchorOfHead(head) });
+  }
+
+  /**
+   * Whether a boxed key at `keyVersion` may be accepted: the chain checked
+   * from the anchor must commit to it; `unchecked` without such a chain.
+   */
+  check(
+    vaultId: string,
+    keyVersion: number,
+    opened: { vaultKey: Uint8Array; roles: RolePoint | undefined },
+  ): GrantRolesRejection | "unchecked" | undefined {
+    const roles = this.#vaults.get(vaultId);
+    if (roles?.status !== "ok") return "unchecked";
+    return checkGrantRoles({
+      statements: roles.statements,
+      roles: opened.roles,
+      vaultId,
+      keyVersion,
+      vaultKey: opened.vaultKey,
+    });
+  }
+
+  /**
+   * The chain an invitee checks before accepting: valid from its first
+   * statement; the inviter's box then vouches for it. `undefined` without a
+   * chain.
+   */
+  async invitationChain(
+    vaultId: string,
+  ): Promise<readonly VerifiedRoles[] | undefined> {
+    const delivered = await this.#port.api.roles(vaultId, 0);
+    const result = checkRoleChain({ vaultId, statements: delivered });
+    if (result.status === "empty") return undefined;
+    if (result.status !== "ok") throw new SyncError("roles_invalid");
+    return result.statements;
+  }
+
+  /** After an accepted invitation: the vouched chain's head is the anchor. */
+  async anchorInvitation(
+    vaultId: string,
+    statements: readonly VerifiedRoles[],
+  ): Promise<void> {
+    const head = statements[statements.length - 1];
+    if (head) await this.#adopt(vaultId, head);
+  }
+
+  /** The point a box names: the checked head. */
+  point(vaultId: string): RolePoint | undefined {
+    const roles = this.#vaults.get(vaultId);
+    return roles?.status === "ok" && roles.head
+      ? pointOf(roles.head)
+      : undefined;
+  }
+
+  #ownEntry(): RoleOwner {
+    return roleOwner(
+      this.#port.userId,
+      this.#publicKey(),
+      this.#port.keys.signingPublicKey(),
+    );
+  }
+
+  #publicKey(): Uint8Array {
+    // pk' from the own private key, never the server's.
+    return this.#port.keys.usePrivateKey(derivePublicKey);
+  }
+
+  #sign(statement: Parameters<typeof signRoleStatement>[0]): SignedRoles {
+    return this.#port.keys.useSigningKey((secretKey) =>
+      signRoleStatement(statement, secretKey),
+    );
+  }
+
+  /**
+   * Owners starting a chain for an older vault (all owners with verified
+   * keys), and dropping owners of the head who are no longer members.
+   * Best effort; once per vault and head in this unlock.
+   */
+  async ownerDuties(
+    vaultId: string,
+    keyVersion: number,
+    members: readonly Member[] | undefined,
+  ): Promise<boolean> {
+    const roles = this.#vaults.get(vaultId);
+    if (!roles || !this.#port.keys.hasVaultKey(vaultId, keyVersion))
+      return false;
+    const self = this.#port.userId;
+    if (roles.status === "none") {
+      const key = `start:${vaultId}`;
+      if (this.#tried.has(key)) return false;
+      const owners = (members ?? [])
+        .filter((m) => m.role === "owner" && m.state === "active")
+        .filter((m) => m.user_id !== self);
+      const entries: RoleOwner[] = [this.#ownEntry()];
+      for (const member of owners) {
+        const candidate = toCandidate(member, this.#port.contacts(), self);
+        const keys = keyOf(candidate);
+        if (
+          statusNow(candidate, this.#port.contacts()) !== "verified" ||
+          !keys.signingKey
+        ) {
+          // Tried again once the contacts change.
+          this.#vaults.set(vaultId, { ...roles, verifyOwners: true });
+          return false;
+        }
+        entries.push(
+          roleOwner(member.user_id, keys.publicKey, keys.signingKey),
+        );
+      }
+      this.#tried.add(key);
+      const signed = this.#port.keys.useVaultKey(vaultId, keyVersion, (vk) =>
+        this.#sign(
+          genesisStatement({
+            vaultId,
+            owners: entries,
+            signer: self,
+            keyVersion,
+            vaultKey: vk,
+            created: new Date().toISOString(),
+          }),
+        ),
+      );
+      return this.#append(vaultId, signed);
+    }
+    if (roles.status !== "ok" || !roles.head || !members) return false;
+    const { head } = roles;
+    if (!head.statement.owners.some((o) => o.userId === self)) return false;
+    const active = new Set(
+      members.filter((m) => m.state === "active").map((m) => m.user_id),
+    );
+    const staying = head.statement.owners.filter((o) => active.has(o.userId));
+    if (staying.length === head.statement.owners.length) return false;
+    const key = `repair:${vaultId}:${String(head.statement.version)}`;
+    if (this.#tried.has(key)) return false;
+    this.#tried.add(key);
+    const signed = this.#sign(
+      successorStatement(head, {
+        owners: staying,
+        signer: self,
+        created: new Date().toISOString(),
+      }),
+    );
+    return this.#append(vaultId, signed);
+  }
+
+  async #append(vaultId: string, signed: SignedRoles): Promise<boolean> {
+    try {
+      await this.#port.api.appendRoles(vaultId, signed);
+      return true;
+    } catch (error) {
+      if (error instanceof CryptoError && error.code === "locked") throw error;
+      return false;
+    }
+  }
+
+  /**
+   * The signed next statement for a role change: the head's owners with
+   * `userId` added (a verified contact's checked keys) or removed. Retries
+   * after `roles_conflict` with a reloaded chain.
+   */
+  async changeRole(
+    vaultId: string,
+    userId: string,
+    role: "owner" | "member",
+    send: (roles: SignedRoles | undefined) => Promise<void>,
+    target?: { publicKey: Uint8Array; signingKey: Uint8Array },
+  ): Promise<void> {
+    for (let attempt = 1; ; attempt++) {
+      const roles = this.#vaults.get(vaultId);
+      if (roles?.status !== "ok" || !roles.head)
+        throw new SyncError("roles_invalid");
+      const { head } = roles;
+      const self = this.#port.userId;
+      if (!head.statement.owners.some((o) => o.userId === self))
+        throw new SyncError("read_only");
+      const others = head.statement.owners.filter((o) => o.userId !== userId);
+      let owners: RoleOwner[];
+      if (role === "member") owners = others;
+      else if (userId === self) owners = [...others, this.#ownEntry()];
+      else {
+        if (!target) throw new SyncError("unverified");
+        owners = [
+          ...others,
+          roleOwner(userId, target.publicKey, target.signingKey),
+        ];
+      }
+      // No owner would remain: the server answers `last_owner` before it
+      // looks for a statement.
+      const signed =
+        owners.length === 0
+          ? undefined
+          : this.#sign(
+              successorStatement(head, {
+                owners,
+                signer: self,
+                created: new Date().toISOString(),
+              }),
+            );
+      try {
+        await send(signed);
+        return;
+      } catch (error) {
+        if (
+          !(error instanceof ApiError && error.code === "roles_conflict") ||
+          attempt >= MAX_ATTEMPTS
+        )
+          throw error;
+      }
+      await this.reload(vaultId);
+    }
+  }
+
+  /** Reloads the chain regardless of the version the vault list named. */
+  async reload(vaultId: string): Promise<VaultRoles> {
+    const statements = await this.#port.api.roles(vaultId, 0);
+    const version = statements[statements.length - 1]?.version ?? null;
+    this.#delivered.set(vaultId, { version, statements });
+    const marks = await this.#port.marks.read(this.#port.userId);
+    return this.update(vaultId, version, marks.vaults[vaultId]?.ow);
+  }
+
+  /**
+   * The checked head and the owners after a rotation (the head's owners who
+   * stay active members), reloaded after `roles_conflict`.
+   */
+  async rotationRoles(
+    vaultId: string,
+    members: readonly Member[],
+    removed: ReadonlySet<string>,
+    reload: boolean,
+  ): Promise<{ head: VerifiedRoles; owners: RoleOwner[] } | undefined> {
+    if (reload) await this.reload(vaultId);
+    const roles = this.#vaults.get(vaultId);
+    if (!roles || roles.status === "none") return undefined;
+    if (roles.status !== "ok" || !roles.head)
+      throw new SyncError("roles_invalid");
+    const active = new Set(
+      members
+        .filter((m) => m.state === "active" && !removed.has(m.user_id))
+        .map((m) => m.user_id),
+    );
+    active.add(this.#port.userId);
+    const owners = roles.head.statement.owners.filter((o) =>
+      active.has(o.userId),
+    );
+    return { head: roles.head, owners };
+  }
+}
