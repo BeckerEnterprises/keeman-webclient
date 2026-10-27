@@ -380,3 +380,56 @@ export function checkManifest(input: ManifestInput): ManifestCheck {
     ? { status: "verified", issues }
     : { status: "verified", issues, rootHash };
 }
+
+/** A planned op as the manifest sees it: `hash` is `undefined` for a deletion. */
+export interface ManifestChange {
+  id: string;
+  type: string;
+  hash: string | undefined;
+}
+
+/** A shard as it is now, read. */
+export interface CurrentShard {
+  raw: JsonObject;
+  seq: number;
+  objects: ReadonlyMap<string, ManifestEntry>;
+}
+
+/**
+ * The shards a batch touches, with its changes applied: `seq` + 1 (1 for a
+ * new shard), unknown fields kept. Sorted by shard index.
+ */
+export function nextShards(
+  shards: ReadonlyMap<number, CurrentShard>,
+  changes: readonly ManifestChange[],
+): { index: number; raw: JsonObject; seq: number }[] {
+  const touched = new Map<number, ManifestChange[]>();
+  for (const change of changes) {
+    const k = bucketOf(change.id);
+    touched.set(k, [...(touched.get(k) ?? []), change]);
+  }
+  return [...touched]
+    .sort((a, b) => a[0] - b[0])
+    .map(([index, inBucket]) => {
+      const current = shards.get(index);
+      const entries = new Map(current?.objects ?? []);
+      for (const change of inBucket) {
+        if (change.hash === undefined) entries.delete(change.id);
+        else entries.set(change.id, [change.type, change.hash]);
+      }
+      const seq = (current?.seq ?? 0) + 1;
+      return { index, raw: shardRaw(current?.raw, entries, seq), seq };
+    });
+}
+
+/** The root naming the written shards; `seq` goes above the floor. */
+export function nextRoot(
+  root: { raw: JsonObject; seq: number; value: ManifestRoot },
+  floor: number,
+  written: readonly { index: number; seq: number; hash: string }[],
+): { raw: JsonObject; seq: number } {
+  const shards = [...root.value.shards];
+  for (const shard of written) shards[shard.index] = [shard.seq, shard.hash];
+  const seq = Math.max(root.seq, floor) + 1;
+  return { raw: rootRaw(root.raw, shards, seq), seq };
+}

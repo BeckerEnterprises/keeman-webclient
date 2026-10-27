@@ -19,9 +19,12 @@ import {
   isManifestId,
   MANIFEST_SHARDS,
   manifestIds,
+  nextRoot,
+  nextShards,
   objectHash,
   rootRaw,
   shardRaw,
+  type CurrentShard,
   type ManifestEntry,
 } from "../model/manifest";
 import { mergeEntry } from "../model/merge";
@@ -373,36 +376,41 @@ export class WriteOperation {
     const ids = manifestIds(state.id);
     const root = currentRoot(state);
     if (!root) throw new SyncError("read_only");
-    const byBucket = new Map<number, Planned[]>();
+    const shards = new Map<number, CurrentShard>();
+    const revisions = new Map<number, number>();
     for (const p of planned) {
       const k = bucketOf(p.id);
-      byBucket.set(k, [...(byBucket.get(k) ?? []), p]);
-    }
-    const shards = [...root.value.shards];
-    const ops: Planned[] = [];
-    for (const [k, inBucket] of [...byBucket].sort((a, b) => a[0] - b[0])) {
       const shard = currentShard(state, k);
-      if (shards[k] && !shard) throw new SyncError("read_only");
-      const entries = withOps(new Map(shard?.value.objects ?? []), inBucket);
-      const seq = (shard?.entry.seq ?? 0) + 1;
-      const op = this.#put(
-        ids.shards[k] ?? "",
-        "manifest",
-        shardRaw(shard?.entry.raw, entries, seq),
-        shard?.entry.revision ?? null,
-      );
-      shards[k] = [seq, op.hash ?? ""];
-      ops.push(op);
+      if (root.value.shards[k] && !shard) throw new SyncError("read_only");
+      if (shard) {
+        shards.set(k, {
+          raw: shard.entry.raw,
+          seq: shard.entry.seq,
+          objects: shard.value.objects,
+        });
+        revisions.set(k, shard.entry.revision);
+      }
     }
-    const seq = Math.max(root.entry.seq, state.manifestFloor) + 1;
-    ops.push(
-      this.#put(
-        ids.root,
+    const ops: Planned[] = [];
+    const written = nextShards(
+      shards,
+      planned.map((p) => ({ id: p.id, type: p.type, hash: p.hash })),
+    ).map((shard) => {
+      const op = this.#put(
+        ids.shards[shard.index] ?? "",
         "manifest",
-        rootRaw(root.entry.raw, shards, seq),
-        root.entry.revision,
-      ),
+        shard.raw,
+        revisions.get(shard.index) ?? null,
+      );
+      ops.push(op);
+      return { index: shard.index, seq: shard.seq, hash: op.hash ?? "" };
+    });
+    const next = nextRoot(
+      { raw: root.entry.raw, seq: root.entry.seq, value: root.value },
+      state.manifestFloor,
+      written,
     );
+    ops.push(this.#put(ids.root, "manifest", next.raw, root.entry.revision));
     return ops;
   }
 
