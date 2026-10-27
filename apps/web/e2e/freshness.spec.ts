@@ -150,8 +150,14 @@ test.describe("freshness", () => {
     const other = await otherContext.newPage();
     await withholdAttestations(other);
     await loginViaUi(other, account);
-    await expect(other.getByTestId("banner-freshness")).toBeVisible();
-    await openAccount(other, "pairing");
+    const banner = other.getByTestId("banner-freshness");
+    await expect(banner).toBeVisible();
+    // Right after the sign-in a first click may meet the app's own
+    // navigation; the banner's link is clicked until the page opens.
+    await expect(async () => {
+      await banner.getByRole("link", { name: "Gerät koppeln" }).click();
+      await expect(other).toHaveURL(/\/account\/pairing$/, { timeout: 2000 });
+    }).toPass();
     await other.getByTestId("pairing-qr-file").setInputFiles({
       name: "code.png",
       mimeType: "image/png",
