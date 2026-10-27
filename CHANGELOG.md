@@ -6,10 +6,15 @@ All notable changes to this project are documented here. The format follows [Kee
 
 Upgrading: needs a server that reports `features.manifest`; with an older server databases stay "unverified". Tabs opened before the update stop syncing a database once it has a manifest and cannot save there; reloading the page fixes this.
 
+Freshness attestations and pairing need a server that reports `features.freshness`; with an older server nothing is uploaded, pairing is not offered, and a new device shows its databases as unconfirmed until "Understood". Devices that synced before this version count their state as confirmed once, at the first sync after the update.
+
 Signed roles need a server that reports `features.roles`; with an older server the earlier rules stay. Accounts registered before add their signing key after their next unlock (after a sign-in with a second factor, at the unlock that follows). Contacts verified before are marked "outdated" and count as not verified until their fingerprint is compared once more; until then new keys from them wait for that comparison.
 
 ### Security
 
+- Freshness on new and long-unused devices: each device signs, with the account's signing key, which state of a database and of the account data it confirmed and when. A device whose own confirmation is older than the period (7 days by default, 1–90 in the settings) needs such an attestation of its own account; otherwise the database stays read-only with the warning "No device of your account has confirmed the state since …", takes no new key and allows no invitation, promotion or key renewal until the device is paired or the user confirms. Own attestations also act as floors: an older key version, manifest root or owner list than one ever attested is a rollback. Only the own account's attestations count, checked with the locally derived key; anything else is ignored.
+- A device signs only states without warnings, and never an owner list it has not taken over. "Understood" at a rollback, manifest or owner list warning takes the delivered state as confirmed and replaces an own attestation that contradicts it.
+- An invitation confirms the new member's state only when its sender is an owner of the statement the box names; a pending key never confirms a state.
 - Owner-signed roles: every database keeps a chain of statements signed by its owners, naming the owners with their keys and committing to the vault key of each key version. A new key after a rotation, and the key of an invitation, is accepted only when the chain, checked from this account's last checked statement, commits to exactly that key. A server can no longer pass off the key of a removed member, even when it names that member as owner.
 - The account's Ed25519 signing key follows from its user key; unlocking checks the server's copy. The fingerprint of an account now covers both public keys (version 2).
 - Role changes and rotations are signed; promoting needs a contact verified with the new fingerprint. Owners step down, signed, before leaving a database or deleting the account, and drop owners who are no longer members from the chain.
@@ -17,6 +22,8 @@ Signed roles need a server that reports `features.roles`; with an older server t
 
 ### Added
 
+- Pair devices: a device shows a 24-character code (also as a QR code), and another device of the account takes over its high-water marks and confirmations with it, typed or from an image. Afterwards it recognises every older state the server delivers. New devices are offered pairing after the first unlock.
+- The confirmation period in the settings.
 - Vault manifest: every database carries an encrypted list of all its objects with a hash of each. After every sync the web client checks what the server delivered against it, also on a new device. If objects are missing, differ or are not listed, the database becomes read-only with the warning "The server is withholding data", the counts and a list on the database page.
 - "Understood" at that warning asks first, then syncs in full, accepts the delivered state and writes the manifest anew.
 - New databases get their manifest at once, existing ones after their first full sync; a database without one is marked "unverified".
@@ -25,6 +32,7 @@ Signed roles need a server that reports `features.roles`; with an older server t
 
 ### Changed
 
+- The main view no longer cancels a navigation started while the first database was still loading.
 - Every save also writes the manifest. Saves of two devices at the same time therefore always meet; the second is planned again without a notice, and only real conflicts count towards the three attempts.
 
 ## [0.1.1] - 2026-10-26
