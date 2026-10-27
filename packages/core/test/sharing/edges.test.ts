@@ -191,6 +191,11 @@ describe("rotation errors", () => {
     const two = record().objects.get(second.id);
     if (one) one.data = null;
     if (two) two.key_version = 9;
+    // Changed behind the manifest: refused until the owner accepts it.
+    await expect(alice.engine.prepareRotation(vaultId)).rejects.toMatchObject({
+      code: "manifest_mismatch",
+    });
+    await alice.engine.acknowledgeManifest(vaultId);
     const review = await alice.engine.prepareRotation(vaultId);
     expect(review.corrupt.map((o) => o.id).sort()).toEqual(
       [created.id, second.id].sort(),
@@ -263,9 +268,10 @@ describe("rotation errors", () => {
         }
       }
     };
+    // The restart finds the object changed behind the manifest.
     await expect(
       alice.engine.runRotation(review, { remove: [], dropCorrupt: false }),
-    ).rejects.toMatchObject({ code: "rotation_conflict" });
+    ).rejects.toMatchObject({ code: "manifest_mismatch" });
     server.onRequest = () => undefined;
   });
 });

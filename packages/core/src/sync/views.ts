@@ -45,6 +45,7 @@ import {
 } from "../model/vault";
 import type { Candidate } from "../sharing/candidate";
 import type { ConnectionState } from "./events";
+import type { ManifestIssue, ManifestStatus } from "./manifest";
 import type { ObjectEntry, VaultState } from "./vault";
 import { objectWritable, vaultWritable } from "./writer";
 
@@ -195,6 +196,13 @@ export interface VaultView {
   /** The rollback includes an older key version (a removed member could read new writes). */
   readonly keyRollback: boolean;
   readonly corrupt: readonly CorruptObjectView[];
+  /**
+   * The delivered state against the vault manifest: `mismatch` means the
+   * server withholds data or delivers versions the manifest does not name.
+   */
+  readonly manifest: ManifestStatus;
+  /** What does not match, for `mismatch`. */
+  readonly manifestIssues: readonly ManifestIssue[];
   readonly rootGroupId: string | undefined;
   readonly recycleBinGroupId: string | null;
   readonly recycleBinEnabled: boolean;
@@ -624,7 +632,7 @@ export class VaultProjection {
       icons,
       iconCleanup: !writable
         ? "read_only"
-        : corrupt.some((c) => c.type !== "icon")
+        : corrupt.some((c) => c.type !== "icon" && c.type !== "manifest")
           ? "corrupt"
           : "ok",
       writable,
@@ -634,6 +642,13 @@ export class VaultProjection {
         previous && JSON.stringify(previous.corrupt) === JSON.stringify(corrupt)
           ? previous.corrupt
           : corrupt,
+      manifest: state.manifest.status,
+      manifestIssues:
+        previous &&
+        JSON.stringify(previous.manifestIssues) ===
+          JSON.stringify(state.manifest.issues)
+          ? previous.manifestIssues
+          : [...state.manifest.issues],
       rootGroupId: meta?.rootGroupId,
       recycleBinGroupId: meta?.recycleBinGroupId ?? null,
       recycleBinEnabled: meta?.recycleBinEnabled ?? false,
@@ -782,7 +797,7 @@ function timestamp(
 export function usedIcons(state: VaultState): Set<string> {
   const used = new Set<string>();
   for (const object of state.objects.values())
-    if (object.type !== "icon")
+    if (object.type !== "icon" && object.type !== "manifest")
       for (const id of iconRefs(object.raw)) used.add(id);
   return used;
 }

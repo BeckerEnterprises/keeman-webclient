@@ -5,6 +5,7 @@
  */
 import type { JsonObject } from "../crypto/bytes";
 import { utf8Length } from "../model/history";
+import { bucketOf, MANIFEST_SHARDS } from "../model/manifest";
 import { keysAtEnd, keysForInsert, type Sibling } from "../model/sort-key";
 import { isWithin, subtree, type TreeLayout } from "../model/tree";
 import { tokenize } from "../placeholders/tokens";
@@ -573,11 +574,63 @@ export function planNewGroup(
   ];
 }
 
-/** Splits intents into batches of at most 500 ops and about 12 MiB. */
-export function chunks(intents: readonly Intent[]): Intent[][] {
+/** Encrypted size of a plaintext of `bytes`: padding, envelope, Base64url, op. */
+function encryptedSize(bytes: number): number {
+  return Math.ceil(((bytes + 297) * 4) / 3) + 300;
+}
+
+/** What the manifest adds to a batch: the root and every touched shard. */
+export interface ManifestCost {
+  /** Encrypted size of shard `k` as it is now. */
+  shard(k: number): number;
+  root: number;
+  /**
+   * IDs may still change (a taken ID gets a new one), so the buckets are
+   * not known yet: every batch keeps room for all shards.
+   */
+  allShards?: boolean;
+}
+
+/** About 100 bytes per listed object (ID, type and hash in JSON). */
+const MANIFEST_ENTRY_BYTES = 100;
+
+/** Manifest sizes from what the server delivered for this vault. */
+export function manifestCost(state: VaultState): ManifestCost {
+  const counts = new Array<number>(MANIFEST_SHARDS).fill(0);
+  for (const served of state.served.values())
+    counts[served.bucket] = (counts[served.bucket] ?? 0) + 1;
+  return {
+    shard: (k) => encryptedSize((counts[k] ?? 0) * MANIFEST_ENTRY_BYTES + 64),
+    root: encryptedSize(MANIFEST_SHARDS * 60 + 64),
+  };
+}
+
+/** For a vault whose state is not known yet (the KDBX import plans early). */
+export const MANIFEST_RESERVE: ManifestCost = {
+  shard: () => 48 * 1024,
+  root: 8 * 1024,
+  allShards: true,
+};
+
+/**
+ * Splits intents into batches of at most 500 ops and about 12 MiB, the
+ * root and the touched shards of the manifest included.
+ */
+export function chunks(
+  intents: readonly Intent[],
+  cost: ManifestCost = MANIFEST_RESERVE,
+): Intent[][] {
   const result: Intent[][] = [];
+  const all = Array.from({ length: MANIFEST_SHARDS }, (_, k) => k);
+  const start = () => (cost.allShards ? new Set(all) : new Set<number>());
+  const startBytes = () =>
+    cost.allShards
+      ? all.reduce((sum, k) => sum + cost.shard(k), cost.root)
+      : cost.root;
   let current: Intent[] = [];
   let bytes = 0;
+  let buckets = start();
+  let manifest = startBytes();
   for (const intent of intents) {
     const content =
       intent.kind === "create"
@@ -585,21 +638,35 @@ export function chunks(intents: readonly Intent[]): Intent[][] {
         : intent.kind === "update"
           ? intent.local
           : undefined;
-    // Encrypted size: padding, envelope and Base64url, plus the op itself.
-    const size = content
-      ? Math.ceil(((utf8Length(JSON.stringify(content)) + 297) * 4) / 3) + 300
-      : 600;
+    const size =
+      (content ? encryptedSize(utf8Length(JSON.stringify(content))) : 600) +
+      MANIFEST_ENTRY_BYTES * 2;
+    const bucket = bucketOf(intent.id);
+    const newBucket = !buckets.has(bucket);
+    const extra = newBucket ? cost.shard(bucket) : 0;
+    const ops = current.length + 1 + buckets.size + (newBucket ? 1 : 0) + 1;
     if (
       current.length > 0 &&
-      (current.length >= MAX_OPS || bytes + size > MAX_BATCH_BYTES)
+      (ops > MAX_OPS || bytes + size + manifest + extra > MAX_BATCH_BYTES)
     ) {
       result.push(current);
       current = [];
       bytes = 0;
+      buckets = start();
+      manifest = startBytes();
+    }
+    if (!buckets.has(bucket)) {
+      buckets.add(bucket);
+      manifest += cost.shard(bucket);
     }
     current.push(intent);
     bytes += size;
   }
   if (current.length > 0) result.push(current);
   return result;
+}
+
+/** Sorted by manifest bucket, so a batch touches few shards. */
+export function byBucket<T extends { id: string }>(items: readonly T[]): T[] {
+  return [...items].sort((a, b) => bucketOf(a.id) - bucketOf(b.id));
 }

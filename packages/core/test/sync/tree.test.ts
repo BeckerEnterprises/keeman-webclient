@@ -199,6 +199,11 @@ describe("groups in the tree", () => {
     a.server.vaults.get(a.vaultId)?.objects.delete(oldBin);
     const b = await secondDevice(a.server);
     const c = await secondDevice(a.server);
+    // The manifest still names it: the user accepts the delivered state.
+    expect(vault(b.engine, a.vaultId).manifest).toBe("mismatch");
+    await b.engine.acknowledgeManifest(a.vaultId);
+    await c.engine.pull(a.vaultId);
+    expect(vault(c.engine, a.vaultId).manifest).toBe("verified");
     expect(b.engine.deletePlan(a.vaultId, [groupRef(x.id)])).toMatchObject({
       mode: "trash",
       createsBin: true,
@@ -239,8 +244,11 @@ describe("groups in the tree", () => {
       inner,
       Array.from({ length: 520 }, (_, i) => draft(`E${String(i)}`)),
     );
-    expect(a.server.batchSizes.slice(-2)).toEqual([500, 20]);
+    // Root and shards count towards the 500 ops of a batch.
+    expect(a.server.batchSizes.slice(-2).every((n) => n <= 500)).toBe(true);
+    expect(a.server.batchContent.slice(-2).reduce((x, y) => x + y)).toBe(520);
     a.server.batchSizes.length = 0;
+    a.server.batchContent.length = 0;
     // The second batch fails: 500 entries are gone, the groups stay, no orphans.
     const path = `/v1/vaults/${a.vaultId}/batch`;
     const failure = { status: 503, code: "internal_error" };
@@ -256,15 +264,19 @@ describe("groups in the tree", () => {
       .catch((e: unknown) => e);
     expect(error).toMatchObject({ code: "network" });
     await a.engine.pull(a.vaultId);
-    expect(vault(a.engine, a.vaultId).entries.size).toBe(20);
+    const [first = 0] = a.server.batchContent;
+    expect(first).toBeGreaterThan(400);
+    expect(vault(a.engine, a.vaultId).entries.size).toBe(520 - first);
     expect(vault(a.engine, a.vaultId).tree.repairs).toEqual([]);
+    expect(vault(a.engine, a.vaultId).manifest).toBe("verified");
     expect(stored(a.server, a.vaultId, top.id).deleted).toBe(false);
     await (error as SyncError).retry?.();
     await a.engine.pull(a.vaultId);
     expect(vault(a.engine, a.vaultId).entries.size).toBe(0);
     expect(stored(a.server, a.vaultId, top.id).deleted).toBe(true);
     expect(stored(a.server, a.vaultId, inner).deleted).toBe(true);
-    expect(a.server.batchSizes).toEqual([500, 22]);
+    expect(a.server.batchContent).toEqual([first, 520 - first + 2]);
+    expect(a.server.batchSizes.every((n) => n <= 500)).toBe(true);
   });
 
   it("empties the recycle bin and refuses unwritable subtrees", async () => {
@@ -371,6 +383,10 @@ describe("groups in the tree", () => {
       code: "invalid_name",
     });
     const c = await secondDevice(a.server);
+    // The manifest still names the root: accepted as delivered first.
+    expect(vault(b.engine, a.vaultId).manifest).toBe("mismatch");
+    await b.engine.acknowledgeManifest(a.vaultId);
+    await c.engine.pull(a.vaultId);
     await b.engine.repair(a.vaultId, "Persönlich");
     // The second device's plan sees the new root after the conflict.
     await c.engine.repair(a.vaultId, "Persönlich");

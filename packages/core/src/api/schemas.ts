@@ -21,7 +21,11 @@ export const ServerConfigSchema = v.object({
   server_version: v.string(),
   api_version: v.number(),
   registration: v.picklist(["closed", "invite", "open"]),
-  features: v.object({ favicon: v.boolean() }),
+  features: v.object({
+    favicon: v.boolean(),
+    /** Absent on servers that do not know the vault manifest. */
+    manifest: v.optional(v.boolean()),
+  }),
   limits: v.object({ attachment_max_bytes: Count }),
 });
 export type ServerConfig = v.InferOutput<typeof ServerConfigSchema>;
@@ -235,7 +239,13 @@ export const OpenRotationSchema = v.object({
 });
 export type OpenRotation = v.InferOutput<typeof OpenRotationSchema>;
 
-export const OBJECT_TYPES = ["vault_meta", "group", "entry", "icon"] as const;
+export const OBJECT_TYPES = [
+  "vault_meta",
+  "group",
+  "entry",
+  "icon",
+  "manifest",
+] as const;
 
 export const ChangesPageSchema = v.object({
   vault_revision: PositiveInteger,

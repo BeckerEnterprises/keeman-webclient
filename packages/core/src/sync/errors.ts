@@ -47,6 +47,8 @@ export type SyncErrorCode =
   | "invalid_url"
   /** A rollback warning is open; acknowledge it first. */
   | "rollback_open"
+  /** The delivered state does not match the vault manifest; acknowledge first. */
+  | "manifest_mismatch"
   | "locked";
 
 export class SyncError extends Error {

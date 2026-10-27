@@ -2,7 +2,13 @@ import { fromBase64Url } from "./bytes";
 import { CryptoError } from "./errors";
 import { assertUuid } from "./uuid";
 
-export const OBJECT_TYPES = ["vault_meta", "group", "entry", "icon"] as const;
+export const OBJECT_TYPES = [
+  "vault_meta",
+  "group",
+  "entry",
+  "icon",
+  "manifest",
+] as const;
 export type ObjectType = (typeof OBJECT_TYPES)[number];
 
 export function isObjectType(value: unknown): value is ObjectType {

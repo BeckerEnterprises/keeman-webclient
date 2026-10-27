@@ -1004,6 +1004,7 @@ export interface components {
             };
             features: {
                 favicon: boolean;
+                manifest?: boolean;
             };
             limits: {
                 attachment_max_bytes: number;
@@ -1239,7 +1240,7 @@ export interface components {
         VaultList: {
             vaults: components["schemas"]["VaultSummary"][];
         };
-        ObjectType: "vault_meta" | "group" | "entry" | "icon";
+        ObjectType: "vault_meta" | "group" | "entry" | "icon" | "manifest";
         ObjectUpload: {
             id: components["schemas"]["Uuid"];
             type: components["schemas"]["ObjectType"];
@@ -1366,7 +1367,7 @@ export interface components {
             height: 64;
             origin: string;
         };
-        ProblemCode: "validation_failed" | "url_not_allowed" | "invalid_credentials" | "invalid_second_factor" | "challenge_invalid" | "session_invalid" | "reauth_required" | "forbidden" | "registration_closed" | "invite_invalid" | "account_disabled" | "not_found" | "user_not_found" | "feature_disabled" | "method_not_allowed" | "request_timeout" | "conflict" | "refresh_superseded" | "rotation_invalid" | "stale_key_version" | "key_version_mismatch" | "email_taken" | "already_registered" | "already_member" | "last_owner" | "sole_owner_of_shared_vault" | "use_rotate" | "two_factor_state_invalid" | "resync_required" | "payload_too_large" | "attachment_too_large" | "unsupported_media_type" | "range_not_satisfiable" | "kdf_params_invalid" | "rotation_incomplete" | "favicon_not_found" | "idempotency_key_reused" | "attachment_incomplete" | "rate_limited" | "internal_error" | "quota_exceeded";
+        ProblemCode: "validation_failed" | "url_not_allowed" | "invalid_credentials" | "invalid_second_factor" | "challenge_invalid" | "session_invalid" | "reauth_required" | "forbidden" | "registration_closed" | "invite_invalid" | "account_disabled" | "not_found" | "user_not_found" | "feature_disabled" | "method_not_allowed" | "request_timeout" | "conflict" | "refresh_superseded" | "rotation_invalid" | "stale_key_version" | "key_version_mismatch" | "email_taken" | "already_registered" | "already_member" | "last_owner" | "sole_owner_of_shared_vault" | "use_rotate" | "two_factor_state_invalid" | "resync_required" | "payload_too_large" | "attachment_too_large" | "unsupported_media_type" | "range_not_satisfiable" | "kdf_params_invalid" | "rotation_incomplete" | "favicon_not_found" | "idempotency_key_reused" | "attachment_incomplete" | "manifest_required" | "rate_limited" | "internal_error" | "quota_exceeded";
         Problem: {
             type?: string;
             title: string;
@@ -3234,7 +3235,14 @@ export interface operations {
                 };
             };
             413: components["responses"]["PayloadTooLarge"];
-            422: components["responses"]["IdempotencyKeyReused"];
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             507: components["responses"]["QuotaExceeded"];
             default: components["responses"]["Problem"];
         };

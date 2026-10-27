@@ -176,6 +176,44 @@ describe("stored marks", () => {
     expect((await fresh.read(user)).vaults[VAULT]).toEqual({ rev: 7, obj: {} });
   });
 
+  it("keeps the manifest floor as a maximum that no replacement lowers", async () => {
+    const store = memoryStore();
+    const marks = storedSyncMarks(store, (task) => Promise.resolve(task()));
+    const user = U(1);
+    await marks.raise(user, {
+      vaults: { [VAULT]: { rev: 3, mf: 5, obj: {} } },
+    });
+    await marks.raise(user, {
+      vaults: { [VAULT]: { rev: 4, mf: 2, obj: {} } },
+    });
+    expect((await marks.read(user)).vaults[VAULT]).toEqual({
+      rev: 4,
+      mf: 5,
+      obj: {},
+    });
+    // "Understood" replaces the marks but never lowers the floor, also when
+    // another tab stored a higher one.
+    await marks.replaceVault(user, VAULT, { rev: 2, mf: 3, obj: {} });
+    expect(parse(store.text).users[user]).toEqual({
+      vaults: { [VAULT]: { rev: 2, mf: 5, obj: {} } },
+    });
+    store.text = JSON.stringify({
+      v: 1,
+      users: { [user]: { vaults: { [VAULT]: { rev: 2, mf: 9, obj: {} } } } },
+    });
+    await marks.replaceVault(user, VAULT, { rev: 2, obj: {} });
+    expect(parse(store.text).users[user]).toEqual({
+      vaults: { [VAULT]: { rev: 2, mf: 9, obj: {} } },
+    });
+    // Data written before the floor existed stays valid.
+    store.text = JSON.stringify({
+      v: 1,
+      users: { [user]: { vaults: { [VAULT]: { rev: 7, obj: {} } } } },
+    });
+    const fresh = storedSyncMarks(store, (task) => Promise.resolve(task()));
+    expect((await fresh.read(user)).vaults[VAULT]).toEqual({ rev: 7, obj: {} });
+  });
+
   it("replaces the owners, keeps them through raises and reads older data without them", async () => {
     const store = memoryStore();
     const marks = storedSyncMarks(store, (task) => Promise.resolve(task()));

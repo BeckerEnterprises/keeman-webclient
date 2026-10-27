@@ -13,6 +13,7 @@ import type { Keys } from "../crypto/keystore";
 import { decryptChange, type DecryptedChange } from "../crypto/objects";
 import { inspectEntry } from "../model/entry";
 import { inspectIcon } from "../model/icon";
+import { inspectManifest } from "../model/manifest";
 import {
   inspectGroup,
   inspectVaultMeta,
@@ -21,6 +22,14 @@ import {
 } from "../model/vault";
 import type { Candidate } from "../sharing/candidate";
 import { Mutex } from "./lock";
+import {
+  currentRoot,
+  rootFloor,
+  serve,
+  verifyManifest,
+  type ManifestCheck,
+  type Served,
+} from "./manifest";
 import {
   higherMark,
   isOlder,
@@ -88,6 +97,12 @@ export class VaultState {
   keyFloor = 0;
   /** Tombstones older than the mark of their object: ID → tombstone `seq`. */
   rollbackDeletes = new Map<string, number>();
+  /** What the server delivered as live, decryptable or not. */
+  served = new Map<string, Served>();
+  /** The last check of `served` against the manifest. */
+  manifest: ManifestCheck = { status: "unverified", issues: [] };
+  /** Highest root `seq` this device has seen; the next one goes above. */
+  manifestFloor = 0;
   error: unknown = undefined;
   /** Held by every sync and every write of this vault. */
   readonly lock = new Mutex();
@@ -136,6 +151,8 @@ function inspect(
       return inspectEntry(raw);
     case "icon":
       return inspectIcon(raw);
+    case "manifest":
+      return inspectManifest(raw, objectId, vaultId);
   }
 }
 
@@ -314,15 +331,19 @@ export async function pullVault(
   const full = async (): Promise<Applier> => {
     const objects = new Map<string, ObjectEntry>();
     const corrupt = new Map<string, CorruptEntry>();
+    const served = new Map<string, Served>();
     const applier = new Applier(state, marks, objects, corrupt, state.objects);
     state.rollbackDeletes.clear();
     const snapshot = await collect(context, state, 0, marks);
     // since=0 has no tombstones: a delta from the first page brings deletions.
     const delta = await collect(context, state, snapshot.first, marks);
-    for (const object of [...snapshot.objects, ...delta.objects])
+    for (const object of [...snapshot.objects, ...delta.objects]) {
       applier.apply(decode(context.keys, state.id, object));
+      serve(served, state.id, object);
+    }
     state.objects = objects;
     state.corrupt = corrupt;
+    state.served = served;
     state.since = delta.last;
     state.synced = true;
     return applier;
@@ -330,8 +351,10 @@ export async function pullVault(
   const delta = async (): Promise<Applier> => {
     const applier = new Applier(state, marks, state.objects, state.corrupt);
     const changes = await collect(context, state, state.since, marks);
-    for (const object of changes.objects)
+    for (const object of changes.objects) {
       applier.apply(decode(context.keys, state.id, object));
+      serve(state.served, state.id, object);
+    }
     state.since = changes.last;
     return applier;
   };
@@ -346,8 +369,23 @@ export async function pullVault(
   // Synced with the key of this version: it becomes the floor.
   const kv = state.summary.vault_key_version;
   state.keyFloor = Math.max(state.keyFloor, kv);
+  // The whole delivered state against the manifest, never single pages.
+  state.manifest = verifyManifest(state, marks);
+  const root = currentRoot(state);
+  const mf =
+    root && !root.entry.rollback
+      ? Math.max(rootFloor(state, marks), root.entry.seq)
+      : rootFloor(state, marks);
+  state.manifestFloor = Math.max(state.manifestFloor, mf);
   await context.marks.raise(context.userId, {
-    vaults: { [state.id]: { rev: state.since, kv, obj: applier.raised } },
+    vaults: {
+      [state.id]: {
+        rev: state.since,
+        kv,
+        obj: applier.raised,
+        ...(state.manifestFloor > 0 ? { mf: state.manifestFloor } : {}),
+      },
+    },
   });
 }
 
@@ -366,12 +404,15 @@ export async function acknowledgeRollback(
     obj[entry.id] = objectMark(entry.seq, false);
     entry.rollback = false;
   }
-  // The delivered key version becomes the mark too; the owners stay.
+  // The delivered key version becomes the mark too; the owners and the
+  // manifest floor stay, so no root `seq` is ever given out twice.
   const kv = state.summary.vault_key_version;
+  const mf = Math.max(current?.mf ?? 0, state.manifestFloor);
   await context.marks.replaceVault(context.userId, state.id, {
     rev: state.since,
     kv,
     ...(current?.ow ? { ow: current.ow } : {}),
+    ...(mf > 0 ? { mf } : {}),
     obj,
   });
   state.rollback = false;

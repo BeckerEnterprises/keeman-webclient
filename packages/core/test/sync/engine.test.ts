@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AccountError } from "../../src/account/errors";
 import { toBase64Url } from "../../src/crypto/bytes";
 import { emptyDraft } from "../../src/model/entry";
+import { manifestIds } from "../../src/model/manifest";
 import type { SyncEngine } from "../../src/sync/engine";
 import { SyncError } from "../../src/sync/errors";
 import { inMemorySyncMarks, type SyncMarks } from "../../src/sync/marks";
@@ -59,13 +60,24 @@ describe("first vault and the vault list", () => {
       corrupt: [],
       recycleBinEnabled: true,
     });
-    const objects = server.vaults.get(vaultId)?.objects;
-    expect(objects?.size).toBe(3);
-    expect(objects?.has(view.rootGroupId ?? "")).toBe(true);
-    expect(objects?.has(view.recycleBinGroupId ?? "")).toBe(true);
+    const objects = [...(server.vaults.get(vaultId)?.objects.values() ?? [])];
+    const content = objects.filter((o) => o.type !== "manifest");
+    expect(content).toHaveLength(3);
+    expect(content.map((o) => o.id)).toEqual(
+      expect.arrayContaining([view.rootGroupId, view.recycleBinGroupId]),
+    );
+    // The manifest comes along: the root and the shards of three objects.
+    const manifest = objects.filter((o) => o.type === "manifest");
+    expect(manifest.map((o) => o.id)).toContain(manifestIds(vaultId).root);
+    expect(manifest.length).toBeGreaterThanOrEqual(2);
+    expect(manifest.length).toBeLessThanOrEqual(4);
+    expect(view.manifest).toBe("verified");
     const seen = await marks.read(account.userId ?? "");
     expect(seen.vaults[vaultId]?.rev).toBe(1);
-    expect(Object.values(seen.vaults[vaultId]?.obj ?? {})).toEqual([1, 1, 1]);
+    expect(seen.vaults[vaultId]?.mf).toBe(1);
+    expect(Object.values(seen.vaults[vaultId]?.obj ?? {})).toEqual(
+      objects.map(() => 1),
+    );
     expect(engine.snapshot.loaded).toBe(true);
     expect(account.sync).toBe(engine);
     expect(account.startSync()).toBe(engine);
@@ -581,6 +593,11 @@ describe("rollback detection", () => {
     await b.engine.pull(a.vaultId);
     const view = vault(b.engine, a.vaultId);
     expect(view.rollback).toBe(true);
+    // The old version is not the one the manifest names.
+    expect(view.manifest).toBe("mismatch");
+    expect(view.manifestIssues).toEqual([
+      { id, type: "group", reason: "differs" },
+    ]);
     expect(groups(b.engine, a.vaultId).find((g) => g.id === id)).toMatchObject({
       name: "Alt",
       rollback: true,
@@ -594,8 +611,13 @@ describe("rollback detection", () => {
     a.server.tamperChanges = () => undefined;
     // Let the sync started by the failed write finish first.
     await b.engine.pull(a.vaultId);
-    await b.engine.acknowledgeRollback(a.vaultId);
-    expect(vault(b.engine, a.vaultId).rollback).toBe(false);
+    // A delta does not bring the real version back; "understood" syncs in
+    // full, which also clears the rollback.
+    await b.engine.acknowledgeManifest(a.vaultId);
+    expect(vault(b.engine, a.vaultId)).toMatchObject({
+      rollback: false,
+      manifest: "verified",
+    });
     await b.engine.renameGroup(a.vaultId, id, "Wieder");
     // An older vault revision makes the whole vault read-only.
     a.server.tamperChanges = (page) => {
@@ -629,8 +651,11 @@ describe("rollback detection", () => {
     );
 
     // A tombstone older than the live object seen before (only a stale
-    // client can produce one; the fake server lets it through).
-    const c = await firstDevice();
+    // client can produce one; the fake server lets it through). With a
+    // manifest the stale client would have to sync first.
+    const plain = new FakeServer();
+    plain.manifestEnabled = false;
+    const c = await firstDevice(plain);
     const other = await add(c.engine, c.vaultId, "A");
     const stale = await secondDevice(c.server);
     await c.engine.renameGroup(c.vaultId, other.id, "B");

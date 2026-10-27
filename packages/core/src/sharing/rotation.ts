@@ -7,16 +7,29 @@
 import { ApiError } from "../api/errors";
 import type { Member } from "../api/schemas";
 import type { ObjectType } from "../crypto/aad";
-import { wipe } from "../crypto/bytes";
+import { wipe, type JsonObject } from "../crypto/bytes";
 import {
   dropTombstone,
   findUndecryptableObjects,
+  rotateManifest,
   rotateObject,
   rotationCommit,
   rotationKey,
+  type RotatedManifest,
   type StoredObject,
 } from "../crypto/flows/vault";
+import { decryptObject } from "../crypto/objects";
 import { systemRandomness } from "../crypto/random";
+import {
+  bucketOf,
+  checkManifest,
+  inspectManifest,
+  manifestIds,
+  objectHash,
+  type ManifestCheck,
+  type ManifestRead,
+  type Served,
+} from "../model/manifest";
 import { SyncError } from "../sync/errors";
 import { keyOf, statusNow, toCandidate, type Candidate } from "./candidate";
 import type { SharingContext } from "./context";
@@ -67,11 +80,15 @@ interface Collected {
   objects: StoredObject[];
   corrupt: CorruptObject[];
   members: Member[];
+  /** The collected state against its own manifest. */
+  check: ManifestCheck;
+  /** The manifest to renew; absent for a vault without one. */
+  manifest: RotatedManifest | undefined;
 }
 
 const plans = new WeakMap<
   RotationReview,
-  { collected: Collected; vaultName: string }
+  { collected: Collected; vaultName: string; floor: number }
 >();
 
 /** The attempt ends and a new one starts with a fresh full sync. */
@@ -84,10 +101,89 @@ class Restart extends Error {
   }
 }
 
+/** Decrypted content of a collected object, `undefined` if it fails. */
+function decrypted(
+  ctx: SharingContext,
+  vaultId: string,
+  object: StoredObject | undefined,
+): JsonObject | undefined {
+  const data = object?.data;
+  if (!object || !data || !ctx.keys.hasVaultKey(vaultId, object.key_version))
+    return undefined;
+  const ref = {
+    vaultId,
+    objectId: object.id,
+    type: object.type,
+    keyVersion: object.key_version,
+  };
+  try {
+    return ctx.keys.useVaultKey(vaultId, object.key_version, (key) =>
+      decryptObject(key, ref, data),
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The collected objects against their manifest, so a rotation never
+ * writes a withheld or replayed state with the new key.
+ */
+function manifestOf(
+  ctx: SharingContext,
+  vaultId: string,
+  live: readonly (StoredObject & { revision: number })[],
+  floor: number,
+): { check: ManifestCheck; manifest: RotatedManifest | undefined } {
+  const byId = new Map(live.map((o) => [o.id, o]));
+  const served = new Map<string, Served>();
+  for (const o of live)
+    served.set(o.id, {
+      type: o.type,
+      revision: o.revision,
+      hash: objectHash(vaultId, o.id, o.type, o.key_version, o.data),
+      bucket: bucketOf(o.id),
+    });
+  const read = (id: string): ManifestRead => {
+    const object = byId.get(id);
+    if (!object) return { kind: "absent" };
+    if (!ctx.keys.hasVaultKey(vaultId, object.key_version))
+      return { kind: "corrupt", reason: "no_key" };
+    const raw = decrypted(ctx, vaultId, object);
+    if (!raw) return { kind: "corrupt", reason: "auth" };
+    const inspected = inspectManifest(raw, id, vaultId);
+    if (inspected.status === "corrupt")
+      return { kind: "corrupt", reason: inspected.reason };
+    if (inspected.value.kind === "newer") return { kind: "newer" };
+    return { kind: "ok", seq: inspected.seq, raw, value: inspected.value };
+  };
+  const check = checkManifest({
+    vaultId,
+    served,
+    read,
+    flagged: decrypted(ctx, vaultId, byId.get(vaultId))?.manifest === true,
+    floor,
+  });
+  if (check.status !== "verified") return { check, manifest: undefined };
+  const ids = manifestIds(vaultId);
+  const root = read(ids.root);
+  if (root.kind !== "ok") return { check, manifest: undefined };
+  const shards = new Map<number, { raw: JsonObject; seq: number }>();
+  ids.shards.forEach((id, k) => {
+    const shard = read(id);
+    if (shard.kind === "ok") shards.set(k, { raw: shard.raw, seq: shard.seq });
+  });
+  return {
+    check,
+    manifest: { root: { raw: root.raw, seq: root.seq }, shards, floor },
+  };
+}
+
 /** Full state with ciphertexts: since=0, then a delta from the first page. */
 async function collect(
   ctx: SharingContext,
   vaultId: string,
+  floor: number,
 ): Promise<Collected> {
   const objects = new Map<string, StoredObject & { revision: number }>();
   const read = async (
@@ -121,15 +217,15 @@ async function collect(
   };
   const full = await read(0);
   const delta = await read(full.first);
-  const live = [...objects.values()]
-    .filter((o) => !o.deleted)
-    .map((o): StoredObject => ({
-      id: o.id,
-      type: o.type,
-      key_version: o.key_version,
-      deleted: false,
-      data: o.data,
-    }));
+  const collected = [...objects.values()].filter((o) => !o.deleted);
+  const live = collected.map((o): StoredObject => ({
+    id: o.id,
+    type: o.type,
+    key_version: o.key_version,
+    deleted: false,
+    data: o.data,
+  }));
+  const { check, manifest } = manifestOf(ctx, vaultId, collected, floor);
   const corrupt = live
     .filter((o) => {
       if (o.data === null || !ctx.keys.hasVaultKey(vaultId, o.key_version))
@@ -152,7 +248,20 @@ async function collect(
     objects: live,
     corrupt,
     members: await ctx.api.members(vaultId),
+    check,
+    manifest,
   };
+}
+
+/** Refuses a collected state that does not match its manifest. */
+function checked(collected: Collected): Collected {
+  if (collected.check.status === "mismatch")
+    throw new SyncError("manifest_mismatch");
+  if (collected.check.status === "unknown") throw new SyncError("read_only");
+  const root = collected.manifest?.root.seq ?? Number.POSITIVE_INFINITY;
+  if (collected.manifest && root < collected.manifest.floor)
+    throw new SyncError("rollback_open");
+  return collected;
 }
 
 function recipientsOf(
@@ -173,17 +282,19 @@ export async function prepareRotation(
   ctx: SharingContext,
   vaultId: string,
   vaultName: string,
+  /** Highest manifest root `seq` this device has seen. */
+  floor = 0,
 ): Promise<RotationReview> {
-  const collected = await collect(ctx, vaultId);
+  const collected = checked(await collect(ctx, vaultId, floor));
   if (collected.corrupt.some((o) => o.type === "vault_meta"))
     throw new SyncError("read_only");
   const review: RotationReview = Object.freeze({
     vaultId,
     recipients: recipientsOf(ctx, collected.members),
     corrupt: collected.corrupt,
-    objects: collected.objects.length,
+    objects: collected.objects.filter((o) => o.type !== "manifest").length,
   });
-  plans.set(review, { collected, vaultName });
+  plans.set(review, { collected, vaultName, floor });
   return review;
 }
 
@@ -285,8 +396,12 @@ async function attempt(
       ),
     );
     const dropped = new Set(collected.corrupt.map((o) => o.id));
-    const live = collected.objects.filter((o) => !dropped.has(o.id));
+    // Manifest objects are renewed, not re-encrypted as they are.
+    const live = collected.objects.filter(
+      (o) => !dropped.has(o.id) && o.type !== "manifest",
+    );
     const split = parts(live);
+    const hashes: { id: string; type: string; hash: string }[] = [];
     let done = 0;
     run.onProgress?.({ done, total: live.length });
     for (const part of split) {
@@ -307,8 +422,29 @@ async function attempt(
       await call(() =>
         ctx.api.uploadRotationObjects(vaultId, opened.rotation_id, key, body),
       );
+      for (const o of objects)
+        hashes.push({
+          id: o.id,
+          type: o.type,
+          hash: objectHash(vaultId, o.id, o.type, newKeyVersion, o.data),
+        });
       done += part.length;
       run.onProgress?.({ done, total: live.length });
+    }
+    const manifest = collected.manifest;
+    if (manifest) {
+      const objects = rotateManifest(
+        systemRandomness,
+        { vaultId, newKeyVersion },
+        manifest,
+        hashes,
+        vaultKey,
+      );
+      const body = JSON.stringify({ objects });
+      const key = systemRandomness.id("idempotency_key");
+      await call(() =>
+        ctx.api.uploadRotationObjects(vaultId, opened.rotation_id, key, body),
+      );
     }
     // Invitations sent meanwhile must not vanish unnoticed.
     const members = await ctx.api.members(vaultId);
@@ -389,7 +525,7 @@ export async function runRotation(
       )
         throw new SyncError("rotation_conflict");
     }
-    collected = await collect(ctx, review.vaultId);
+    collected = checked(await collect(ctx, review.vaultId, plan.floor));
     // New corrupt objects need the owner's decision.
     if (collected.corrupt.some((o) => !corrupt.has(o.id)))
       throw new SyncError("rotation_conflict");

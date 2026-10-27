@@ -11,6 +11,7 @@ import {
 import { createHmac } from "node:crypto";
 import { concatBytes, toBase64Url, utf8Encode } from "../../src/crypto/bytes";
 import { sodium } from "../../src/crypto/sodium";
+import { isManifestId, manifestIds } from "../../src/model/manifest";
 import { decodeTotpSecret } from "../../src/totp/uri";
 import { iconPng } from "../helpers";
 import {
@@ -199,7 +200,10 @@ export class FakeServer {
   /** Like dropResponse, but stays active until replaced. */
   loseResponses: Hook = () => false;
   /** Answer the next request to this path with this status, unprocessed. */
-  failures = new Map<string, { status: number; code: string }[]>();
+  failures = new Map<
+    string,
+    { status: number; code: string; extra?: Record<string, unknown> }[]
+  >();
   /** Registration without invite codes (`registration = "open"`). */
   openRegistration = false;
   /** Change a `GET /v1/me` response before it is sent. */
@@ -227,6 +231,8 @@ export class FakeServer {
   clockSkewMs = 0;
   /** Op counts of accepted batch requests, in order. */
   batchSizes: number[] = [];
+  /** Ops per batch that are not manifest objects. */
+  batchContent: number[] = [];
   /** Attachments by ID; `partSize` is fixed per server. */
   readonly attachments = new Map<string, FakeAttachment>();
   partSize = 8 * 1024 * 1024;
@@ -244,6 +250,8 @@ export class FakeServer {
   tamperPublicKey: (user: SharingUser) => void = () => undefined;
   /** Open login and recovery challenges. */
   faviconEnabled = true;
+  /** `features.manifest` of `GET /v1/config`; off like an older server. */
+  manifestEnabled = true;
   /** URLs sent to `POST /v1/favicon`. */
   readonly faviconRequests: string[] = [];
   /** The favicon proxy's answer; by default a valid icon. */
@@ -290,7 +298,10 @@ export class FakeServer {
     const headers = new Headers(init.headers);
     this.log.push({ method, path: url.pathname + url.search, body });
     const failure = this.failures.get(url.pathname)?.shift();
-    if (failure) return Promise.resolve(problem(failure.status, failure.code));
+    if (failure)
+      return Promise.resolve(
+        problem(failure.status, failure.code, failure.extra),
+      );
     if (init.signal?.aborted) throw init.signal.reason;
     this.onRequest(method, url.pathname);
     const response = this.#handle(
@@ -704,7 +715,10 @@ export class FakeServer {
         server_version: "0.1.0",
         api_version: 1,
         registration: this.openRegistration ? "open" : "invite",
-        features: { favicon: this.faviconEnabled },
+        features: {
+          favicon: this.faviconEnabled,
+          ...(this.manifestEnabled ? { manifest: true } : {}),
+        },
         limits: {
           attachment_max_bytes: this.attachmentMaxBytes,
           batch_max_ops: 500,
@@ -1090,6 +1104,12 @@ export class FakeServer {
     if (method === "POST" && path === "/v1/vaults") {
       return idempotent("POST /v1/vaults", () => {
         const id = data.vault_id as string;
+        if (
+          (data.objects as { id: string; type: string }[]).some(
+            (o) => (o.type === "manifest") !== isManifestId(id, o.id),
+          )
+        )
+          return problem(400, "validation_failed");
         if (this.vaults.has(id)) return problem(409, "conflict");
         const vault: VaultRecord = {
           id,
@@ -1224,6 +1244,11 @@ export class FakeServer {
       )
         return problem(413, "payload_too_large");
       this.batchSizes.push(batchOps.length);
+      this.batchContent.push(
+        (batchOps as { id?: string }[]).filter(
+          (op) => !isManifestId(match[1] ?? "", op.id ?? ""),
+        ).length,
+      );
       return idempotent(`POST ${path}`, () => {
         if (!vault || !member) return problem(404, "not_found");
         const ops = data.ops as {
@@ -1236,6 +1261,13 @@ export class FakeServer {
         }[];
         for (const op of ops) {
           const stored = vault.objects.get(op.id);
+          const manifest = isManifestId(vault.id, op.id);
+          if (
+            op.op === "delete"
+              ? manifest
+              : (op.type === "manifest") !== manifest
+          )
+            return problem(400, "validation_failed");
           if (op.op === "put" && stored && stored.type !== op.type)
             return problem(400, "validation_failed");
         }
@@ -1243,6 +1275,12 @@ export class FakeServer {
           return problem(409, "stale_key_version", {
             current_key_version: vault.key_version,
           });
+        const root = manifestIds(vault.id).root;
+        if (
+          vault.objects.get(root)?.deleted === false &&
+          !ops.some((op) => op.op === "put" && op.id === root)
+        )
+          return problem(422, "manifest_required");
         const conflicts = ops.flatMap((op) => {
           const stored = vault.objects.get(op.id);
           const entry = (rev: number | null, deleted: boolean) => [

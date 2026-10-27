@@ -174,6 +174,12 @@ describe("icon library", () => {
     const object = stored(a.server, a.vaultId, group.id);
     object.data = flipped(object.data ?? "");
     const b = await secondDevice(a.server);
+    // Changed on the server: read-only until the user accepts the state.
+    expect(vault(b.engine, a.vaultId)).toMatchObject({
+      manifest: "mismatch",
+      iconCleanup: "read_only",
+    });
+    await b.engine.acknowledgeManifest(a.vaultId);
     expect(vault(b.engine, a.vaultId).iconCleanup).toBe("corrupt");
     const error = await rejected(b.engine.removeUnusedIcons(a.vaultId));
     expect((error as SyncError).code).toBe("corrupt_objects");

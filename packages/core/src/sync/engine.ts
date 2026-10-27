@@ -38,6 +38,7 @@ import {
   type IconSource,
 } from "../model/icon";
 import { clone, same, setOwn } from "../model/json";
+import { isManifestId } from "../model/manifest";
 import { keyAtEnd, keysAtEnd } from "../model/sort-key";
 import { ancestors, subtree } from "../model/tree";
 import {
@@ -104,12 +105,14 @@ import { Serial } from "./serial";
 import {
   basesOf,
   brokenReferences,
+  byBucket,
   checkMove,
   chunks,
   deletePlan,
   destroyIntents,
   isGroupNode,
   layoutOf,
+  manifestCost,
   metaOf,
   newRootIntents,
   planMove,
@@ -145,6 +148,7 @@ import {
   vaultWritable,
   WriteOperation,
   type Intent,
+  type ManifestMode,
   type Notice,
   type Pending,
   type Plan,
@@ -290,6 +294,10 @@ export class SyncEngine {
   #invitations: Invitation[] = [];
   /** Public keys of senders by account; `null`: the server names none. */
   readonly #publicUsers = new Map<string, PublicUser | null>();
+  /** Whether the server knows the vault manifest, asked once. */
+  #manifestFeature: Promise<boolean> | undefined;
+  /** Vaults whose manifest this unlock tried to create. */
+  readonly #manifestTried = new Set<string>();
 
   constructor(access: AccountAccess, options: SyncEngineOptions = {}) {
     this.#access = access;
@@ -441,6 +449,71 @@ export class SyncEngine {
       ),
     );
     this.#emit();
+    if (state.manifest.status === "unverified")
+      void this.#ensureManifest(state);
+  }
+
+  /**
+   * Creates the manifest of a vault that has none, in a batch of its own:
+   * once per unlock and vault, only if the server knows it. A failure
+   * leaves the vault unverified.
+   */
+  async #ensureManifest(state: VaultState): Promise<void> {
+    if (
+      this.#stopped ||
+      state.manifest.status !== "unverified" ||
+      this.#manifestTried.has(state.id) ||
+      !vaultWritable(state)
+    )
+      return;
+    this.#manifestTried.add(state.id);
+    if (!(await this.#manifestSupported())) return;
+    const plan: Plan = (current) => {
+      const meta = current.meta;
+      if (!meta) return [];
+      return [
+        {
+          kind: "update",
+          id: meta.id,
+          baseRaw: meta.raw,
+          baseRevision: meta.revision,
+          local: applyObjectChange(
+            meta.raw,
+            { manifest: true },
+            stamp(this.#access.userId),
+          ),
+        },
+      ];
+    };
+    try {
+      await state.lock.run(() => this.#operation(state, plan, "create").run());
+    } catch {
+      // Stays unverified; the next unlock tries again.
+    }
+    this.#emit();
+  }
+
+  #manifestSupported(): Promise<boolean> {
+    this.#manifestFeature ??= this.#access.api.config().then(
+      (config) => config.features.manifest === true,
+      () => false,
+    );
+    return this.#manifestFeature;
+  }
+
+  #operation(
+    state: VaultState,
+    plan: Plan,
+    mode: ManifestMode = "update",
+  ): WriteOperation {
+    return new WriteOperation(
+      this.#context,
+      state,
+      plan,
+      () => pullVault(this.#context, state),
+      () => new Date().toISOString(),
+      mode,
+    );
   }
 
   // ------------------------------------------------------------ vaults
@@ -488,14 +561,35 @@ export class SyncEngine {
     ]);
   }
 
-  /** `POST /v1/vaults`; a network error's `retry` sends the same bytes. */
+  /**
+   * `POST /v1/vaults`, with the manifest if the server knows it; a network
+   * error's `retry` sends the same bytes.
+   */
   async #createVault(objects: NewObject[]): Promise<string> {
     const access = this.#access;
+    const manifest = await this.#manifestSupported();
+    const flagged = objects.map((object): NewObject => {
+      const { content } = object;
+      if (!manifest || object.type !== "vault_meta") return object;
+      const withFlag = (raw: JsonObject): JsonObject => {
+        const copy = clone(raw);
+        setOwn(copy, "manifest", true);
+        return copy;
+      };
+      return {
+        ...object,
+        content:
+          typeof content === "function"
+            ? (ids) => withFlag(content(ids))
+            : withFlag(content),
+      };
+    });
     const creation = access.keys.useUserKey((userKey) =>
       buildVaultCreation(systemRandomness, {
         userId: access.userId,
         userKey,
-        objects,
+        objects: flagged,
+        manifest,
       }),
     );
     const vaultId = creation.vaultId;
@@ -655,7 +749,16 @@ export class SyncEngine {
       state.rollbackDeletes.size > 0 ||
       [...state.objects.values()].some((o) => o.rollback);
     if (rollback) throw new SyncError("rollback_open");
-    return prepareRotation(this.#access, vaultId, this.#vaultName(state));
+    if (state.manifest.status === "mismatch")
+      throw new SyncError("manifest_mismatch");
+    // The rotation renews the manifest; one that is missing comes first.
+    await this.#ensureManifest(state);
+    return prepareRotation(
+      this.#access,
+      vaultId,
+      this.#vaultName(state),
+      state.manifestFloor,
+    );
   }
 
   /** Runs a reviewed rotation. */
@@ -746,6 +849,26 @@ export class SyncEngine {
     const state = this.#state(vaultId);
     await state.lock.run(() => acknowledgeRollback(this.#context, state));
     this.#emit();
+  }
+
+  /**
+   * "Understood" at "The server is withholding data": a full sync, the
+   * rollback warnings of the vault acknowledged with it, and if the state
+   * still does not match, the manifest rebuilt from what was delivered.
+   */
+  async acknowledgeManifest(vaultId: string): Promise<void> {
+    const state = this.#state(vaultId);
+    try {
+      await state.lock.run(async () => {
+        state.synced = false;
+        await pullVault(this.#context, state);
+        await acknowledgeRollback(this.#context, state);
+        if (state.manifest.status === "mismatch")
+          await this.#operation(state, () => [], "rebuild").run();
+      });
+    } finally {
+      this.#emit();
+    }
   }
 
   // ------------------------------------------------------------ groups
@@ -1215,7 +1338,11 @@ export class SyncEngine {
   async removeUnusedIcons(vaultId: string): Promise<number> {
     const state = this.#state(vaultId);
     if (!vaultWritable(state)) throw new SyncError("read_only");
-    if ([...state.corrupt.values()].some((c) => c.type !== "icon"))
+    if (
+      [...state.corrupt.values()].some(
+        (c) => c.type !== "icon" && c.type !== "manifest",
+      )
+    )
       throw new SyncError("corrupt_objects");
     const used = usedIcons(state);
     const intents: Intent[] = [];
@@ -1224,7 +1351,7 @@ export class SyncEngine {
       if (!used.has(id) && object && objectWritable(object))
         intents.push({ kind: "delete", id, baseRevision: object.revision });
     }
-    if (intents.length > 0) await this.#writeAll(state, intents);
+    if (intents.length > 0) await this.#writeAll(state, byBucket(intents));
     return intents.length;
   }
 
@@ -1634,6 +1761,7 @@ export class SyncEngine {
     ];
     const ids = new IdMap(
       (id, tombstones) =>
+        isManifestId(destination.id, id) ||
         destination.objects.has(id) ||
         destination.corrupt.has(id) ||
         tombstones.has(id) ||
@@ -1688,6 +1816,7 @@ export class SyncEngine {
         type: item.kind,
         content: raws.get(item.id) ?? {},
       })),
+      { ...manifestCost(destination), allShards: true },
     );
     let offset = 0;
     for (const batch of batches) {
@@ -1798,6 +1927,7 @@ export class SyncEngine {
         type: "icon",
         content: content(id),
       })),
+      { ...manifestCost(destination), allShards: true },
     )) {
       const part = copies.slice(offset, offset + batch.length);
       offset += batch.length;
@@ -1919,7 +2049,7 @@ export class SyncEngine {
     intents: readonly Intent[],
   ): Promise<WriteResult> {
     const notices: Notice[] = [];
-    for (const batch of chunks(intents)) {
+    for (const batch of chunks(intents, manifestCost(state))) {
       const result = await this.#write(state, () => batch);
       notices.push(...result.notices);
     }
@@ -1927,13 +2057,9 @@ export class SyncEngine {
   }
 
   async #write(state: VaultState, plan: Plan): Promise<WriteResult> {
-    const operation = new WriteOperation(
-      this.#context,
-      state,
-      plan,
-      () => pullVault(this.#context, state),
-      () => new Date().toISOString(),
-    );
+    // A vault without a manifest gets one before the user's change.
+    await this.#ensureManifest(state);
+    const operation = this.#operation(state, plan);
     const settle = () => {
       this.#emit();
       void this.pull(state.id);
@@ -2206,7 +2332,9 @@ export class SyncEngine {
       case "vault_changed": {
         const state = this.#states.get(event.vaultId);
         if (!state) void this.refresh();
-        else if (event.revision > state.since) void this.pull(state.id);
+        // Without the current key the vault is not synced.
+        else if (state.keyStatus === "ok" && event.revision > state.since)
+          void this.pull(state.id);
         break;
       }
       case "vaults_changed":

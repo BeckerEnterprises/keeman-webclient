@@ -2,6 +2,7 @@
  * Sharing endpoints of the fake server with the server's
  * checks and orders, enough to drive the core's sharing flows. Test data only.
  */
+import { isManifestId } from "../../src/model/manifest";
 import type { MemberRecord, StoredObject, VaultRecord } from "./fake-server";
 
 export interface SharingUser {
@@ -299,7 +300,7 @@ export function sharing(
       }[];
       const removed = new Set(data.remove_user_ids as string[]);
       const drops = data.drop_objects as { id: string; data: string }[];
-      if (drops.some((d) => d.id === vault.id))
+      if (drops.some((d) => d.id === vault.id || isManifestId(vault.id, d.id)))
         return problem(400, "validation_failed");
       for (const drop of drops) {
         const stored = vault.objects.get(drop.id);

@@ -2,7 +2,9 @@
  * Writing to a vault: a plan becomes one batch with a new
  * Idempotency-Key; after `409 conflict` the vault is synced, the plan runs
  * again on the new state and changes are merged per type, at
- * most three attempts. The caller holds the vault's lock.
+ * most three attempts. Every batch of a vault with a manifest also writes
+ * the root and the shards it touches; conflicts only on those are planned
+ * again without counting. The caller holds the vault's lock.
  */
 import { ApiError, NetworkError } from "../api/errors";
 import type { BatchResult } from "../api/schemas";
@@ -12,6 +14,16 @@ import { encryptObject, encryptTombstone } from "../crypto/objects";
 import { systemRandomness } from "../crypto/random";
 import { EntryTooLarge, utf8Length } from "../model/history";
 import { seqOf } from "../model/json";
+import {
+  bucketOf,
+  isManifestId,
+  MANIFEST_SHARDS,
+  manifestIds,
+  objectHash,
+  rootRaw,
+  shardRaw,
+  type ManifestEntry,
+} from "../model/manifest";
 import { mergeEntry } from "../model/merge";
 import {
   inspectVaultMeta,
@@ -20,6 +32,12 @@ import {
   type Stamp,
 } from "../model/vault";
 import { SyncError } from "./errors";
+import {
+  currentRoot,
+  currentShard,
+  servedEntries,
+  verifyManifest,
+} from "./manifest";
 import { objectMark } from "./marks";
 import type { ObjectEntry, SyncContext, VaultState } from "./vault";
 
@@ -68,7 +86,16 @@ interface Planned {
   /** New content; `undefined` for a deletion. */
   raw: JsonObject | undefined;
   seq: number;
+  /** Manifest hash of a put. */
+  hash?: string;
 }
+
+/**
+ * How a write treats the manifest: kept up to date (the default, once the
+ * vault has one), created from what the server delivered, or rebuilt to
+ * match it after the user accepted a mismatch.
+ */
+export type ManifestMode = "update" | "create" | "rebuild";
 
 export interface Pending {
   key: string;
@@ -78,6 +105,11 @@ export interface Pending {
 }
 
 const MAX_ATTEMPTS = 3;
+/** Including retries after conflicts on the manifest alone. */
+const MAX_TOTAL_ATTEMPTS = 6;
+const MAX_OPS = 500;
+/** The server takes 16 MiB; the client plans 12 MiB plus the manifest. */
+const MAX_BODY_CHARS = 15 * 1024 * 1024;
 
 /** Plaintext limits in UTF-8 bytes. */
 const SIZE_LIMITS: Record<ObjectType, number> = {
@@ -85,6 +117,8 @@ const SIZE_LIMITS: Record<ObjectType, number> = {
   group: 64 * 1024,
   entry: 1024 * 1024,
   icon: 64 * 1024,
+  // A shard; the root stays far below its 16 KiB.
+  manifest: 1024 * 1024,
 };
 
 /** Worth sending again unchanged; `507 quota_exceeded` does not pass by waiting. */
@@ -96,9 +130,14 @@ export function isTransient(error: unknown): boolean {
   );
 }
 
-/** The vault as a whole may be written. */
-export function vaultWritable(state: VaultState): boolean {
+/**
+ * The vault as a whole may be written. A mismatch with the manifest or an
+ * unreadable manifest blocks writing, except for the rebuild itself.
+ */
+export function vaultWritable(state: VaultState, rebuild = false): boolean {
   const meta = state.meta;
+  const root = state.objects.get(manifestIds(state.id).root);
+  const manifest = state.manifest.status;
   return (
     state.keyOk &&
     state.keyStatus === "ok" &&
@@ -107,7 +146,11 @@ export function vaultWritable(state: VaultState): boolean {
     meta !== undefined &&
     !meta.readOnly &&
     !meta.rollback &&
-    !meta.superseded
+    !meta.superseded &&
+    (rebuild ||
+      (manifest !== "mismatch" &&
+        manifest !== "unknown" &&
+        !(root?.rollback ?? false)))
   );
 }
 
@@ -129,14 +172,41 @@ function historyMaxItems(state: VaultState): number {
   return inspected?.status === "ok" ? inspected.value.historyMaxItems : 10;
 }
 
+/** The entries of a shard with the planned ops applied. */
+function withOps(
+  entries: Map<string, ManifestEntry>,
+  planned: readonly Planned[],
+): Map<string, ManifestEntry> {
+  for (const p of planned) {
+    if (p.hash === undefined) entries.delete(p.id);
+    else entries.set(p.id, [p.type, p.hash]);
+  }
+  return entries;
+}
+
+function sameEntries(
+  a: ReadonlyMap<string, ManifestEntry>,
+  b: ReadonlyMap<string, ManifestEntry>,
+): boolean {
+  if (a.size !== b.size) return false;
+  for (const [id, [type, hash]] of a) {
+    const other = b.get(id);
+    if (!other || other[0] !== type || other[1] !== hash) return false;
+  }
+  return true;
+}
+
 export class WriteOperation {
   readonly #context: SyncContext;
   readonly #state: VaultState;
   readonly #plan: Plan;
   readonly #pull: () => Promise<void>;
   readonly #now: () => string;
+  readonly #mode: ManifestMode;
   readonly #tombstones = new Set<string>();
   #attempts = 0;
+  /** Conflicts that needed more than recomputing the manifest. */
+  #conflicts = 0;
 
   constructor(
     context: SyncContext,
@@ -144,19 +214,24 @@ export class WriteOperation {
     plan: Plan,
     pull: () => Promise<void>,
     now: () => string,
+    mode: ManifestMode = "update",
   ) {
     this.#context = context;
     this.#state = state;
     this.#plan = plan;
     this.#pull = pull;
     this.#now = now;
+    this.#mode = mode;
   }
 
   async run(pending?: Pending): Promise<WriteResult> {
     let current = pending;
     for (;;) {
       if (!current) {
-        if (this.#attempts >= MAX_ATTEMPTS)
+        if (
+          this.#conflicts >= MAX_ATTEMPTS ||
+          this.#attempts >= MAX_TOTAL_ATTEMPTS
+        )
           throw new SyncError("conflict_unresolved");
         this.#attempts++;
         const notices: Notice[] = [];
@@ -177,9 +252,22 @@ export class WriteOperation {
           current.body,
         );
       } catch (error) {
+        // A conflict only on the manifest, or a root this device did not
+        // know about: sync and compute the manifest again, uncounted.
+        if (error instanceof ApiError && error.code === "manifest_required") {
+          current = undefined;
+          await this.#pull();
+          continue;
+        }
         if (error instanceof ApiError && error.code === "conflict") {
-          for (const conflict of error.details.conflicts ?? [])
+          const conflicts = error.details.conflicts ?? [];
+          for (const conflict of conflicts)
             if (conflict.deleted) this.#tombstones.add(conflict.id);
+          if (
+            conflicts.length === 0 ||
+            !conflicts.every((c) => isManifestId(this.#state.id, c.id))
+          )
+            this.#conflicts++;
           current = undefined;
           await this.#pull();
           continue;
@@ -204,7 +292,14 @@ export class WriteOperation {
 
   #build(notices: Notice[]): Planned[] {
     const state = this.#state;
-    if (!vaultWritable(state)) throw new SyncError("read_only");
+    // After a conflict another device may have done it already.
+    if (
+      (this.#mode === "create" && state.manifest.status !== "unverified") ||
+      (this.#mode === "rebuild" && state.manifest.status !== "mismatch")
+    )
+      return [];
+    if (!vaultWritable(state, this.#mode === "rebuild"))
+      throw new SyncError("read_only");
     const stamp: Stamp = { now: this.#now(), userId: this.#context.userId };
     const intents = this.#plan(state, {
       attempt: this.#attempts,
@@ -256,7 +351,120 @@ export class WriteOperation {
         }
       }
     }
-    return planned;
+    if (planned.length === 0 && this.#mode !== "rebuild") return planned;
+    const manifest =
+      this.#mode === "update"
+        ? state.manifest.status === "verified"
+          ? this.#updated(planned)
+          : []
+        : this.#rebuilt(planned, this.#mode === "create");
+    const all = [...planned, ...manifest];
+    if (
+      all.length > MAX_OPS ||
+      JSON.stringify(all.map((p) => p.op)).length > MAX_BODY_CHARS
+    )
+      throw new SyncError("too_large");
+    return all;
+  }
+
+  /** Root and touched shards for a vault whose manifest checked out. */
+  #updated(planned: readonly Planned[]): Planned[] {
+    const state = this.#state;
+    const ids = manifestIds(state.id);
+    const root = currentRoot(state);
+    if (!root) throw new SyncError("read_only");
+    const byBucket = new Map<number, Planned[]>();
+    for (const p of planned) {
+      const k = bucketOf(p.id);
+      byBucket.set(k, [...(byBucket.get(k) ?? []), p]);
+    }
+    const shards = [...root.value.shards];
+    const ops: Planned[] = [];
+    for (const [k, inBucket] of [...byBucket].sort((a, b) => a[0] - b[0])) {
+      const shard = currentShard(state, k);
+      if (shards[k] && !shard) throw new SyncError("read_only");
+      const entries = withOps(new Map(shard?.value.objects ?? []), inBucket);
+      const seq = (shard?.entry.seq ?? 0) + 1;
+      const op = this.#put(
+        ids.shards[k] ?? "",
+        "manifest",
+        shardRaw(shard?.entry.raw, entries, seq),
+        shard?.entry.revision ?? null,
+      );
+      shards[k] = [seq, op.hash ?? ""];
+      ops.push(op);
+    }
+    const seq = Math.max(root.entry.seq, state.manifestFloor) + 1;
+    ops.push(
+      this.#put(
+        ids.root,
+        "manifest",
+        rootRaw(root.entry.raw, shards, seq),
+        root.entry.revision,
+      ),
+    );
+    return ops;
+  }
+
+  /**
+   * The manifest of what the server delivered plus the planned ops: every
+   * shard on creating, the ones that differ on a rebuild. An object whose
+   * `seq` is unknown (corrupt) goes above the vault revision, which no
+   * honest manifest `seq` exceeds.
+   */
+  #rebuilt(planned: readonly Planned[], create: boolean): Planned[] {
+    const state = this.#state;
+    const ids = manifestIds(state.id);
+    const buckets = servedEntries(state.served, state.id);
+    for (const p of planned) {
+      const k = bucketOf(p.id);
+      buckets.set(
+        k,
+        withOps(buckets.get(k) ?? new Map<string, ManifestEntry>(), [p]),
+      );
+    }
+    const unknownSeq = Math.max(state.manifestFloor, state.since) + 1;
+    const shards: ([number, string] | null)[] = [];
+    const ops: Planned[] = [];
+    for (let k = 0; k < MANIFEST_SHARDS; k++) {
+      const id = ids.shards[k] ?? "";
+      const entries = buckets.get(k) ?? new Map<string, ManifestEntry>();
+      const served = create ? undefined : state.served.get(id);
+      const shard = create ? undefined : currentShard(state, k);
+      if (!served && entries.size === 0) {
+        shards.push(null);
+        continue;
+      }
+      if (served && shard && sameEntries(shard.value.objects, entries)) {
+        shards.push([shard.entry.seq, served.hash]);
+        continue;
+      }
+      const seq = shard ? shard.entry.seq + 1 : served ? unknownSeq : 1;
+      const op = this.#put(
+        id,
+        "manifest",
+        shardRaw(shard?.entry.raw, entries, seq),
+        served?.revision ?? null,
+      );
+      shards.push([seq, op.hash ?? ""]);
+      ops.push(op);
+    }
+    const root = create ? undefined : currentRoot(state);
+    const served = create ? undefined : state.served.get(ids.root);
+    const seq = root
+      ? Math.max(root.entry.seq, state.manifestFloor) + 1
+      : served
+        ? unknownSeq
+        : state.manifestFloor + 1;
+    ops.push(
+      this.#put(
+        ids.root,
+        "manifest",
+        rootRaw(root?.entry.raw, shards, seq),
+        served?.revision ?? null,
+      ),
+    );
+    return ops;
   }
 
   /** The resolver of the object's type. */
@@ -331,6 +539,7 @@ export class WriteOperation {
       type,
       raw,
       seq: seqOf(raw),
+      hash: objectHash(ref.vaultId, id, type, ref.keyVersion, data),
       op: {
         op: "put",
         id,
@@ -371,11 +580,28 @@ export class WriteOperation {
   }
 
   async #apply(planned: Planned[], result: BatchResult): Promise<void> {
+    const state = this.#state;
     const obj: Record<string, number> = {};
+    const root = manifestIds(state.id).root;
     for (const item of planned) {
       const known = this.#state.objects.get(item.id);
+      const served = state.served.get(item.id);
+      if (!served || served.revision <= result.vault_revision) {
+        if (item.hash === undefined) state.served.delete(item.id);
+        else
+          state.served.set(item.id, {
+            type: item.type,
+            revision: result.vault_revision,
+            hash: item.hash,
+            bucket: bucketOf(item.id),
+          });
+      }
       // A sync may have brought something newer meanwhile.
       if (known && known.revision > result.vault_revision) continue;
+      // A rebuild replaces corrupt manifest objects.
+      state.corrupt.delete(item.id);
+      if (item.id === root)
+        state.manifestFloor = Math.max(state.manifestFloor, item.seq);
       if (item.raw === undefined) {
         this.#state.objects.delete(item.id);
       } else {
@@ -393,8 +619,13 @@ export class WriteOperation {
       }
       obj[item.id] = objectMark(item.seq, item.raw === undefined);
     }
+    // The batch matched the root's revision, so nothing came in between:
+    // what the server holds now is known and can be checked at once.
+    if (this.#mode !== "update")
+      state.manifest = verifyManifest(state, undefined);
+    const mf = state.manifestFloor;
     await this.#context.marks.raise(this.#context.userId, {
-      vaults: { [this.#state.id]: { rev: 0, obj } },
+      vaults: { [state.id]: { rev: 0, obj, ...(mf > 0 ? { mf } : {}) } },
     });
   }
 

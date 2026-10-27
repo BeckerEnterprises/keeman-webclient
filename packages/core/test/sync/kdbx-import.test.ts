@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { KdbxFile } from "../../src/kdbx/types";
+import { bucketOf } from "../../src/model/manifest";
 import { KdbxError } from "../../src/kdbx/types";
 import type { SyncEngine } from "../../src/sync/engine";
 import { SyncError } from "../../src/sync/errors";
@@ -131,13 +132,22 @@ describe("KDBX import job", () => {
   });
 
   it("fixes earlier references when a later object meets an unknown tombstone", async () => {
-    const entries = Array.from({ length: 520 }, (_, i) =>
-      kdbxEntry(10 + i, { Title: `e${String(i)}` }),
+    // Entries are written by manifest bucket: the referrer comes in the
+    // first batch, the target of its reference in the last.
+    const numbers = Array.from({ length: 520 }, (_, i) => 10 + i);
+    const byBucketOf = [...numbers].sort(
+      (x, y) => bucketOf(uuid(x)) - bucketOf(uuid(y)),
     );
-    entries[0] = kdbxEntry(10, {
-      Title: "e0",
-      Password: `{REF:P@I:${hex(529).toUpperCase()}}`,
-    });
+    const first = byBucketOf[0] ?? 0;
+    const last = byBucketOf.at(-1) ?? 0;
+    const entries = numbers.map((n) =>
+      kdbxEntry(n, {
+        Title: `e${String(n)}`,
+        ...(n === first
+          ? { Password: `{REF:P@I:${hex(last).toUpperCase()}}` }
+          : {}),
+      }),
+    );
     const file: KdbxFile = kdbxFile(kdbxGroup(1, "Root", { entries }));
     const a = await firstDevice();
     const target = {
@@ -146,20 +156,26 @@ describe("KDBX import job", () => {
       groupId: rootOf(a.engine, a.vaultId),
     };
     await (await a.engine.prepareKdbxImport(file, target, TEXTS)).run();
-    await a.engine.destroy(a.vaultId, [entryRef(uuid(529))]);
+    await a.engine.destroy(a.vaultId, [entryRef(uuid(last))]);
 
     // A device without local marks does not know the tombstone.
     const b = await secondDevice(a.server);
+    a.server.batchContent.length = 0;
     const job = await b.engine.prepareKdbxImport(file, target, TEXTS);
     await job.run();
-    // Root group; entries 1–500; the rest twice (tombstone conflict); fix-up.
-    expect(a.server.batchSizes.slice(-5)).toEqual([1, 500, 20, 20, 1]);
-    const copies = entryTitled(b.engine, a.vaultId, "e519");
+    // Root group; the first entries; the rest twice (tombstone conflict);
+    // the fix-up of the referrer.
+    const [group, early, rest, again, fixup] = a.server.batchContent;
+    expect(a.server.batchContent).toHaveLength(5);
+    expect([group, fixup]).toEqual([1, 1]);
+    expect(rest).toBe(again);
+    expect((early ?? 0) + (rest ?? 0)).toBe(520);
+    const copies = entryTitled(b.engine, a.vaultId, `e${String(last)}`);
     expect(copies).toHaveLength(1);
     const newId = copies[0]?.id ?? "";
-    expect(newId).not.toBe(uuid(529));
-    const referrer = entryTitled(b.engine, a.vaultId, "e0").find(
-      (e) => e.id !== uuid(10),
+    expect(newId).not.toBe(uuid(last));
+    const referrer = entryTitled(b.engine, a.vaultId, `e${String(first)}`).find(
+      (e) => e.id !== uuid(first),
     );
     const detail = b.engine.entry(a.vaultId, referrer?.id ?? "");
     expect(detail?.values.password).toBe(
@@ -167,6 +183,7 @@ describe("KDBX import job", () => {
     );
     // The fix-up adds no history state.
     expect(detail?.history).toHaveLength(0);
+    expect(vault(b.engine, a.vaultId).manifest).toBe("verified");
   });
 
   it("resumes after network errors with the same request", async () => {

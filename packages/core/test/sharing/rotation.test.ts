@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { fromBase64Url, toBase64Url } from "../../src/crypto/bytes";
 import { emptyDraft } from "../../src/model/entry";
+import { manifestIds } from "../../src/model/manifest";
 import type { SyncEngine } from "../../src/sync/engine";
 import { FakeServer } from "../account/fake-server";
 import { flipped, rootOf, vault } from "../sync/devices";
@@ -373,6 +374,11 @@ describe("rotation details", () => {
     const stored = server.vaults.get(vaultId)?.objects.get(id);
     if (stored?.data) stored.data = flipped(stored.data);
     await alice.engine.refresh();
+    // Changed behind the manifest: the owner accepts the delivered state.
+    await expect(alice.engine.prepareRotation(vaultId)).rejects.toMatchObject({
+      code: "manifest_mismatch",
+    });
+    await alice.engine.acknowledgeManifest(vaultId);
 
     const review = await alice.engine.prepareRotation(vaultId);
     expect(review.corrupt).toEqual([{ id, type: "entry" }]);
@@ -394,9 +400,14 @@ describe("rotation details", () => {
     const meta = record?.objects.get(vaultId);
     const original = meta?.data ?? null;
     if (meta?.data) meta.data = flipped(meta.data);
+    // Changed behind the manifest; a corrupt vault_meta also blocks the
+    // rebuild, so the vault stays read-only.
     await expect(alice.engine.prepareRotation(vaultId)).rejects.toMatchObject({
-      code: "read_only",
+      code: "manifest_mismatch",
     });
+    await expect(
+      alice.engine.acknowledgeManifest(vaultId),
+    ).rejects.toMatchObject({ code: "read_only" });
     if (meta) meta.data = original;
     if (record) record.revision = 1;
     await alice.engine.refresh();
@@ -507,5 +518,63 @@ describe("rotation details", () => {
     expect(server.vaults.get(alice.vaultId)?.key_version).toBe(2);
     await alice.engine.pull(alice.vaultId);
     expect(titles(alice.engine, alice.vaultId).length).toBe(24);
+  });
+});
+
+describe("rotation and the vault manifest", () => {
+  it("renews the manifest with the new key; members see it verified", async () => {
+    const { server, alice, bob, vaultId } = await team();
+    await entry(alice, vaultId, "Zweites");
+    const kept = await entry(alice, vaultId, "Kaputt");
+    const object = server.vaults.get(vaultId)?.objects.get(kept);
+    if (object?.data) object.data = flipped(object.data);
+    await alice.engine.acknowledgeManifest(vaultId);
+    await rotate(alice, vaultId, [], true);
+    const record = server.vaults.get(vaultId);
+    const root = record?.objects.get(manifestIds(vaultId).root);
+    expect(root?.key_version).toBe(2);
+    for (const o of record?.objects.values() ?? [])
+      if (!o.deleted) expect(o.key_version).toBe(2);
+    await alice.engine.pull(vaultId);
+    expect(vault(alice.engine, vaultId).manifest).toBe("verified");
+    await bob.engine.refresh();
+    await bob.engine.pull(vaultId);
+    expect(vault(bob.engine, vaultId)).toMatchObject({
+      manifest: "verified",
+      rollback: false,
+    });
+    expect(titles(bob.engine, vaultId).sort()).toEqual(["Vorher", "Zweites"]);
+  });
+
+  it("refuses a collected state that withholds an object", async () => {
+    const { server, alice, vaultId } = await team();
+    const hidden = await entry(alice, vaultId, "Versteckt");
+    server.tamperChanges = (page) => {
+      page.objects = page.objects.filter((o) => o.id !== hidden);
+    };
+    await expect(alice.engine.prepareRotation(vaultId)).rejects.toMatchObject({
+      code: "manifest_mismatch",
+    });
+    server.tamperChanges = () => undefined;
+  });
+
+  it("refuses an older consistent state", async () => {
+    const { server, alice, vaultId } = await team();
+    const objects = server.vaults.get(vaultId)?.objects;
+    if (!objects) throw new Error("missing");
+    const before = new Map([...objects].map(([id, o]) => [id, { ...o }]));
+    await entry(alice, vaultId, "Neuer");
+    await alice.engine.pull(vaultId);
+    // Everything as it was before the last change, in itself consistent.
+    server.tamperChanges = (page) => {
+      page.objects = page.objects.flatMap((o) => {
+        const old = before.get(o.id);
+        return old ? [{ ...old, revision: o.revision }] : [];
+      });
+    };
+    await expect(alice.engine.prepareRotation(vaultId)).rejects.toMatchObject({
+      code: "rollback_open",
+    });
+    server.tamperChanges = () => undefined;
   });
 });

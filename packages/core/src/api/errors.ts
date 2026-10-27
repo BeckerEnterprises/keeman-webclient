@@ -41,6 +41,7 @@ const PROBLEM_CODES: ReadonlySet<string> = new Set<ProblemCode>([
   "favicon_not_found",
   "idempotency_key_reused",
   "attachment_incomplete",
+  "manifest_required",
   "rate_limited",
   "internal_error",
   "quota_exceeded",

@@ -13,6 +13,15 @@ import {
   encryptTombstone,
   reencryptObject,
 } from "../objects";
+import {
+  bucketOf,
+  isManifestId,
+  manifestIds,
+  objectHash,
+  rootRaw,
+  shardRaw,
+  type ManifestEntry,
+} from "../../model/manifest";
 import { scoped, type Randomness } from "../random";
 import { assertUuid, isUuid } from "../uuid";
 
@@ -42,11 +51,18 @@ export interface VaultCreation {
 
 /**
  * Body of `POST /v1/vaults`: new vault key with key version 1; the
- * `vault_meta` object gets the vault ID, all others new IDs.
+ * `vault_meta` object gets the vault ID, all others new IDs. With
+ * `manifest`, the manifest root and the shards of these objects come along
+ * (the caller sets `manifest: true` in `vault_meta`).
  */
 export function buildVaultCreation(
   randomness: Randomness,
-  input: { userId: string; userKey: Uint8Array; objects: NewObject[] },
+  input: {
+    userId: string;
+    userKey: Uint8Array;
+    objects: NewObject[];
+    manifest?: boolean;
+  },
 ): VaultCreation {
   if (
     input.objects.filter((object) => object.type === "vault_meta").length !== 1
@@ -71,8 +87,11 @@ export function buildVaultCreation(
   if (
     input.objects.some(
       (object) =>
-        object.id !== undefined &&
-        (object.type === "vault_meta" || !isUuid(object.id)),
+        object.type === "manifest" ||
+        (object.id !== undefined &&
+          (object.type === "vault_meta" ||
+            !isUuid(object.id) ||
+            isManifestId(vaultId, object.id))),
     ) ||
     new Set(all).size !== all.length
   )
@@ -97,6 +116,8 @@ export function buildVaultCreation(
       ),
     };
   });
+  if (input.manifest === true)
+    objects.push(...manifestObjects(randomness, vaultKey, vaultId, objects));
   return {
     vaultId,
     vaultKey,
@@ -113,6 +134,58 @@ export function buildVaultCreation(
       objects,
     },
   };
+}
+
+/** Root and shards (`seq` 1) listing the given objects of a new vault. */
+function manifestObjects(
+  randomness: Randomness,
+  vaultKey: Uint8Array,
+  vaultId: string,
+  objects: readonly { id: string; type: ObjectType; data: string }[],
+): { id: string; type: ObjectType; key_version: number; data: string }[] {
+  const ids = manifestIds(vaultId);
+  const buckets = new Map<number, Map<string, ManifestEntry>>();
+  for (const object of objects) {
+    const k = bucketOf(object.id);
+    const entries = buckets.get(k) ?? new Map<string, ManifestEntry>();
+    entries.set(object.id, [
+      object.type,
+      objectHash(vaultId, object.id, object.type, 1, object.data),
+    ]);
+    buckets.set(k, entries);
+  }
+  const encrypted = (id: string, label: string, content: JsonObject) => ({
+    id,
+    type: "manifest" as const,
+    key_version: 1,
+    data: encryptObject(
+      scoped(randomness, label),
+      vaultKey,
+      { vaultId, objectId: id, type: "manifest", keyVersion: 1 },
+      content,
+    ),
+  });
+  const shards: ([number, string] | null)[] = [];
+  const result = [];
+  for (let k = 0; k < ids.shards.length; k++) {
+    const entries = buckets.get(k);
+    const id = ids.shards[k] ?? "";
+    if (!entries) {
+      shards.push(null);
+      continue;
+    }
+    const shard = encrypted(
+      id,
+      `manifest.shard.${String(k)}`,
+      shardRaw(undefined, entries, 1),
+    );
+    shards.push([1, objectHash(vaultId, id, "manifest", 1, shard.data)]);
+    result.push(shard);
+  }
+  result.push(
+    encrypted(ids.root, "manifest.root", rootRaw(undefined, shards, 1)),
+  );
+  return result;
 }
 
 /** The own `key_wrapped` of a vault key. */
@@ -367,6 +440,85 @@ export function rotateObject(
       input.newKeyVersion,
     ),
   };
+}
+
+/** The manifest of a vault before a rotation: root and existing shards. */
+export interface RotatedManifest {
+  root: { raw: JsonObject; seq: number };
+  /** Shard index → its content and `seq`. */
+  shards: ReadonlyMap<number, { raw: JsonObject; seq: number }>;
+  /** Highest root `seq` the owner's device has seen. */
+  floor: number;
+}
+
+/**
+ * The manifest renewed for a rotation: every existing shard lists the
+ * re-encrypted objects of its bucket (dropped ones are gone), `seq` + 1;
+ * the root names the new shards. Encrypted with the new key. `objects`
+ * are the uploads with their hash (`objectHash` with the new key version).
+ */
+export function rotateManifest(
+  randomness: Randomness,
+  input: Pick<RotationInput, "vaultId" | "newKeyVersion">,
+  manifest: RotatedManifest,
+  objects: readonly { id: string; type: string; hash: string }[],
+  vaultKey: Uint8Array,
+): Schemas["ObjectUpload"][] {
+  assertNewKeyVersion(input.newKeyVersion);
+  const { vaultId, newKeyVersion } = input;
+  const ids = manifestIds(vaultId);
+  const buckets = new Map<number, Map<string, ManifestEntry>>();
+  for (const object of objects) {
+    if (isManifestId(vaultId, object.id)) continue;
+    const k = bucketOf(object.id);
+    const entries = buckets.get(k) ?? new Map<string, ManifestEntry>();
+    entries.set(object.id, [object.type, object.hash]);
+    buckets.set(k, entries);
+  }
+  for (const k of buckets.keys())
+    if (!manifest.shards.has(k))
+      throw new CryptoError("validation", "An object outside the manifest");
+  const encrypted = (id: string, label: string, content: JsonObject) => ({
+    id,
+    type: "manifest" as const,
+    key_version: newKeyVersion,
+    data: encryptObject(
+      scoped(randomness, label),
+      vaultKey,
+      { vaultId, objectId: id, type: "manifest", keyVersion: newKeyVersion },
+      content,
+    ),
+  });
+  const shards: ([number, string] | null)[] = [];
+  const result: Schemas["ObjectUpload"][] = [];
+  for (let k = 0; k < ids.shards.length; k++) {
+    const old = manifest.shards.get(k);
+    const id = ids.shards[k] ?? "";
+    if (!old) {
+      shards.push(null);
+      continue;
+    }
+    const seq = old.seq + 1;
+    const shard = encrypted(
+      id,
+      `manifest.shard.${String(k)}`,
+      shardRaw(old.raw, buckets.get(k) ?? new Map(), seq),
+    );
+    shards.push([
+      seq,
+      objectHash(vaultId, id, "manifest", newKeyVersion, shard.data),
+    ]);
+    result.push(shard);
+  }
+  const seq = Math.max(manifest.root.seq, manifest.floor) + 1;
+  result.push(
+    encrypted(
+      ids.root,
+      "manifest.root",
+      rootRaw(manifest.root.raw, shards, seq),
+    ),
+  );
+  return result;
 }
 
 /**

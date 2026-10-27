@@ -1,6 +1,7 @@
 /**
  * High-water marks for the rollback detection: per vault
- * the highest revision and key version and the owners, per object the
+ * the highest revision and key version, the owners and the highest root
+ * `seq` of the manifest, per object the
  * highest `seq` (negative for a tombstone), per account revision and `seq`
  * of `user_data`. Only IDs and counters, nothing secret.
  */
@@ -19,6 +20,11 @@ export interface VaultMarks {
    * pending keys are accepted without asking. Replaced, never merged.
    */
   ow?: string[];
+  /**
+   * Highest `seq` of the manifest root seen; a floor that no
+   * acknowledgement lowers, so a root `seq` is never given out twice.
+   */
+  mf?: number;
   /** Object ID → `seq`; negative: a tombstone with this `seq`. */
   obj: Record<string, number>;
 }
@@ -107,10 +113,12 @@ export function mergeMarks(a: UserMarks, b: UserMarks): UserMarks {
       obj[objectId] = higherMark(obj[objectId], mark);
     const kv = Math.max(left?.kv ?? 0, right?.kv ?? 0);
     const ow = left?.ow ?? right?.ow;
+    const mf = Math.max(left?.mf ?? 0, right?.mf ?? 0);
     result.vaults[id] = {
       rev: Math.max(left?.rev ?? 0, right?.rev ?? 0),
       ...(kv > 0 ? { kv } : {}),
       ...(ow ? { ow: [...ow] } : {}),
+      ...(mf > 0 ? { mf } : {}),
       obj,
     };
   }
@@ -121,11 +129,21 @@ function copy(marks: UserMarks): UserMarks {
   return mergeMarks(marks, emptyMarks());
 }
 
+/** `marks` replacing `current`; the manifest floor never goes down. */
+function replacing(
+  current: VaultMarks | undefined,
+  marks: VaultMarks,
+): VaultMarks {
+  const mf = Math.max(current?.mf ?? 0, marks.mf ?? 0);
+  return copyVault({ ...marks, ...(mf > 0 ? { mf } : {}) });
+}
+
 function copyVault(marks: VaultMarks): VaultMarks {
   return {
     rev: marks.rev,
     ...(marks.kv !== undefined ? { kv: marks.kv } : {}),
     ...(marks.ow !== undefined ? { ow: [...marks.ow] } : {}),
+    ...(marks.mf !== undefined ? { mf: marks.mf } : {}),
     obj: { ...marks.obj },
   };
 }
@@ -155,7 +173,7 @@ export function inMemorySyncMarks(): SyncMarks {
     },
     replaceVault: (userId, vaultId, marks) => {
       const current = get(userId);
-      current.vaults[vaultId] = copyVault(marks);
+      current.vaults[vaultId] = replacing(current.vaults[vaultId], marks);
       users.set(userId, current);
       return Promise.resolve(true);
     },
@@ -206,6 +224,7 @@ const StoredSchema = v.object({
           rev: Counter,
           kv: v.optional(Counter),
           ow: v.optional(v.array(Id)),
+          mf: v.optional(Counter),
           obj: v.record(Id, ObjectMark),
         }),
       ),
@@ -287,7 +306,7 @@ export function storedSyncMarks(store: MarksStore, lock: MarksLock): SyncMarks {
       await memory.replaceVault(userId, vaultId, marks);
       return update(userId, (current) => {
         const next = copy(current ?? emptyMarks());
-        next.vaults[vaultId] = copyVault(marks);
+        next.vaults[vaultId] = replacing(next.vaults[vaultId], marks);
         return next;
       });
     },

@@ -20,10 +20,11 @@ import type { AttachmentFile } from "./attachments";
 import { historyOf } from "../model/history";
 import { renameIconRefs } from "../model/icon";
 import { clone, same, seqOf, setOwn } from "../model/json";
+import { isManifestId } from "../model/manifest";
 import type { Stamp } from "../model/vault";
 import { SyncError } from "./errors";
 import { IdMap } from "./id-map";
-import { chunks } from "./tree-ops";
+import { byBucket, chunks } from "./tree-ops";
 import type { VaultState } from "./vault";
 import type { Intent, Plan, WriteResult } from "./writer";
 
@@ -149,11 +150,13 @@ export class KdbxImportJob {
       }
       return steps;
     };
+    // Icons and entries in any order: by manifest bucket, so a batch
+    // touches few shards. Groups stay top-down.
     this.#steps = [
       ...(plan.mode === "vault" ? [{ kind: "vault" } as const] : []),
-      ...batches(plan.icons),
+      ...batches(byBucket(plan.icons)),
       ...batches(groups),
-      ...batches(plan.entries),
+      ...batches(byBucket(plan.entries)),
       { kind: "refs" },
     ];
     this.#total =
@@ -268,6 +271,7 @@ export class KdbxImportJob {
         const state = this.#port.state(vaultId);
         return (
           id === vaultId ||
+          isManifestId(vaultId, id) ||
           state.objects.has(id) ||
           state.corrupt.has(id) ||
           tombstones.has(id) ||
