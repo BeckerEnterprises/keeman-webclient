@@ -43,6 +43,7 @@ describe("messages", () => {
           groups: 1,
           entries: 2,
           date: "d",
+          time: "t",
           bits: 64,
           tag: "g",
           where: "w",

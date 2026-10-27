@@ -13,6 +13,8 @@ const REPORT: UnlockReport = {
   userDataCorrupt: false,
   userDataReadOnly: false,
   userDataRollback: false,
+  userDataStale: false,
+  newDevice: false,
 };
 
 const account = {

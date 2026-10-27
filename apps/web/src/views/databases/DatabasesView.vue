@@ -9,6 +9,7 @@ import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import ErrorNotice from "../../components/ErrorNotice.vue";
 import KdbxImportDialog from "../../components/kdbx/KdbxImportDialog.vue";
+import FreshnessWarning from "../../components/FreshnessWarning.vue";
 import ManifestWarning from "../../components/ManifestWarning.vue";
 import RolesWarning from "../../components/sharing/RolesWarning.vue";
 import VaultDeleteDialog from "../../components/VaultDeleteDialog.vue";
@@ -198,6 +199,7 @@ function edited(result: ReturnType<typeof describeNotices>): void {
               @acknowledge="acknowledgeManifest(vault.id)"
             />
             <RolesWarning :vault="vault" />
+            <FreshnessWarning :vault="vault" />
           </div>
           <div class="actions">
             <button

@@ -31,11 +31,16 @@ const pendingKeys = computed(() =>
   vaults.vaults.filter((v) => v.keyStatus === "pending" && v.pendingSender),
 );
 
-/** A pending key that waits for the owner list, not for a verification. */
+/**
+ * A pending key that waits for the owner list or a confirmed state, not
+ * for a verification.
+ */
 function rolesWait(
   reason: string | undefined,
-): "roles_unconfirmed" | "roles_invalid" | undefined {
-  return reason === "roles_unconfirmed" || reason === "roles_invalid"
+): "roles_unconfirmed" | "roles_invalid" | "stale" | undefined {
+  return reason === "roles_unconfirmed" ||
+    reason === "roles_invalid" ||
+    reason === "stale"
     ? reason
     : undefined;
 }
@@ -150,7 +155,9 @@ function verified(): void {
         t(
           rolesWait(vault.pendingReason) === "roles_unconfirmed"
             ? "invitation.keyRolesUnconfirmed"
-            : "invitation.keyRolesInvalid",
+            : rolesWait(vault.pendingReason) === "stale"
+              ? "invitation.keyStale"
+              : "invitation.keyRolesInvalid",
           { name: vault.name ?? t("invitation.unknownName") },
         )
       }}

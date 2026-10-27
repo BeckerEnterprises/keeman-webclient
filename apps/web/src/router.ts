@@ -116,6 +116,11 @@ const routes: RouteRecordRaw[] = [
         meta: { phases: ["unlocked"] },
       },
       {
+        path: "pairing",
+        component: () => import("./views/account/PairingView.vue"),
+        meta: { phases: ["unlocked"] },
+      },
+      {
         path: "settings",
         component: () => import("./views/account/SettingsView.vue"),
         meta: { phases: ["unlocked"] },

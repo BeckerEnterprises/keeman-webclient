@@ -149,10 +149,13 @@ function setRole(member: MemberView): Promise<void> {
 /** Why a pending key waits, beyond an unverified sender. */
 const keyWait = computed(() =>
   props.vault.pendingReason === "roles_unconfirmed" ||
-  props.vault.pendingReason === "roles_invalid"
+  props.vault.pendingReason === "roles_invalid" ||
+  props.vault.pendingReason === "stale"
     ? props.vault.pendingReason
     : undefined,
 );
+/** Unconfirmed state: no invitation, promotion or new key until confirmed. */
+const stale = computed(() => props.vault.freshness === "stale");
 
 function withdraw(member: MemberView): Promise<void> {
   return run(() =>
@@ -201,6 +204,9 @@ onMounted(() => void load());
           })
         }}
       </p>
+      <p v-else-if="keyWait === 'stale'" data-test="members-key-stale">
+        {{ t("members.keyStale") }}
+      </p>
       <p v-else-if="keyWait === 'roles_invalid'">
         {{
           t("invitation.keyRolesInvalid", {
@@ -241,6 +247,13 @@ onMounted(() => void load());
       data-test="members-rotation-required"
     >
       {{ t("members.rotationRequired") }}
+    </p>
+    <p
+      v-if="stale && manage"
+      class="notice notice-warning"
+      data-test="members-stale"
+    >
+      {{ t("members.stale") }}
     </p>
     <ErrorNotice :error="error" />
     <p v-if="invited" class="notice notice-info" data-test="members-invited">
@@ -301,7 +314,7 @@ onMounted(() => void load());
             <button
               type="button"
               class="secondary small"
-              :disabled="busy"
+              :disabled="busy || stale"
               data-test="member-role-toggle"
               @click="setRole(member)"
             >
@@ -314,7 +327,7 @@ onMounted(() => void load());
             <button
               type="button"
               class="secondary small"
-              :disabled="busy"
+              :disabled="busy || stale"
               data-test="member-remove"
               @click="dialog = { kind: 'rotation', remove: member.userId }"
             >
@@ -337,7 +350,7 @@ onMounted(() => void load());
       </label>
       <button
         type="submit"
-        :disabled="busy || email.trim() === ''"
+        :disabled="busy || stale || email.trim() === ''"
         data-test="invite-submit"
       >
         {{ t("members.inviteSubmit") }}
@@ -348,7 +361,7 @@ onMounted(() => void load());
         v-if="manage"
         type="button"
         class="secondary"
-        :disabled="busy"
+        :disabled="busy || stale"
         data-test="rotation-open"
         @click="dialog = { kind: 'rotation' }"
       >

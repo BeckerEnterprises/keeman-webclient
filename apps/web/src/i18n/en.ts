@@ -736,6 +736,7 @@ const en: typeof de = {
     settings: "Settings",
     about: "About KeeMan",
     contacts: "Contacts",
+    pairing: "Pair device",
     delete: "Delete account",
   },
   password: {
@@ -886,6 +887,11 @@ const en: typeof de = {
       "You save the defaults of the password generator in the generator with “Save as default”.",
     title: "Settings",
     autoLock: "Lock automatically after inactivity (minutes)",
+    freshness: "Period for confirming the state (days)",
+    freshnessHint:
+      "Within this period a device of your account must have confirmed the state, otherwise it stays read-only. A longer value applies on each device only after it confirmed it once.",
+    stale:
+      "No device of your account confirmed your account data in time. It is read-only until you confirm the state or pair the device.",
     lockOnHidden: "Lock when the tab is hidden",
     lockOnHiddenOff: "never",
     lockOnHiddenNow: "immediately",
@@ -992,6 +998,9 @@ const en: typeof de = {
       "You lose access to “{name}”. An owner renews the key afterwards.",
     keyPending: "A new key for this database waits for your verification.",
     keyCheck: "Verify",
+    keyStale: "A new key for this database waits until its state is confirmed.",
+    stale:
+      "Inviting, changing roles and renewing the key are blocked until the state of this database is confirmed.",
     keyMissing:
       "The current key of this database is missing. Ask an owner to renew the key.",
     keyInvalid:
@@ -1028,6 +1037,8 @@ const en: typeof de = {
     keyText: "A new key for “{name}” from {email} waits for your verification.",
     keyRolesUnconfirmed:
       "A new key for “{name}” is waiting. First take over the signed owner list on the database page.",
+    keyStale:
+      "A new key for “{name}” waits until the state of this database is confirmed.",
     keyRolesInvalid:
       "A new key for “{name}” is waiting, but the owner list of this database is not checked. First look at the warning on the database page.",
     keyRejected:
@@ -1041,6 +1052,51 @@ const en: typeof de = {
       "The new key for “{name}” is invalid and was not accepted. This may be an error or an attack on the server.",
     rotationRequired: "A member left “{name}”. Renew the key.",
     rotationAction: "Go to database",
+  },
+  freshness: {
+    vaultSince:
+      "No device of your account has confirmed the state of this database since {date}.",
+    vaultNever:
+      "No device of your account has confirmed the state of this database yet.",
+    vaultReadOnly:
+      "The server might deliver an older state. The database stays read-only until you pair this device with another one or confirm the state.",
+    bannerSince:
+      "This device cannot confirm that the server delivers the current state: no device of your account has confirmed it since {date}.",
+    bannerNever:
+      "This device cannot confirm that the server delivers the current state: no device of your account has confirmed it yet.",
+    bannerReadOnly:
+      "The affected databases and account data stay read-only until you pair this device with another one or confirm the state.",
+    pair: "Pair device",
+    ackTitle: "Take the state as current",
+    ackText:
+      "Takes the delivered state as current. Compare with another device or pair this device first; otherwise an older state from the server could count as current.",
+    newDevice:
+      "New device: pair it with another device of your account, then it detects older states from the server at once.",
+    later: "Later",
+    tree: "State not confirmed",
+  },
+  pairing: {
+    title: "Pair device",
+    intro:
+      "When pairing, a device takes over the high-water marks of another device of your account. Afterwards it detects every older state the server delivers, including the one before a member was removed.",
+    showTitle: "Code for another device",
+    showHint:
+      "Shows a code you enter on the other device. It is valid for 10 minutes; a new one replaces the old one.",
+    show: "Show code",
+    showAgain: "Show new code",
+    expiresIn: "Valid for {time}",
+    expired: "The code has expired.",
+    enterTitle: "Enter the code of another device",
+    enterHint:
+      "Enter the code the other device shows, or read it as a QR code from an image.",
+    code: "Pairing code",
+    submit: "Pair",
+    qrFile: "QR code from image",
+    qrHint: "Choose an image file, drag it here or paste it with Ctrl+V.",
+    reading: "Reading image…",
+    noQr: "No QR code was found in the image.",
+    badImage: "The image cannot be read.",
+    done: "Paired. Took over the high-water marks of {count} database(s).",
   },
   banner: {
     clockSkew: "The clock of this device is off; TOTP codes are corrected.",
@@ -1192,6 +1248,14 @@ const en: typeof de = {
       "This account has no signing key yet. It must sign in or unlock again first.",
     roles_required:
       "The owner list of this database must be signed along. Reload the page and try again.",
+    sync_stale:
+      "No device of your account confirmed the state of this database in time. Pair the device or confirm the state first.",
+    sync_pairing_invalid: "The code has 24 characters (A to Z, 2 to 7).",
+    sync_pairing_missing:
+      "No pairing found. Let the other device show a new code.",
+    sync_pairing_wrong:
+      "The code does not match. Check it for typos or let the other device show a new one.",
+    sync_pairing_unsupported: "This server does not support pairing devices.",
     sync_unknown_owner:
       "The sender is not known as an owner on this device. Confirm the new key first.",
     sync_self: "You cannot invite yourself.",

@@ -43,6 +43,12 @@ export interface Banners {
   userDataReadOnly: boolean;
   /** The server delivered older account data. */
   userDataRollback: boolean;
+  /** No device of the account confirmed the account data in time. */
+  userDataStale: boolean;
+  /** The last confirmation of the account data known (Unix ms). */
+  userDataConfirmedSince: number | undefined;
+  /** This device had no marks for the account: offer pairing. */
+  newDevice: boolean;
   /** After a login with a backup code: how many are left. */
   backupCodesRemaining: number | undefined;
   /** After a recovery: the other sessions were signed out. */
@@ -55,6 +61,9 @@ const NO_BANNERS: Banners = {
   userDataCorrupt: false,
   userDataReadOnly: false,
   userDataRollback: false,
+  userDataStale: false,
+  userDataConfirmedSince: undefined,
+  newDevice: false,
   backupCodesRemaining: undefined,
   recovered: false,
 };
@@ -115,6 +124,8 @@ interface SessionState {
   secondFactor: { methods: SecondFactorMethod[] } | undefined;
   /** `features.favicon` of the server. */
   favicon: boolean;
+  /** `features.freshness` of the server: attestations and pairing. */
+  freshness: boolean;
 }
 
 export const useSessionStore = defineStore("session", {
@@ -135,6 +146,7 @@ export const useSessionStore = defineStore("session", {
     contactsWritable: false,
     secondFactor: undefined,
     favicon: false,
+    freshness: false,
   }),
   actions: {
     /** Startup: server config, then refresh with the cookie. */
@@ -150,6 +162,7 @@ export const useSessionStore = defineStore("session", {
           return;
         }
         this.favicon = config.features.favicon;
+        this.freshness = config.features.freshness === true;
         await api.refresh();
         const me = await api.me();
         this.email = me.email;
@@ -314,6 +327,8 @@ export const useSessionStore = defineStore("session", {
           userDataCorrupt: report.userDataCorrupt,
           userDataReadOnly: report.userDataReadOnly,
           userDataRollback: report.userDataRollback,
+          userDataStale: report.userDataStale,
+          newDevice: report.newDevice,
         };
         const seen = report.kdfWeakerThanSeen;
         this.kdfWarning = seen && this.kdf ? this.describeWeaker() : undefined;
@@ -369,6 +384,9 @@ export const useSessionStore = defineStore("session", {
       this.banners.userDataCorrupt = state?.status === "corrupt";
       this.banners.userDataReadOnly = state?.status === "ok" && state.readOnly;
       this.banners.userDataRollback = account.userDataRollback;
+      this.banners.userDataStale = account.userDataStale;
+      this.banners.userDataConfirmedSince = account.userDataConfirmedSince;
+      if (!account.isNewDevice) this.banners.newDevice = false;
       this.contacts = account.contacts;
       this.ownFingerprint = account.ownFingerprint;
       this.contactsWritable = account.contactsWritable;
@@ -400,6 +418,29 @@ export const useSessionStore = defineStore("session", {
       await useServices().account.acknowledgeUserDataRollback();
       stillCurrent(started);
       this.refreshFromAccount();
+    },
+
+    /**
+     * "Understood" at the freshness banner: the delivered account data and
+     * every unconfirmed vault count as current now.
+     */
+    async acknowledgeFreshness(): Promise<void> {
+      const started = generation;
+      await useServices().account.acknowledgeUserDataFreshness();
+      stillCurrent(started);
+      await useVaultsStore().engine().acknowledgeFreshness();
+      stillCurrent(started);
+      this.refreshFromAccount();
+    },
+
+    /** Takes over the marks of another device of this account. */
+    async pair(code: string): Promise<number> {
+      const started = generation;
+      const { vaults } = await useServices().account.pair(code);
+      stillCurrent(started);
+      this.banners.newDevice = false;
+      this.refreshFromAccount();
+      return vaults;
     },
 
     acknowledgeKdf(): void {

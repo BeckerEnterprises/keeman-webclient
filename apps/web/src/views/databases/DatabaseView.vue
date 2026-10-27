@@ -11,6 +11,7 @@ import ErrorNotice from "../../components/ErrorNotice.vue";
 import IconsSection from "../../components/IconsSection.vue";
 import KdbxExportDialog from "../../components/kdbx/KdbxExportDialog.vue";
 import KdbxImportDialog from "../../components/kdbx/KdbxImportDialog.vue";
+import FreshnessWarning from "../../components/FreshnessWarning.vue";
 import ManifestWarning from "../../components/ManifestWarning.vue";
 import MembersSection from "../../components/sharing/MembersSection.vue";
 import RolesWarning from "../../components/sharing/RolesWarning.vue";
@@ -104,10 +105,12 @@ async function acknowledgeManifest(): Promise<void> {
         @acknowledge="acknowledgeManifest"
       />
       <RolesWarning :vault="vault" />
+      <FreshnessWarning :vault="vault" />
       <p
         v-if="
           !vault.rollback &&
           vault.manifest !== 'mismatch' &&
+          vault.freshness !== 'stale' &&
           !vault.writable &&
           vault.status === 'ready'
         "

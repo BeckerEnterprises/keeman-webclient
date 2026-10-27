@@ -1,25 +1,34 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
+import { useSessionStore } from "../../stores/session";
 
 const { t } = useI18n();
-const sections = [
+const session = useSessionStore();
+const all = [
   "password",
   "kdf",
   "recovery-key",
   "two-factor",
   "sessions",
   "contacts",
+  "pairing",
   "settings",
   "about",
   "delete",
 ] as const;
-const labels: Record<(typeof sections)[number], string> = {
+// Pairing needs a server that stores it.
+const sections = computed(() =>
+  all.filter((section) => section !== "pairing" || session.freshness),
+);
+const labels: Record<(typeof all)[number], string> = {
   password: "account.password",
   kdf: "account.kdf",
   "recovery-key": "account.recovery",
   "two-factor": "account.twoFactor",
   sessions: "account.sessions",
   contacts: "account.contacts",
+  pairing: "account.pairing",
   settings: "account.settings",
   about: "account.about",
   delete: "account.delete",

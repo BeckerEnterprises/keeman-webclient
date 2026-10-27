@@ -19,6 +19,7 @@ import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { copyInEvent, copySecret } from "../../clipboard";
 import ErrorNotice from "../../components/ErrorNotice.vue";
+import FreshnessWarning from "../../components/FreshnessWarning.vue";
 import ManifestWarning from "../../components/ManifestWarning.vue";
 import WriteNotices from "../../components/WriteNotices.vue";
 import EntryDetail from "../../components/detail/EntryDetail.vue";
@@ -886,11 +887,13 @@ function back(): void {
       :vault="vault"
       @acknowledge="acknowledgeManifest"
     />
+    <FreshnessWarning v-if="vault" :vault="vault" />
     <p
       v-if="
         vault &&
         !vault.rollback &&
         vault.manifest !== 'mismatch' &&
+        vault.freshness !== 'stale' &&
         !vault.writable &&
         vault.status === 'ready'
       "

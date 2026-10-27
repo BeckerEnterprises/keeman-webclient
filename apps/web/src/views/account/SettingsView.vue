@@ -17,6 +17,7 @@ import { useSessionStore } from "../../stores/session";
 const { t } = useI18n();
 const session = useSessionStore();
 const autoLock = ref(session.settings.autoLockMinutes);
+const freshnessDays = ref(session.settings.freshnessDays);
 const hiddenMode = ref<"off" | "now" | "after">(
   session.settings.lockOnHiddenMinutes === null
     ? "off"
@@ -60,6 +61,9 @@ function isMinutes(value: number, min: number): boolean {
 const valid = computed(
   () =>
     isMinutes(autoLock.value, 1) &&
+    Number.isInteger(freshnessDays.value) &&
+    freshnessDays.value >= 1 &&
+    freshnessDays.value <= 90 &&
     (hiddenMode.value !== "after" || isMinutes(hiddenMinutes.value, 1)) &&
     (clipboardMode.value === "off" ||
       (Number.isInteger(clipboardSeconds.value) &&
@@ -71,6 +75,7 @@ const valid = computed(
 /** Values as loaded; only what the user changed is written. */
 const initial = {
   autoLockMinutes: session.settings.autoLockMinutes,
+  freshnessDays: session.settings.freshnessDays,
   lockOnHiddenMinutes: session.settings.lockOnHiddenMinutes,
   language: session.settings.language,
   clipboardClearSeconds: session.settings.clipboardClearSeconds,
@@ -92,6 +97,8 @@ async function save(): Promise<void> {
   const change: SettingsChange = {};
   if (autoLock.value !== initial.autoLockMinutes)
     change.autoLockMinutes = autoLock.value;
+  if (freshnessDays.value !== initial.freshnessDays)
+    change.freshnessDays = freshnessDays.value;
   if (lockOnHidden !== initial.lockOnHiddenMinutes)
     change.lockOnHiddenMinutes = lockOnHidden;
   if (chosenLanguage !== initial.language) change.language = chosenLanguage;
@@ -112,6 +119,7 @@ async function save(): Promise<void> {
   try {
     if (Object.keys(change).length > 0) await session.updateSettings(change);
     initial.autoLockMinutes = autoLock.value;
+    initial.freshnessDays = freshnessDays.value;
     initial.lockOnHiddenMinutes = lockOnHidden;
     initial.language = chosenLanguage;
     initial.clipboardClearSeconds = clipboard;
@@ -149,6 +157,13 @@ async function reset(): Promise<void> {
       {{ t("settings.corrupt") }}
     </p>
     <p
+      v-else-if="session.banners.userDataStale"
+      class="notice notice-warning"
+      data-test="settings-stale"
+    >
+      {{ t("settings.stale") }}
+    </p>
+    <p
       v-else-if="session.banners.userDataReadOnly"
       class="notice notice-warning"
     >
@@ -168,6 +183,23 @@ async function reset(): Promise<void> {
             required
             data-test="settings-autolock"
           />
+        </div>
+        <div class="field">
+          <label for="settings-freshness">{{ t("settings.freshness") }}</label>
+          <input
+            id="settings-freshness"
+            v-model.number="freshnessDays"
+            type="number"
+            min="1"
+            max="90"
+            step="1"
+            required
+            aria-describedby="settings-freshness-hint"
+            data-test="settings-freshness"
+          />
+          <p id="settings-freshness-hint" class="muted small-text">
+            {{ t("settings.freshnessHint") }}
+          </p>
         </div>
         <fieldset>
           <legend>{{ t("settings.lockOnHidden") }}</legend>

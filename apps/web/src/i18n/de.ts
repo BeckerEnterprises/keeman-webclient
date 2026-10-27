@@ -755,6 +755,7 @@ export default {
     settings: "Einstellungen",
     about: "Über KeeMan",
     contacts: "Kontakte",
+    pairing: "Gerät koppeln",
     delete: "Konto löschen",
   },
   password: {
@@ -910,6 +911,11 @@ export default {
       "Die Standardwerte des Passwortgenerators speicherst du im Generator mit „Als Standard speichern“.",
     title: "Einstellungen",
     autoLock: "Automatisch sperren nach Inaktivität (Minuten)",
+    freshness: "Frist für die Bestätigung des Stands (Tage)",
+    freshnessHint:
+      "Innerhalb dieser Frist muss ein Gerät deines Kontos den Stand bestätigt haben, sonst bleibt er schreibgeschützt. Ein längerer Wert gilt auf jedem Gerät erst, nachdem es ihn einmal bestätigt hat.",
+    stale:
+      "Kein Gerät deines Kontos hat deine Kontodaten rechtzeitig bestätigt. Sie sind schreibgeschützt, bis du den Stand bestätigst oder das Gerät koppelst.",
     lockOnHidden: "Sperren, wenn der Tab versteckt ist",
     lockOnHiddenOff: "nie",
     lockOnHiddenNow: "sofort",
@@ -1019,6 +1025,10 @@ export default {
     keyPending:
       "Ein neuer Schlüssel für diese Datenbank wartet auf deine Prüfung.",
     keyCheck: "Prüfen",
+    keyStale:
+      "Ein neuer Schlüssel für diese Datenbank wartet, bis ihr Stand bestätigt ist.",
+    stale:
+      "Einladen, Rollen ändern und Schlüssel erneuern sind gesperrt, bis der Stand dieser Datenbank bestätigt ist.",
     keyMissing:
       "Für diese Datenbank fehlt der aktuelle Schlüssel. Bitte einen Eigentümer, den Schlüssel zu erneuern.",
     keyInvalid:
@@ -1056,6 +1066,8 @@ export default {
       "Ein neuer Schlüssel für „{name}“ von {email} wartet auf deine Prüfung.",
     keyRolesUnconfirmed:
       "Ein neuer Schlüssel für „{name}“ wartet. Übernimm zuerst die signierte Eigentümerliste auf der Seite der Datenbank.",
+    keyStale:
+      "Ein neuer Schlüssel für „{name}“ wartet, bis der Stand dieser Datenbank bestätigt ist.",
     keyRolesInvalid:
       "Ein neuer Schlüssel für „{name}“ wartet, aber die Eigentümerliste dieser Datenbank ist nicht geprüft. Sieh dir zuerst die Warnung auf der Seite der Datenbank an.",
     keyRejected:
@@ -1070,6 +1082,51 @@ export default {
     rotationRequired:
       "Ein Mitglied hat „{name}“ verlassen. Erneuere den Schlüssel.",
     rotationAction: "Zur Datenbank",
+  },
+  freshness: {
+    vaultSince:
+      "Seit {date} hat kein Gerät deines Kontos den Stand dieser Datenbank bestätigt.",
+    vaultNever:
+      "Noch kein Gerät deines Kontos hat den Stand dieser Datenbank bestätigt.",
+    vaultReadOnly:
+      "Der Server könnte einen älteren Stand liefern. Die Datenbank bleibt schreibgeschützt, bis du dieses Gerät mit einem anderen koppelst oder den Stand bestätigst.",
+    bannerSince:
+      "Dieses Gerät kann nicht bestätigen, dass der Server den aktuellen Stand liefert: Seit {date} hat kein Gerät deines Kontos ihn bestätigt.",
+    bannerNever:
+      "Dieses Gerät kann nicht bestätigen, dass der Server den aktuellen Stand liefert: Bisher hat kein Gerät deines Kontos ihn bestätigt.",
+    bannerReadOnly:
+      "Betroffene Datenbanken und Kontodaten bleiben schreibgeschützt, bis du dieses Gerät mit einem anderen koppelst oder den Stand bestätigst.",
+    pair: "Gerät koppeln",
+    ackTitle: "Stand als aktuell übernehmen",
+    ackText:
+      "Übernimmt den gelieferten Stand als aktuell. Vergleiche vorher mit einem anderen Gerät oder kopple dieses Gerät; sonst könnte ein älterer Stand des Servers als aktuell gelten.",
+    newDevice:
+      "Neues Gerät: Kopple es mit einem anderen Gerät deines Kontos, dann erkennt es ältere Stände des Servers sofort.",
+    later: "Später",
+    tree: "Stand nicht bestätigt",
+  },
+  pairing: {
+    title: "Gerät koppeln",
+    intro:
+      "Beim Koppeln übernimmt ein Gerät die Höchststände eines anderen Geräts deines Kontos. Danach erkennt es jeden älteren Stand, den der Server liefert, auch den vor dem Entfernen eines Mitglieds.",
+    showTitle: "Code für ein anderes Gerät",
+    showHint:
+      "Zeigt einen Code, den du auf dem anderen Gerät eingibst. Er gilt 10 Minuten; ein neuer ersetzt den alten.",
+    show: "Code anzeigen",
+    showAgain: "Neuen Code anzeigen",
+    expiresIn: "Gültig noch {time}",
+    expired: "Der Code ist abgelaufen.",
+    enterTitle: "Code eines anderen Geräts eingeben",
+    enterHint:
+      "Gib den Code ein, den das andere Gerät zeigt, oder lies ihn als QR-Code aus einem Bild.",
+    code: "Kopplungscode",
+    submit: "Koppeln",
+    qrFile: "QR-Code aus Bild",
+    qrHint: "Bilddatei wählen, hierher ziehen oder mit Strg+V einfügen.",
+    reading: "Lese Bild…",
+    noQr: "Im Bild wurde kein QR-Code gefunden.",
+    badImage: "Das Bild lässt sich nicht lesen.",
+    done: "Gekoppelt. Höchststände von {count} Datenbank(en) übernommen.",
   },
   banner: {
     clockSkew:
@@ -1215,6 +1272,15 @@ export default {
       "Die Mitglieder haben sich geändert. Bitte erneut prüfen.",
     sync_unverified:
       "Dieses Konto ist kein verifizierter Kontakt. Vergleiche zuerst die Fingerprints.",
+    sync_stale:
+      "Kein Gerät deines Kontos hat den Stand dieser Datenbank rechtzeitig bestätigt. Kopple das Gerät oder bestätige den Stand zuerst.",
+    sync_pairing_invalid: "Der Code besteht aus 24 Zeichen (A bis Z, 2 bis 7).",
+    sync_pairing_missing:
+      "Keine Kopplung gefunden. Lass das andere Gerät einen neuen Code anzeigen.",
+    sync_pairing_wrong:
+      "Der Code passt nicht. Prüfe ihn auf Tippfehler oder lass einen neuen anzeigen.",
+    sync_pairing_unsupported:
+      "Dieser Server unterstützt das Koppeln von Geräten nicht.",
     sync_unknown_owner:
       "Der Absender ist auf diesem Gerät nicht als Eigentümer bekannt. Bestätige den neuen Schlüssel zuerst.",
     sync_self: "Dich selbst kannst du nicht einladen.",
