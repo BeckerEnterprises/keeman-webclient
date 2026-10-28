@@ -18,6 +18,7 @@ Signed roles need a server that reports `features.roles`; with an older server t
 - Owners in warnings and in "Take over" are listed one per line with their own status; the server's addresses with whitespace, commas, control or format characters are not shown. The last comparison partner of a state code is named with a status too.
 - Resetting damaged account data keeps the device's comparison points; a rollback found while saving shows at once; a rotation checks the owner list again before it starts and always sends a statement where the database has a list.
 - Confirming a dangerous action focuses "Cancel" first, the accept dialog of an invitation "Close".
+
 - A roles chain the server names but this device cannot check (it does not load, is empty or ends below the named head) no longer falls back to the older rule that accepted a new key from anyone the member list calls an owner. The database then stays read-only with "The owner list could not be loaded" and "Try again": no key is accepted, nothing is signed, no role is changed, and the member list's owners are not remembered. Checking no longer depends on the server configuration loading. "Understood" and "Take over" apply only to the owner list that was shown.
 - Every lower reference point of the owner list (the account's anchor, the device's floor, roles points of attestations and confirmations) must appear in the delivered list as that very statement; a list delivered only from a higher, forked point on is a contradiction. A confirmation by another device no longer raises the device's own floor directly.
 - A list in the account's own name is taken over only with the account's own keys.
@@ -63,6 +64,7 @@ Signed roles need a server that reports `features.roles`; with an older server t
 
 ### Fixed
 
+- Deleting the account could end with "The session has expired" instead of the confirmation, when the server's end of the session reached the tab before the answer to the deletion.
 - Reloading an owner list after a conflict now keeps the points of own attestations and pairings; a list that cannot be loaded is still checked against new points up to its last head.
 - On a server that stops delivering owner lists, an owner's device kept its last checked list instead of warning, and "Understood" took over that list instead of an empty one; it also works when the list was never checked.
 - Merging the account data after a conflict no longer undoes a removed owner list anchor.
