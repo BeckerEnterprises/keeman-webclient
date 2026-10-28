@@ -69,6 +69,16 @@ export type SyncErrorCode =
   | "pairing_wrong"
   /** The server stores no pairings. */
   | "pairing_unsupported"
+  /** The state code has invalid characters, length or form. */
+  | "state_code_invalid"
+  /** A member's state code contradicts the chain; acknowledge first. */
+  | "state_mismatch"
+  /** The owner list changed since it was shown; look again. */
+  | "roles_changed"
+  /** The sender of the invitation owns no part of the list its box names. */
+  | "sender_not_owner"
+  /** A warning about the owner list is open; nothing is signed until understood. */
+  | "roles_warning_open"
   | "locked";
 
 export class SyncError extends Error {

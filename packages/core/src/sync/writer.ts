@@ -137,6 +137,16 @@ export function isTransient(error: unknown): boolean {
  * The vault as a whole may be written. A mismatch with the manifest or an
  * unreadable manifest blocks writing, except for the rebuild itself.
  */
+/**
+ * A warning about the owner list (rollback, fork, a broken chain, or a
+ * comparison point the chain does not satisfy): an account kept from a
+ * rotation would otherwise go on writing with a key a removed member knows.
+ */
+export function rolesWarning(state: VaultState): boolean {
+  const status = state.roles?.status;
+  return status === "rollback" || status === "fork" || status === "invalid";
+}
+
 export function vaultWritable(state: VaultState, rebuild = false): boolean {
   const meta = state.meta;
   const root = state.objects.get(manifestIds(state.id).root);
@@ -146,6 +156,7 @@ export function vaultWritable(state: VaultState, rebuild = false): boolean {
     state.keyStatus === "ok" &&
     state.synced &&
     !state.rollback &&
+    !rolesWarning(state) &&
     state.freshness?.status === "fresh" &&
     meta !== undefined &&
     !meta.readOnly &&

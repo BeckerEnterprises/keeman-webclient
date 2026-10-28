@@ -1,5 +1,6 @@
 /** Several accounts on one fake server, for the sharing tests. */
 import { FakeServer } from "../account/fake-server";
+import type { SyncEngine } from "../../src/sync/engine";
 import { NAMES, newAccount, PASSWORD } from "../sync/devices";
 
 export type Person = Awaited<ReturnType<typeof person>>;
@@ -32,6 +33,15 @@ export async function owner(
   return { ...someone, vaultId };
 }
 
+/** Accepts an invitation with the head the accept dialog shows. */
+export async function acceptShown(
+  engine: SyncEngine,
+  vaultId: string,
+): Promise<void> {
+  const details = await engine.invitationDetails(vaultId);
+  await engine.acceptInvitation(vaultId, details);
+}
+
 /** The owner verifies and invites; the member verifies and accepts. */
 export async function share(
   host: Person,
@@ -49,7 +59,7 @@ export async function share(
   if (!invitation?.sender) throw new Error("invitation missing");
   if (invitation.sender.status !== "verified")
     await guest.account.verifyContact(invitation.sender);
-  await guest.engine.acceptInvitation(vaultId);
+  await acceptShown(guest.engine, vaultId);
 }
 
 export function posts(server: FakeServer, suffix: string): number {

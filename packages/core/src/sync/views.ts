@@ -5,6 +5,11 @@
  */
 import type { ObjectType } from "../crypto/aad";
 import type { JsonObject } from "../crypto/bytes";
+import {
+  formatStateCode,
+  stateCodeUri,
+  type StateCode,
+} from "../crypto/state-code";
 import { isTimestamp } from "../crypto/time";
 import {
   inspectEntry,
@@ -241,6 +246,71 @@ export interface RoleOwnerView {
   readonly email: string | undefined;
 }
 
+/** A state code for display. */
+export interface StateCodeView {
+  readonly version: number;
+  /** 26 characters of Base32. */
+  readonly code: string;
+  /** "v7 · XXXX XXXX …". */
+  readonly display: string;
+}
+
+/** The outcome of comparing a member's state code. */
+export interface StateComparisonView {
+  /**
+   * `missing`: above the own head, and the server delivers nothing newer;
+   * `withheld`: the server does not deliver the older statement;
+   * `unavailable`: no checked chain to compare with.
+   */
+  readonly result:
+    | "match"
+    | "behind"
+    | "mismatch"
+    | "missing"
+    | "withheld"
+    | "other_vault"
+    | "unavailable";
+  readonly entered: StateCodeView;
+  /**
+   * This device's code to set against it: of the same version for
+   * `mismatch`, else of the head.
+   */
+  readonly own: StateCodeView | undefined;
+  /** The vault this device knows the code from, for `other_vault`. */
+  readonly otherVault: string | undefined;
+}
+
+/** An owner of the statement an invitation names. */
+export interface InvitationOwnerView {
+  readonly userId: string;
+  /** The contact's address if verified, else the server's. */
+  readonly email: string | undefined;
+  readonly verified: boolean;
+  /** The server names other keys for the account than the statement. */
+  readonly keysDiffer: boolean;
+  readonly sender: boolean;
+}
+
+/** What the accept dialog shows of an invitation. */
+export interface InvitationDetails {
+  readonly vaultId: string;
+  readonly vaultName: string | undefined;
+  /**
+   * `no_chain`: an older vault without owner list; `rejected`: the box
+   * fails the roles check; `contradicted`: a member's code contradicts;
+   * `sender_not_owner`: the sender owns no part of the statement named.
+   */
+  readonly status:
+    "ok" | "no_chain" | "rejected" | "contradicted" | "sender_not_owner";
+  /** Owners of the statement the box names. */
+  readonly owners: readonly InvitationOwnerView[];
+  /** The state code the account would have after accepting. */
+  readonly code: (StateCodeView & { readonly uri: string }) | undefined;
+  /** The head the dialog shows; accepting needs the same one. */
+  readonly head:
+    { readonly version: number; readonly hash: string } | undefined;
+}
+
 /** The roles chain of a vault as this device checked it. */
 export interface RolesView {
   /** `unsupported`: the server has no roles chains. */
@@ -256,6 +326,20 @@ export interface RolesView {
   readonly verifyOwners: boolean;
   /** The server names other owners than the checked chain. */
   readonly ownersMismatch: boolean;
+  /** The state code of the checked head, with the content of its QR code. */
+  readonly code: (StateCodeView & { readonly uri: string }) | undefined;
+  /** The member's code behind a warning. */
+  readonly compared:
+    | { readonly kind: "mismatch" | "missing"; readonly code: StateCodeView }
+    | undefined;
+  /** The last code that matched. */
+  readonly lastMatch:
+    | {
+        readonly version: number;
+        readonly at: string;
+        readonly partner: RoleOwnerView | undefined;
+      }
+    | undefined;
 }
 
 /** A custom icon of a vault's library. */
@@ -853,6 +937,9 @@ function rolesView(state: VaultState): RolesView {
       newOwners: [],
       verifyOwners: false,
       ownersMismatch: false,
+      code: undefined,
+      compared: undefined,
+      lastMatch: undefined,
     };
   const members = state.members ?? [];
   const named = (userId: string): RoleOwnerView => ({
@@ -883,5 +970,32 @@ function rolesView(state: VaultState): RolesView {
         : roles.deliveredOwners.filter((id) => !known.has(id)).map(named),
     verifyOwners: roles.verifyOwners,
     ownersMismatch,
+    code: roles.code
+      ? {
+          ...stateCodeView(roles.code),
+          uri: stateCodeUri(state.id, roles.code),
+        }
+      : undefined,
+    compared: roles.compared
+      ? { kind: roles.compared.kind, code: stateCodeView(roles.compared.point) }
+      : undefined,
+    lastMatch: state.lastMatch
+      ? {
+          version: state.lastMatch.version,
+          at: state.lastMatch.at,
+          partner:
+            state.lastMatch.partner === null
+              ? undefined
+              : named(state.lastMatch.partner),
+        }
+      : undefined,
+  };
+}
+
+export function stateCodeView(code: StateCode): StateCodeView {
+  return {
+    version: code.version,
+    code: code.code,
+    display: formatStateCode(code),
   };
 }

@@ -10,7 +10,7 @@ import { sodium } from "../../src/crypto/sodium";
 import { AccountError } from "../../src/account/errors";
 import { FakeServer } from "../account/fake-server";
 import { NAMES, PASSWORD, rootOf, vault } from "../sync/devices";
-import { owner, person, posts, share } from "./people";
+import { acceptShown, owner, person, posts, share } from "./people";
 
 const attackerKey = () => toBase64Url(sodium().crypto_box_keypair().publicKey);
 
@@ -147,14 +147,12 @@ describe("invitations", () => {
     });
     expect(invitation?.sender?.fingerprint).toBe(alice.account.ownFingerprint);
     expect(invitation?.sender?.status).toBe("unverified");
-    await expect(
-      bob.engine.acceptInvitation(alice.vaultId),
-    ).rejects.toMatchObject({
+    await expect(acceptShown(bob.engine, alice.vaultId)).rejects.toMatchObject({
       code: "unverified",
     });
     expect(posts(alice.server, "/accept")).toBe(0);
     if (invitation?.sender) await bob.account.verifyContact(invitation.sender);
-    await bob.engine.acceptInvitation(alice.vaultId);
+    await acceptShown(bob.engine, alice.vaultId);
     expect(bob.engine.snapshot.invitations).toEqual([]);
     expect(vault(bob.engine, alice.vaultId)).toMatchObject({
       status: "ready",
@@ -211,9 +209,7 @@ describe("invitations", () => {
     const invitation = bob.engine.snapshot.invitations[0];
     expect(invitation?.vaultName).toBeUndefined();
     if (invitation?.sender) await bob.account.verifyContact(invitation.sender);
-    await expect(
-      bob.engine.acceptInvitation(alice.vaultId),
-    ).rejects.toMatchObject({
+    await expect(acceptShown(bob.engine, alice.vaultId)).rejects.toMatchObject({
       code: "key_box_invalid",
     });
     expect(posts(alice.server, "/accept")).toBe(0);
@@ -250,7 +246,7 @@ describe("invitations", () => {
     );
     expect(invitation?.vaultName).toBeUndefined();
     const accepted = posts(alice.server, "/accept");
-    await expect(engine.acceptInvitation(second)).rejects.toMatchObject({
+    await expect(acceptShown(engine, second)).rejects.toMatchObject({
       code: "unverified",
     });
     expect(posts(alice.server, "/accept")).toBe(accepted);
@@ -287,9 +283,7 @@ describe("invitations", () => {
     await carol.engine.refresh();
     expect(carol.engine.snapshot.invitations).toEqual([]);
     expect((await alice.engine.members(alice.vaultId)).length).toBe(1);
-    await expect(
-      bob.engine.acceptInvitation(alice.vaultId),
-    ).rejects.toMatchObject({
+    await expect(acceptShown(bob.engine, alice.vaultId)).rejects.toMatchObject({
       code: "not_found",
     });
   });
@@ -305,9 +299,7 @@ describe("invitations", () => {
     if (sender) await bob.account.verifyContact(sender);
     bob.server.loseResponses = (path, method) =>
       method === "POST" && path.endsWith("/accept");
-    await expect(
-      bob.engine.acceptInvitation(alice.vaultId),
-    ).rejects.toBeDefined();
+    await expect(acceptShown(bob.engine, alice.vaultId)).rejects.toBeDefined();
     bob.server.loseResponses = () => false;
     // The repetition answers 404 while the vault is active: done.
     await bob.engine.refresh();

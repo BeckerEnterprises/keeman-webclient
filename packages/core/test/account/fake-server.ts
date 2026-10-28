@@ -156,6 +156,60 @@ export interface VaultRecord {
   objects: Map<string, StoredObject>;
 }
 
+/**
+ * The vaults as the current request sees them: an account a test keeps in
+ * a view of its own gets its copy of a vault, as a forking server would
+ * show it. Changes by others stay out of the copy, its own go only in.
+ */
+class ViewedVaults extends Map<string, VaultRecord> {
+  /** User ID → vault ID → the copy that account sees. */
+  readonly views = new Map<string, Map<string, VaultRecord>>();
+  viewer: string | undefined;
+
+  #own(id: string): VaultRecord | undefined {
+    return this.viewer === undefined
+      ? undefined
+      : this.views.get(this.viewer)?.get(id);
+  }
+
+  #seen(): Map<string, VaultRecord> {
+    return new Map(
+      [...super.entries()].map(([id, v]): [string, VaultRecord] => [
+        id,
+        this.#own(id) ?? v,
+      ]),
+    );
+  }
+
+  override get(id: string): VaultRecord | undefined {
+    return this.#own(id) ?? super.get(id);
+  }
+
+  override values(): MapIterator<VaultRecord> {
+    return this.#seen().values();
+  }
+
+  override entries(): MapIterator<[string, VaultRecord]> {
+    return this.#seen().entries();
+  }
+
+  override [Symbol.iterator](): MapIterator<[string, VaultRecord]> {
+    return this.#seen()[Symbol.iterator]();
+  }
+
+  override forEach(
+    callback: (
+      value: VaultRecord,
+      key: string,
+      map: Map<string, VaultRecord>,
+    ) => void,
+  ): void {
+    this.#seen().forEach((value, key) => {
+      callback(value, key, this);
+    });
+  }
+}
+
 export interface FakeAttachment {
   id: string;
   vaultId: string;
@@ -236,7 +290,8 @@ export class FakeServer {
     undefined;
   /** A lying server: logs in with any auth key. */
   acceptAnyAuthKey = false;
-  readonly vaults = new Map<string, VaultRecord>();
+  readonly #viewed = new ViewedVaults();
+  readonly vaults: Map<string, VaultRecord> = this.#viewed;
   /** Stored idempotent answers: user + key → endpoint, body, response. */
   readonly idempotency = new Map<
     string,
@@ -333,13 +388,19 @@ export class FakeServer {
       );
     if (init.signal?.aborted) throw init.signal.reason;
     this.onRequest(method, url.pathname);
-    const response = this.#handle(
-      method,
-      url.pathname + url.search,
-      body,
-      headers,
-      binary,
-    );
+    this.#viewed.viewer = this.#session(headers)?.userId;
+    let response: Response;
+    try {
+      response = this.#handle(
+        method,
+        url.pathname + url.search,
+        body,
+        headers,
+        binary,
+      );
+    } finally {
+      this.#viewed.viewer = undefined;
+    }
     if (this.loseResponses(url.pathname, method))
       throw new TypeError("network error");
     if (this.dropResponse(url.pathname, method)) {
@@ -348,6 +409,33 @@ export class FakeServer {
     }
     return Promise.resolve(response);
   }) as typeof globalThis.fetch;
+
+  /**
+   * From now on these accounts see their own copy of the vault, as a
+   * forking server would show them.
+   */
+  split(vaultId: string, userIds: readonly string[]): void {
+    const record = this.#viewed.get(vaultId);
+    if (!record) throw new Error("no vault");
+    for (const userId of userIds) {
+      const views =
+        this.#viewed.views.get(userId) ?? new Map<string, VaultRecord>();
+      views.set(vaultId, structuredClone(record));
+      this.#viewed.views.set(userId, views);
+    }
+  }
+
+  /** The copy of a vault an account sees, to change it in a test. */
+  viewOf(userId: string, vaultId: string): VaultRecord {
+    const record = this.#viewed.views.get(userId)?.get(vaultId);
+    if (!record) throw new Error("no view");
+    return record;
+  }
+
+  /** Ends the views of an account: it sees the real vaults again. */
+  join(userId: string): void {
+    this.#viewed.views.delete(userId);
+  }
 
   userByEmail(email: string): UserRecord | undefined {
     return [...this.users.values()].find((u) => u.email === email);

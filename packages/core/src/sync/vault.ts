@@ -23,6 +23,7 @@ import {
 import type { Candidate } from "../sharing/candidate";
 import type { FreshnessStatus } from "./freshness";
 import { Mutex } from "./lock";
+import type { ComparisonMatch } from "../model/user-data";
 import type { VaultRoles } from "./roles";
 import {
   currentRoot,
@@ -102,6 +103,8 @@ export class VaultState {
   pendingReason: PendingReason | undefined = undefined;
   /** The roles chain as last checked; `undefined` on servers without one. */
   roles: VaultRoles | undefined = undefined;
+  /** The last state code that matched, for display. */
+  lastMatch: ComparisonMatch | undefined = undefined;
   /** The last member list loaded for this vault. */
   members: Member[] | undefined = undefined;
   /** Last completely seen revision. */

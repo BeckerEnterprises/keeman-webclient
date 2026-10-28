@@ -9,7 +9,14 @@ import { manifestIds } from "../../src/model/manifest";
 import type { SyncEngine } from "../../src/sync/engine";
 import { FakeServer } from "../account/fake-server";
 import { flipped, rootOf, vault } from "../sync/devices";
-import { owner, person, posts, share, type Person } from "./people";
+import {
+  acceptShown,
+  owner,
+  person,
+  posts,
+  share,
+  type Person,
+} from "./people";
 
 function titles(engine: SyncEngine, vaultId: string): string[] {
   return [...vault(engine, vaultId).entries.values()].map((e) => e.title);
@@ -121,7 +128,7 @@ describe("removing a member", () => {
     const sender = dave.engine.snapshot.invitations[0]?.sender;
     expect(dave.engine.snapshot.invitations[0]?.keyVersion).toBe(2);
     if (sender) await dave.account.verifyContact(sender);
-    await dave.engine.acceptInvitation(vaultId);
+    await acceptShown(dave.engine, vaultId);
     expect(titles(dave.engine, vaultId).sort()).toEqual(["Nachher", "Vorher"]);
   });
 

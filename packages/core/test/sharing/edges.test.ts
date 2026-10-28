@@ -11,7 +11,7 @@ import { contactStatus, contactViews } from "../../src/sharing/contacts";
 import { acceptGrant, grantName } from "../../src/sharing/grants";
 import { invite } from "../../src/sharing/members";
 import { flipped, rootOf } from "../sync/devices";
-import { owner, person, share } from "./people";
+import { acceptShown, owner, person, share } from "./people";
 
 const FP = "A".repeat(64);
 const FP2 = "C".repeat(64);
@@ -128,9 +128,9 @@ describe("grants", () => {
       alice.vaultId,
       bob.account.userId ?? "",
     );
-    await expect(
-      bob.engine.acceptInvitation(alice.vaultId),
-    ).rejects.toBeInstanceOf(ApiError);
+    await expect(acceptShown(bob.engine, alice.vaultId)).rejects.toBeInstanceOf(
+      ApiError,
+    );
   });
 });
 

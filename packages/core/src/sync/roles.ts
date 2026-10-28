@@ -27,11 +27,16 @@ import {
   type SignedRoles,
   type VerifiedRoles,
 } from "../crypto/roles";
+import {
+  comparisonPointsStatus,
+  headCode,
+  type StateCode,
+} from "../crypto/state-code";
 import type { Contact, RoleAnchor } from "../model/user-data";
 import { keyOf, statusNow, toCandidate } from "../sharing/candidate";
 import { contactStatus } from "../sharing/contacts";
 import { SyncError } from "./errors";
-import type { SyncMarks } from "./marks";
+import type { SyncMarks, UserMarks } from "./marks";
 
 /** Attempts after `409 roles_conflict`. */
 const MAX_ATTEMPTS = 3;
@@ -57,6 +62,13 @@ export interface VaultRoles {
   readonly deliveredOwners: readonly string[];
   /** Co-owners need to be verified before this owner can start a chain. */
   readonly verifyOwners: boolean;
+  /** The comparison point behind a warning, if one is. */
+  readonly compared?: {
+    readonly kind: "mismatch" | "missing";
+    readonly point: StateCode;
+  };
+  /** The state code of the checked head; only with status `ok`. */
+  readonly code?: StateCode;
 }
 
 /** What the keeper needs from the account and the engine. */
@@ -76,6 +88,8 @@ export interface RolesPort {
    * every other one.
    */
   points?(vaultId: string): readonly RolePoint[];
+  /** State codes members gave that contradicted; they only restrict. */
+  comparisons?(vaultId: string, marks: UserMarks): readonly StateCode[];
 }
 
 function pointOf(head: VerifiedRoles): RolePoint {
@@ -157,6 +171,8 @@ export class RolesKeeper {
   ): Promise<VaultRoles> {
     const previous = this.#vaults.get(vaultId);
     const points = this.#port.points?.(vaultId) ?? [];
+    const marks = await this.#port.marks.read(this.#port.userId);
+    const compared = this.#port.comparisons?.(vaultId, marks) ?? [];
     let delivered: DeliveredRoles[];
     try {
       delivered = await this.#load(vaultId, version);
@@ -164,10 +180,10 @@ export class RolesKeeper {
       if (error instanceof CryptoError && error.code === "locked") throw error;
       // Keep the last result; nothing is accepted on a stale one. Points up
       // to its head can still be checked against it.
-      if (previous) return this.#stillAgrees(vaultId, previous, points);
+      if (previous)
+        return this.#stillAgrees(vaultId, previous, points, compared);
       throw error;
     }
-    const marks = await this.#port.marks.read(this.#port.userId);
     const floor = marks.vaults[vaultId]?.rl;
     const stored = this.#port.anchor(vaultId);
     const effective = effectiveAnchor(stored, floor);
@@ -187,19 +203,22 @@ export class RolesKeeper {
         l.version === anchor.version &&
         l.hash !== anchor.hash,
     );
-    const roles = this.#check(
-      vaultId,
-      version,
-      delivered,
+    const roles = this.#check(vaultId, version, delivered, {
       anchor,
       lowers,
       fork,
-    );
+      compared,
+    });
     let result = roles;
     if (roles.status === "unanchored" && roles.head) {
       if (this.#adoptable(roles.head, roles.statements, owners ?? [])) {
         this.#raise(vaultId, roles.head, stored);
-        result = { ...roles, status: "ok", anchor: anchorOfHead(roles.head) };
+        result = {
+          ...roles,
+          status: "ok",
+          anchor: anchorOfHead(roles.head),
+          code: headCode(roles.head),
+        };
       }
     } else if (roles.status === "ok" && roles.head) {
       this.#raise(vaultId, roles.head, stored, floor);
@@ -216,31 +235,70 @@ export class RolesKeeper {
     vaultId: string,
     previous: VaultRoles,
     points: readonly RolePoint[],
+    compared: readonly StateCode[],
   ): VaultRoles {
     const contradicted = points.some((point) =>
       previous.statements.some(
         (s) => s.statement.version === point.version && s.hash !== point.hash,
       ),
     );
-    if (!contradicted) return previous;
-    const forked: VaultRoles = {
-      ...previous,
-      status: "fork",
+    const top = previous.head?.statement.version ?? 0;
+    const next = this.#compared(
+      contradicted
+        ? {
+            ...previous,
+            status: "fork",
+            statements: [],
+            head: undefined,
+            code: undefined,
+          }
+        : previous,
+      previous.statements,
+      compared.filter((p) => p.version <= top),
+    );
+    if (next !== previous) this.#vaults.set(vaultId, next);
+    return next;
+  }
+
+  /** Comparison points the chain does not satisfy make a warning. */
+  #compared(
+    roles: VaultRoles,
+    statements: readonly VerifiedRoles[],
+    points: readonly StateCode[],
+  ): VaultRoles {
+    if (
+      roles.status !== "ok" &&
+      roles.status !== "unanchored" &&
+      roles.status !== "none"
+    )
+      return roles;
+    const result = comparisonPointsStatus(statements, points);
+    if (result.status === "ok") return roles;
+    return {
+      ...roles,
+      status: result.status,
       statements: [],
       head: undefined,
+      code: undefined,
+      compared: {
+        kind: result.status === "fork" ? "mismatch" : "missing",
+        point: result.point,
+      },
     };
-    this.#vaults.set(vaultId, forked);
-    return forked;
   }
 
   #check(
     vaultId: string,
     version: number | null,
     delivered: DeliveredRoles[],
-    anchor: RoleAnchor | undefined,
-    lowers: readonly RolePoint[],
-    fork: boolean,
+    against: {
+      anchor: RoleAnchor | undefined;
+      lowers: readonly RolePoint[];
+      fork: boolean;
+      compared: readonly StateCode[];
+    },
   ): VaultRoles {
+    const { anchor, lowers, fork, compared } = against;
     const base = {
       version,
       statements: [] as VerifiedRoles[],
@@ -262,7 +320,11 @@ export class RolesKeeper {
         : undefined,
     });
     if (result.status === "empty")
-      return { ...base, status: "none", deliveredOwners };
+      return this.#compared(
+        { ...base, status: "none", deliveredOwners },
+        [],
+        compared,
+      );
     if (result.status !== "ok")
       return { ...base, status: result.status, deliveredOwners };
     if (
@@ -273,13 +335,18 @@ export class RolesKeeper {
       )
     )
       return { ...base, status: "fork", deliveredOwners };
-    return {
-      ...base,
-      status: anchor ? "ok" : "unanchored",
-      statements: result.statements,
-      head: result.head,
-      deliveredOwners: ownerIds(result.head),
-    };
+    return this.#compared(
+      {
+        ...base,
+        status: anchor ? "ok" : "unanchored",
+        statements: result.statements,
+        head: result.head,
+        deliveredOwners: ownerIds(result.head),
+        ...(anchor ? { code: headCode(result.head) } : {}),
+      },
+      result.statements,
+      compared,
+    );
   }
 
   /**

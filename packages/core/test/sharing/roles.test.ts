@@ -19,7 +19,14 @@ import { FakeServer } from "../account/fake-server";
 import { newMember } from "../account/fake-sharing";
 import { ManualTimers, PASSWORD, vault } from "../sync/devices";
 import { tv } from "../helpers";
-import { owner, person, posts, share, type Person } from "./people";
+import {
+  acceptShown,
+  owner,
+  person,
+  posts,
+  share,
+  type Person,
+} from "./people";
 
 async function trust(who: Person, other: Person): Promise<void> {
   const candidate = await who.engine.lookupUser(other.email);
@@ -375,7 +382,7 @@ describe("signed roles", () => {
     );
     if (!invitation?.sender) throw new Error("no sender");
     await erin.account.verifyContact(invitation.sender);
-    await expect(erin.engine.acceptInvitation(vaultId)).rejects.toMatchObject({
+    await expect(acceptShown(erin.engine, vaultId)).rejects.toMatchObject({
       code: "roles_rejected",
     });
   });

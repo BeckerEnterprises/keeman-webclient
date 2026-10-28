@@ -27,6 +27,7 @@ import {
 } from "../account/fake-server";
 import { tv } from "../../src/crypto/internal/test-values";
 import { EMAIL, ManualTimers, NAMES, PASSWORD, rootOf, vault } from "./devices";
+import { acceptShown } from "../sharing/people";
 
 const DAY = 86_400_000;
 
@@ -518,7 +519,7 @@ describe("a long-unused device", () => {
     const invitation = bob.engine.snapshot.invitations[0];
     if (!invitation?.sender) throw new Error("no invitation");
     await bob.account.verifyContact(invitation.sender);
-    await bob.engine.acceptInvitation(alice.vaultId);
+    await acceptShown(bob.engine, alice.vaultId);
     // The invitation of an owner confirms the new member's state.
     expect(vault(bob.engine, alice.vaultId).freshness).toBe("fresh");
     bob.account.lock();
@@ -752,10 +753,10 @@ describe("an invitation", () => {
     if (!invitation?.sender) throw new Error("no invitation");
     if (invitation.sender.status !== "verified")
       await guest.account.verifyContact(invitation.sender);
-    await guest.engine.acceptInvitation(vaultId);
+    await acceptShown(guest.engine, vaultId);
   }
 
-  it("confirms the vault only when its sender owns the statement it names", async () => {
+  it("is not accepted when its sender owns no part of the statement it names", async () => {
     const alice = await first();
     const carol = await register(
       alice.server,
@@ -772,11 +773,19 @@ describe("an invitation", () => {
     if (!member) throw new Error("no member");
     member.role = "owner";
     await carol.engine.refresh();
-    await shareWith(carol, dave, alice.vaultId);
-    expect(vault(dave.engine, alice.vaultId)).toMatchObject({
-      freshness: "stale",
-      writable: false,
-    });
+    const candidate = await carol.engine.lookupUser(dave.email);
+    await carol.account.verifyContact(candidate);
+    await carol.engine.invite(alice.vaultId, candidate);
+    await dave.engine.refresh();
+    const sender = dave.engine.snapshot.invitations[0]?.sender;
+    if (!sender) throw new Error("no invitation");
+    await dave.account.verifyContact(sender);
+    const details = await dave.engine.invitationDetails(alice.vaultId);
+    expect(details.status).toBe("sender_not_owner");
+    await expect(
+      dave.engine.acceptInvitation(alice.vaultId, details),
+    ).rejects.toMatchObject({ code: "sender_not_owner" });
+    expect(dave.engine.snapshot.invitations).toHaveLength(1);
   });
 });
 

@@ -90,6 +90,7 @@ import {
 import { seqOf } from "../model/json";
 import {
   contactsOf,
+  comparisonsOf,
   roleAnchorOf,
   vaultOrderOf,
   type Contact,
@@ -1243,6 +1244,30 @@ export class Account {
           } catch (error) {
             if (error instanceof AccountError && error.code === "locked")
               throw error;
+          }
+        },
+        // Read also from unconfirmed or rolled back user_data: they only
+        // restrict.
+        comparisons: (vaultId) => {
+          const slot = this.#slot();
+          if (slot?.state.status !== "ok") return undefined;
+          return comparisonsOf(slot.state.raw, vaultId);
+        },
+        userDataSeq: () => {
+          const slot = this.#slot();
+          return slot?.state.status === "ok"
+            ? seqOf(slot.state.raw)
+            : undefined;
+        },
+        saveComparisons: async (change) => {
+          if (!this.contactsWritable) return false;
+          try {
+            await this.#updateUserData({ compared: change });
+            return true;
+          } catch (error) {
+            if (error instanceof AccountError && error.code === "locked")
+              throw error;
+            return false;
           }
         },
         now: () => this.#now(),

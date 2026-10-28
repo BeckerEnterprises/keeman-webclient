@@ -48,6 +48,47 @@ export function grantName(
 }
 
 /**
+ * What the box of an invitation says, for the dialog before accepting: the
+ * vault name, the statement it names and whether `check` rejects it. The
+ * vault key is wiped at once; `undefined` if the box does not open.
+ */
+export function grantDetails(
+  ctx: SharingContext,
+  vaultId: string,
+  grant: KeyGrant,
+  sender: Candidate,
+  check: (opened: {
+    vaultKey: Uint8Array;
+    roles: RolePoint | undefined;
+  }) => boolean,
+):
+  | { vaultName: string; roles: RolePoint | undefined; rejected: boolean }
+  | undefined {
+  try {
+    const opened = ctx.keys.usePrivateKey((privateKey) =>
+      openVaultKeyBox(grant.key_box, privateKey, keyOf(sender).publicKey, {
+        ownUserId: ctx.userId,
+        senderId: grant.sender_id,
+        vaultId,
+        keyVersion: grant.key_version,
+      }),
+    );
+    try {
+      return {
+        vaultName: opened.vaultName,
+        roles: opened.roles,
+        rejected: !check(opened),
+      };
+    } finally {
+      wipe(opened.vaultKey);
+    }
+  } catch (error) {
+    if (error instanceof CryptoError && error.code === "locked") throw error;
+    return undefined;
+  }
+}
+
+/**
  * Who may send a pending key of a vault without roles chain: the owners
  * this device remembers, or anyone once the user confirmed that the sender
  * really is an owner.

@@ -16,7 +16,26 @@ import {
 } from "../crypto/flows/vault";
 import { derivePublicKey } from "../crypto/keypair";
 import type { Keys } from "../crypto/keystore";
-import { checkGrantRoles, roleOwner, type RolePoint } from "../crypto/roles";
+import { fingerprint2Hex, fingerprintHex } from "../crypto/fingerprint";
+import { isUuid } from "../crypto/uuid";
+import { contactStatus } from "../sharing/contacts";
+import {
+  checkGrantRoles,
+  roleOwner,
+  type RoleOwner,
+  type RolePoint,
+  type VerifiedRoles,
+} from "../crypto/roles";
+import {
+  compareStateCode,
+  comparisonPointsStatus,
+  headCode,
+  parseStateCode,
+  satisfies,
+  stateCodeOf,
+  stateCodeUri,
+  type StateCode,
+} from "../crypto/state-code";
 import { systemRandomness } from "../crypto/random";
 import {
   applyEntryEdit,
@@ -64,14 +83,24 @@ import { planKdbxImport } from "../kdbx/plan";
 import type { KdbxExportModel, KdbxFile, KdbxTimes } from "../kdbx/types";
 import { SearchIndex, type SearchQuery } from "../search/index";
 import { searchTerms } from "../search/normalize";
-import type { Contact, RoleAnchor } from "../model/user-data";
+import type {
+  ComparisonChange,
+  Comparisons,
+  Contact,
+  RoleAnchor,
+} from "../model/user-data";
 import {
   keyOf,
   statusNow,
   toCandidate,
   type Candidate,
 } from "../sharing/candidate";
-import { acceptGrant, grantName, type RolesCheck } from "../sharing/grants";
+import {
+  acceptGrant,
+  grantDetails,
+  grantName,
+  type RolesCheck,
+} from "../sharing/grants";
 import {
   decline,
   invite,
@@ -118,6 +147,7 @@ import {
   type DeliveredState,
 } from "./freshness";
 import { currentRoot } from "./manifest";
+import { ComparisonKeeper } from "./comparisons";
 import { RolesKeeper } from "./roles";
 import { Serial } from "./serial";
 import {
@@ -152,10 +182,14 @@ import {
   type SyncContext,
 } from "./vault";
 import {
+  stateCodeView,
   usedIcons,
   VaultProjection,
   type EntryDetail,
   type EntrySummary,
+  type InvitationDetails,
+  type InvitationOwnerView,
+  type StateComparisonView,
   type SyncSnapshot,
   type VaultView,
 } from "./views";
@@ -163,6 +197,7 @@ import {
   isTransient,
   objectWritable,
   RetryableWrite,
+  rolesWarning,
   vaultWritable,
   WriteOperation,
   type Intent,
@@ -189,7 +224,11 @@ export type {
 } from "./tree-ops";
 export type {
   CorruptObjectView,
+  InvitationDetails,
+  InvitationOwnerView,
   InvitationView,
+  StateCodeView,
+  StateComparisonView,
   EntryDetail,
   EntrySummary,
   EntryValues,
@@ -232,6 +271,12 @@ export interface AccountAccess {
   roleAnchor(vaultId: string): RoleAnchor | undefined;
   /** Stores roles anchors in user_data (`null` removes one); best effort. */
   saveRoleAnchors(anchors: Record<string, RoleAnchor | null>): Promise<void>;
+  /** Comparison results of a vault in user_data; none while unreadable. */
+  comparisons(vaultId: string): Comparisons | undefined;
+  /** The `seq` of the user_data in use; none while it is unreadable. */
+  userDataSeq(): number | undefined;
+  /** Writes comparison results; `false` if user_data cannot be written now. */
+  saveComparisons(change: Record<string, ComparisonChange>): Promise<boolean>;
   /** The device clock (Unix ms); never the server's time. */
   now(): number;
   /** The effective confirmation period in days. */
@@ -329,6 +374,7 @@ export class SyncEngine {
   /** Whether the server knows signing keys and roles chains, asked once. */
   #rolesFeature: Promise<boolean> | undefined;
   readonly #roles: RolesKeeper;
+  readonly #comparisons: ComparisonKeeper;
   /** Whether the server stores freshness attestations, asked once. */
   #freshnessFeature: Promise<boolean> | undefined;
   readonly #freshness: FreshnessKeeper;
@@ -378,6 +424,15 @@ export class SyncEngine {
       saveAnchors: (anchors) => access.saveRoleAnchors(anchors),
       contacts: () => access.contacts(),
       points: (vaultId) => this.#freshness.rolePoints(vaultId),
+      comparisons: (vaultId, marks) => this.#comparisons.points(vaultId, marks),
+    });
+    this.#comparisons = new ComparisonKeeper({
+      userId: access.userId,
+      marks: this.#context.marks,
+      stored: (vaultId) => access.comparisons(vaultId),
+      seq: () => access.userDataSeq(),
+      save: (change) => access.saveComparisons(change),
+      now: () => access.now(),
     });
     this.#freshness = new FreshnessKeeper({
       api: access.api,
@@ -790,9 +845,290 @@ export class SyncEngine {
 
   /** "Understood" at a warning about the owner list of a vault. */
   async acknowledgeRoles(vaultId: string): Promise<void> {
-    await this.#overrule(this.#state(vaultId));
+    const state = this.#state(vaultId);
+    await this.#overrule(state);
+    // A server that hides the chain delivers none: there is nothing to take
+    // over, whatever was checked before.
+    if (state.summary.roles_version === undefined) this.#roles.forget(vaultId);
     await this.#roles.acknowledge(vaultId);
+    // The member's code is overruled too, but only the points shown now.
+    this.#comparisons.remove(vaultId, this.#comparisons.points(vaultId));
     await this.refresh();
+  }
+
+  // ------------------------------------------------------------ state code
+
+  #enteredCode(input: string): ReturnType<typeof parseStateCode> {
+    try {
+      return parseStateCode(input);
+    } catch {
+      throw new SyncError("state_code_invalid");
+    }
+  }
+
+  /** Another vault of this device whose chain has the code in that version. */
+  #vaultWithCode(vaultId: string, entered: StateCode): string | undefined {
+    for (const state of this.#states.values()) {
+      if (state.id === vaultId || state.roles?.status !== "ok") continue;
+      const at = state.roles.statements.find(
+        (s) => s.statement.version === entered.version,
+      );
+      if (at && stateCodeOf(at.hash) === entered.code) return state.id;
+    }
+    return undefined;
+  }
+
+  /** The comparison as the app shows it. */
+  #comparisonView(
+    vaultId: string,
+    statements: readonly VerifiedRoles[],
+    entered: ReturnType<typeof parseStateCode>,
+  ): StateComparisonView {
+    const result = compareStateCode({ vaultId, statements, entered });
+    const head = statements[statements.length - 1];
+    const base = {
+      entered: stateCodeView(entered),
+      own: undefined,
+      otherVault: undefined,
+    };
+    switch (result.result) {
+      case "match":
+        return { ...base, result: "match" };
+      case "behind":
+        return { ...base, result: "behind", own: stateCodeView(result.own) };
+      case "mismatch": {
+        const other =
+          entered.vaultId === null
+            ? this.#vaultWithCode(vaultId, entered)
+            : undefined;
+        return other
+          ? { ...base, result: "other_vault", otherVault: other }
+          : { ...base, result: "mismatch", own: stateCodeView(result.own) };
+      }
+      case "ahead":
+        return {
+          ...base,
+          result: "missing",
+          own: head ? stateCodeView(headCode(head)) : undefined,
+        };
+      case "withheld":
+        return { ...base, result: "withheld" };
+      case "other_vault":
+        return {
+          ...base,
+          result: "other_vault",
+          otherVault:
+            entered.vaultId !== null && this.#states.has(entered.vaultId)
+              ? entered.vaultId
+              : undefined,
+        };
+    }
+  }
+
+  /**
+   * Compares a member's state code with this device's chain of the vault.
+   * Above the own head, or for an older statement not delivered, the chain
+   * is loaded again in full and the anchor raised: an honest device that
+   * only lagged behind then matches, and a server that hides the head
+   * again afterwards shows a rollback. A match is remembered for display
+   * only; a contradiction counts once the user confirms it.
+   */
+  async compareStateCode(
+    vaultId: string,
+    input: string,
+    options: { partner?: string } = {},
+  ): Promise<StateComparisonView> {
+    const entered = this.#enteredCode(input);
+    const unavailable: StateComparisonView = {
+      result: "unavailable",
+      entered: stateCodeView(entered),
+      own: undefined,
+      otherVault: undefined,
+    };
+    let roles = this.#state(vaultId).roles;
+    if (roles?.status !== "ok") return unavailable;
+    let view = this.#comparisonView(vaultId, roles.statements, entered);
+    if (view.result === "missing" || view.result === "withheld") {
+      this.#state(vaultId).roles = await this.#roles.reload(vaultId);
+      await this.#roles.flush();
+      await this.refresh();
+      roles = this.#state(vaultId).roles;
+      if (roles?.status !== "ok") return unavailable;
+      view = this.#comparisonView(vaultId, roles.statements, entered);
+    }
+    if (view.result === "match") {
+      const partner =
+        options.partner !== undefined && isUuid(options.partner)
+          ? options.partner
+          : null;
+      this.#comparisons.match(vaultId, entered.version, partner);
+      await this.#comparisons.flush([vaultId]);
+      const state = this.#state(vaultId);
+      state.lastMatch = this.#comparisons.lastMatch(vaultId);
+      this.#emit();
+    }
+    return view;
+  }
+
+  /**
+   * "Matches as entered" after `mismatch` or `missing`: the member's code
+   * becomes a comparison point of the vault, for the account in user_data
+   * and on this device. `saved`: also in user_data already.
+   */
+  async confirmStateContradiction(
+    vaultId: string,
+    point: StateCode,
+  ): Promise<{ saved: boolean }> {
+    if (
+      !this.#states.has(vaultId) &&
+      !this.#invitations.some((i) => i.summary.vault_id === vaultId)
+    )
+      throw new SyncError("not_found");
+    const checked = this.#enteredCode(
+      `v${String(point.version)} ${point.code}`,
+    );
+    this.#comparisons.add(vaultId, checked);
+    const saved = await this.#comparisons.flush([vaultId]);
+    await this.refresh();
+    return { saved };
+  }
+
+  /** An owner of the statement an invitation names, as far as known. */
+  async #invitationOwner(
+    owner: RoleOwner,
+    senderId: string,
+  ): Promise<InvitationOwnerView> {
+    const publicKey = fromBase64Url(owner.publicKey, 32);
+    const signingKey = fromBase64Url(owner.signingKey, 32);
+    const contacts = this.#access.contacts();
+    const status = contactStatus(contacts, owner.userId, {
+      v1: fingerprintHex(publicKey),
+      v2: fingerprint2Hex(publicKey, signingKey),
+    });
+    const sender = owner.userId === senderId;
+    if (status === "verified")
+      return {
+        userId: owner.userId,
+        email: contacts.find((c) => c.userId === owner.userId)?.email,
+        verified: true,
+        keysDiffer: false,
+        sender,
+      };
+    const user = await this.#publicUser(owner.userId);
+    return {
+      userId: owner.userId,
+      email: user?.email,
+      verified: false,
+      keysDiffer:
+        user !== undefined &&
+        (user.public_key !== owner.publicKey ||
+          (user.signing_public_key ?? undefined) !== owner.signingKey),
+      sender,
+    };
+  }
+
+  /**
+   * What the accept dialog shows: the owners of the statement the box
+   * names, the state code the account would have, and whether accepting
+   * is possible. Needs a verified sender.
+   */
+  async invitationDetails(vaultId: string): Promise<InvitationDetails> {
+    const invitation = this.#invitations.find(
+      (i) => i.summary.vault_id === vaultId,
+    );
+    const grant = invitation?.summary.invitation;
+    if (!invitation || !grant) throw new SyncError("not_found");
+    if (!invitation.sender) throw new SyncError("unverified");
+    const sender = this.#candidate(invitation.sender);
+    if (statusNow(sender, this.#access.contacts()) !== "verified")
+      throw new SyncError("unverified");
+    const chain = (await this.#rolesSupported())
+      ? await this.#roles.invitationChain(vaultId)
+      : undefined;
+    const opened = grantDetails(this.#access, vaultId, grant, sender, (box) =>
+      chain
+        ? !checkGrantRoles({
+            statements: chain,
+            roles: box.roles,
+            vaultId,
+            keyVersion: grant.key_version,
+            vaultKey: box.vaultKey,
+          })
+        : box.roles === undefined,
+    );
+    const named = chain?.find(
+      (s) =>
+        opened?.roles !== undefined &&
+        s.statement.version === opened.roles.version &&
+        s.hash === opened.roles.hash,
+    );
+    const head = chain?.[chain.length - 1];
+    const marks = await this.#access.marks.read(this.#access.userId);
+    const contradicted =
+      comparisonPointsStatus(
+        chain ?? [],
+        this.#comparisons.points(vaultId, marks),
+      ).status !== "ok";
+    const status: InvitationDetails["status"] = !opened
+      ? "rejected"
+      : contradicted
+        ? "contradicted"
+        : opened.rejected
+          ? "rejected"
+          : !chain
+            ? "no_chain"
+            : !named?.statement.owners.some((o) => o.userId === grant.sender_id)
+              ? "sender_not_owner"
+              : "ok";
+    const owners = await Promise.all(
+      (named?.statement.owners ?? []).map((o) =>
+        this.#invitationOwner(o, grant.sender_id),
+      ),
+    );
+    const code = head ? headCode(head) : undefined;
+    return {
+      vaultId,
+      vaultName: opened?.vaultName,
+      status,
+      owners,
+      code: code
+        ? { ...stateCodeView(code), uri: stateCodeUri(vaultId, code) }
+        : undefined,
+      head: head
+        ? { version: head.statement.version, hash: head.hash }
+        : undefined,
+    };
+  }
+
+  /**
+   * Compares a member's code with the chain of an invitation, before it is
+   * accepted; above its head the chain is loaded again.
+   */
+  async compareInvitationCode(
+    vaultId: string,
+    input: string,
+  ): Promise<StateComparisonView> {
+    const entered = this.#enteredCode(input);
+    if (!this.#invitations.some((i) => i.summary.vault_id === vaultId))
+      throw new SyncError("not_found");
+    let chain = await this.#roles.invitationChain(vaultId);
+    if (!chain)
+      return {
+        result: "unavailable",
+        entered: stateCodeView(entered),
+        own: undefined,
+        otherVault: undefined,
+      };
+    let view = this.#comparisonView(vaultId, chain, entered);
+    if (view.result === "missing" || view.result === "withheld") {
+      chain = (await this.#roles.invitationChain(vaultId)) ?? [];
+      view = this.#comparisonView(vaultId, chain, entered);
+    }
+    if (view.result === "match") {
+      this.#comparisons.match(vaultId, entered.version, null);
+      await this.#comparisons.flush([vaultId]);
+    }
+    return view;
   }
 
   /**
@@ -801,6 +1137,13 @@ export class SyncEngine {
    */
   async stepDownEverywhere(): Promise<void> {
     const self = this.#access.userId;
+    // On a chain with a warning nothing is signed, not even a step-down.
+    if (
+      [...this.#states.values()].some(
+        (s) => s.summary.role === "owner" && rolesWarning(s),
+      )
+    )
+      throw new SyncError("roles_warning_open");
     for (const state of this.#states.values()) {
       const head = state.roles?.status === "ok" ? state.roles.head : undefined;
       if (state.summary.role !== "owner" || !head) continue;
@@ -903,6 +1246,8 @@ export class SyncEngine {
   async leaveVault(vaultId: string): Promise<void> {
     const state = this.#state(vaultId);
     const self = this.#access.userId;
+    if (state.summary.role === "owner" && rolesWarning(state))
+      throw new SyncError("roles_warning_open");
     const head = state.roles?.status === "ok" ? state.roles.head : undefined;
     if (
       state.summary.role === "owner" &&
@@ -920,35 +1265,70 @@ export class SyncEngine {
    * box must name a statement of it and the chain must commit to the boxed
    * key; the chain's head then becomes the account's anchor.
    */
-  async acceptInvitation(vaultId: string): Promise<void> {
+  async acceptInvitation(
+    vaultId: string,
+    expected: { head: RolePoint | undefined },
+  ): Promise<void> {
     const invitation = this.#invitations.find(
       (i) => i.summary.vault_id === vaultId,
     );
     if (!invitation) throw new SyncError("not_found");
-    if (!invitation.sender) throw new SyncError("unverified");
+    if (
+      !invitation.sender ||
+      statusNow(this.#candidate(invitation.sender), this.#access.contacts()) !==
+        "verified"
+    )
+      throw new SyncError("unverified");
     const grant = invitation.summary.invitation;
     const chain = (await this.#rolesSupported())
       ? await this.#roles.invitationChain(vaultId)
       : undefined;
+    // Exactly the head the dialog showed, so its code was the one compared.
+    const head = chain?.[chain.length - 1];
+    if (
+      head?.statement.version !== expected.head?.version ||
+      head?.hash !== expected.head?.hash
+    )
+      throw new SyncError("roles_changed");
     const access = this.#access;
+    const marks = await access.marks.read(access.userId);
+    if (
+      comparisonPointsStatus(
+        chain ?? [],
+        this.#comparisons.points(vaultId, marks),
+      ).status !== "ok"
+    )
+      throw new SyncError("state_mismatch");
     const known =
       access.roleAnchor(vaultId) !== undefined ||
-      (await access.marks.read(access.userId)).vaults[vaultId] !== undefined;
+      marks.vaults[vaultId] !== undefined;
     let box: { created: string; manifest: number | undefined } | undefined;
     let named: RolePoint | undefined;
     const roles: RolesCheck = (opened) => {
       box = { created: opened.created, manifest: opened.manifest };
       named = opened.roles;
       if (!chain) return opened.roles ? "roles_invalid" : undefined;
-      return checkGrantRoles({
-        statements: chain,
-        roles: opened.roles,
-        vaultId,
-        keyVersion: grant?.key_version ?? 0,
-        vaultKey: opened.vaultKey,
-      })
-        ? "roles_rejected"
-        : undefined;
+      if (
+        checkGrantRoles({
+          statements: chain,
+          roles: opened.roles,
+          vaultId,
+          keyVersion: grant?.key_version ?? 0,
+          vaultKey: opened.vaultKey,
+        })
+      )
+        return "roles_rejected";
+      // Only owners invite, naming the head they checked.
+      const statement = chain.find(
+        (s) =>
+          s.statement.version === opened.roles?.version &&
+          s.hash === opened.roles.hash,
+      );
+      return statement?.statement.owners.some(
+        (o) => o.userId === grant?.sender_id,
+      )
+        ? undefined
+        : "sender_not_owner";
     };
     await acceptGrant(
       this.#access,
@@ -2520,6 +2900,10 @@ export class SyncEngine {
     for (const state of this.#states.values())
       await this.#updateRoles(state, marks, roles);
     if (roles) await this.#roles.flush();
+    await this.#comparisons.flush([
+      ...this.#states.keys(),
+      ...this.#invitations.map((i) => i.summary.vault_id),
+    ]);
     for (const state of this.#states.values())
       await this.#checkKey(state, marks.vaults[state.id]?.ow ?? []);
     if (this.#isStopped()) return;
@@ -2635,6 +3019,17 @@ export class SyncEngine {
       if (error instanceof CryptoError && error.code === "locked") throw error;
       state.error = error;
     }
+    state.lastMatch = this.#comparisons.lastMatch(state.id);
+    // A point the checked chain satisfies is settled: the anchor holds it.
+    if (state.roles?.status === "ok") {
+      const statements = state.roles.statements;
+      this.#comparisons.remove(
+        state.id,
+        this.#comparisons
+          .points(state.id, marks)
+          .filter((p) => satisfies(statements, p)),
+      );
+    }
     const head = state.roles?.status === "ok" ? state.roles.head : undefined;
     if (head) {
       state.keyFloor = Math.max(state.keyFloor, head.statement.keyVersion);
@@ -2655,6 +3050,9 @@ export class SyncEngine {
         state.keyStatus !== "ok" ||
         state.rollback ||
         !state.roles ||
+        // A server that hides the chain gets no duties, and its rollback
+        // stays instead of the last checked result.
+        state.summary.roles_version === undefined ||
         !this.#confirmed(state)
       )
         continue;
