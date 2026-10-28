@@ -128,6 +128,36 @@ describe("roles keeper", () => {
       start(forged.userId, derivePublicKey(forged.privateKey), forged.signing),
     ]);
     expect((await honest.roles.update(vaultId, 1, [])).status).toBe("ok");
+    // Another signer's statement that names this account with keys of the
+    // server's: invalid, whoever signed it.
+    const other2 = deriveSigningKeyPair(
+      tv("roles-keeper-co-owner-user-key", 32),
+    );
+    const coOwner = "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a11";
+    const named = ownKeeper([]);
+    const theirs = ownKeeper([
+      signRoleStatement(
+        genesisStatement({
+          vaultId,
+          owners: [
+            roleOwner(named.userId, otherKey, other.publicKey),
+            roleOwner(
+              coOwner,
+              derivePublicKey(tv("roles-keeper-co-owner-private", 32)),
+              other2.publicKey,
+            ),
+          ],
+          signer: coOwner,
+          keyVersion: 1,
+          vaultKey: tv("roles-keeper-vault-key", 32),
+          created: "2026-10-28T08:00:00.000Z",
+        }),
+        other2.secretKey,
+      ),
+    ]);
+    expect((await theirs.roles.update(vaultId, 1, [coOwner])).status).toBe(
+      "invalid",
+    );
   });
 
   it("prefers the higher of anchor and floor and reports a fork between them", async () => {

@@ -21,6 +21,7 @@ import { isUuid } from "../crypto/uuid";
 import { contactStatus } from "../sharing/contacts";
 import {
   checkGrantRoles,
+  keyCommitment,
   roleOwner,
   type RoleOwner,
   type RolePoint,
@@ -149,7 +150,7 @@ import {
 } from "./freshness";
 import { currentRoot } from "./manifest";
 import { ComparisonKeeper } from "./comparisons";
-import { RolesKeeper } from "./roles";
+import { RolesKeeper, type VaultRoles } from "./roles";
 import { Serial } from "./serial";
 import {
   basesOf,
@@ -199,6 +200,7 @@ import {
   isTransient,
   objectWritable,
   RetryableWrite,
+  rolesBlocked,
   rolesWarning,
   vaultWritable,
   WriteOperation,
@@ -433,6 +435,14 @@ export class SyncEngine {
       contacts: () => access.contacts(),
       points: (vaultId) => this.#freshness.rolePoints(vaultId),
       comparisons: (vaultId, marks) => this.#comparisons.points(vaultId, marks),
+      holdsCommitted: (vaultId, keyVersion, commitment) =>
+        access.keys.hasVaultKey(vaultId, keyVersion)
+          ? access.keys.useVaultKey(
+              vaultId,
+              keyVersion,
+              (key) => keyCommitment(vaultId, keyVersion, key) === commitment,
+            )
+          : undefined,
     });
     this.#comparisons = new ComparisonKeeper({
       userId: access.userId,
@@ -545,11 +555,12 @@ export class SyncEngine {
       try {
         await this.#refresh();
       } catch (error) {
-        // A lock stopped the engine while it waited; its keys are gone.
+        // A lock stopped the engine while it waited; its keys are gone, and
+        // the account no longer answers it (both report "locked").
         if (
           this.#isStopped() &&
-          error instanceof CryptoError &&
-          error.code === "locked"
+          error instanceof Error &&
+          (error as Error & { code?: unknown }).code === "locked"
         )
           return;
         throw error;
@@ -834,7 +845,7 @@ export class SyncEngine {
   async #ensureRoles(
     state: VaultState,
   ): Promise<{ version: number; hash: string } | undefined> {
-    let roles = state.roles;
+    let roles = this.#rolesOrUnavailable(state);
     if (!roles) return undefined;
     if (roles.status === "unavailable")
       throw new SyncError("roles_unavailable");
@@ -885,6 +896,9 @@ export class SyncEngine {
     if (state.roles?.status === "unavailable")
       throw new SyncError("roles_unavailable");
     if (!rolesWarning(state)) throw new SyncError("roles_changed");
+    // The member's codes are overruled too, but only those shown now: one
+    // that comes in meanwhile stays.
+    const shown = this.#comparisons.points(vaultId);
     // A server that hides the chain delivers none: there is nothing to take
     // over, whatever was checked before.
     if (state.summary.roles_version === undefined) this.#roles.forget(vaultId);
@@ -895,8 +909,7 @@ export class SyncEngine {
       expected,
       () => this.#overrule(state),
     );
-    // The member's code is overruled too, but only the points shown now.
-    this.#comparisons.remove(vaultId, this.#comparisons.points(vaultId));
+    this.#comparisons.remove(vaultId, shown);
     await this.refresh();
   }
 
@@ -1524,7 +1537,7 @@ export class SyncEngine {
     keyVersion: number,
     senders: { owners: readonly string[]; confirmed: boolean },
   ): { senders?: typeof senders; roles?: RolesCheck } {
-    const roles = state.roles;
+    const roles = this.#rolesOrUnavailable(state);
     if (!roles || roles.status === "none") return { senders };
     return {
       roles: (opened) => {
@@ -1573,11 +1586,22 @@ export class SyncEngine {
     onProgress?: (progress: { done: number; total: number }) => void,
   ): Promise<void> {
     const state = this.#owned(review.vaultId);
-    const roles = await this.#rolesSupported();
+    // The state may have changed since the review: nothing goes out on a
+    // list with a warning or one that did not load.
+    if (state.roles?.status === "unavailable")
+      throw new SyncError("roles_unavailable");
+    if (rolesBlocked(state)) throw new SyncError("roles_invalid");
+    // A statement goes with it whenever the vault has a chain, whatever the
+    // configuration says; a server must not take a rotation without one.
+    const chained =
+      state.roles?.status === "ok" ||
+      (state.summary.roles_version !== undefined &&
+        state.summary.roles_version !== null) ||
+      (await this.#rolesSupported());
     await runRotation(this.#access, review, decisions, {
       onProgress,
       stale: (base) => state.since > base,
-      ...(roles
+      ...(chained
         ? {
             roles: (members, removed, reload) =>
               this.#roles.rotationRoles(
@@ -1588,6 +1612,7 @@ export class SyncEngine {
               ),
           }
         : {}),
+      committed: (signed) => this.#roles.adoptOwn(review.vaultId, signed),
     });
     await this.refresh();
   }
@@ -3252,7 +3277,7 @@ export class SyncEngine {
       return;
     }
     const sender = this.#candidate(user);
-    const roles = state.roles;
+    const roles = this.#rolesOrUnavailable(state);
     const chained = roles !== undefined && roles.status !== "none";
     const waiting =
       sender.status !== "verified"
@@ -3465,6 +3490,17 @@ export class SyncEngine {
       if (object.rollback)
         open.add(`object:${object.id}:${String(object.seq)}`);
     return open;
+  }
+
+  /**
+   * The roles of a vault; a chain the list names without a result yet
+   * counts as one that could not be checked, never as no chain.
+   */
+  #rolesOrUnavailable(state: VaultState): VaultRoles | undefined {
+    const version = state.summary.roles_version;
+    if (state.roles || version === undefined || version === null)
+      return state.roles;
+    return this.#roles.unavailable(state.id, version);
   }
 
   #rollbackOpen(state: VaultState): boolean {

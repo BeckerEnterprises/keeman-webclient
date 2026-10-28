@@ -320,6 +320,10 @@ function parseConflicts(value: unknown) {
  * HTTP client for the KeeMan API. The access token lives only in this
  * object; it is refreshed on demand, never in the background.
  */
+/** At most this much of a roles chain is loaded. */
+export const ROLES_MAX_STATEMENTS = 10_000;
+export const ROLES_MAX_CHARS = 64 * 1024 * 1024;
+
 export class ApiClient {
   readonly #baseUrl: string;
   readonly #clientId: string;
@@ -969,10 +973,14 @@ export class ApiClient {
   }
 
   /** The roles chain after version `since`. */
-  /** The chain after `since`, all pages of it. */
+  /**
+   * The chain after `since`, all pages of it, up to a limit: a server that
+   * pages on and on must not hold the engine or fill the memory.
+   */
   async roles(vaultId: string, since = 0): Promise<RoleChain["statements"]> {
     const statements: RoleChain["statements"] = [];
     let from = since;
+    let size = 0;
     for (;;) {
       const data = await this.#request({
         method: "GET",
@@ -981,6 +989,10 @@ export class ApiClient {
       });
       const page = parse(RoleChainSchema, data);
       statements.push(...page.statements);
+      for (const s of page.statements)
+        size += s.statement.length + s.signature.length;
+      if (statements.length > ROLES_MAX_STATEMENTS || size > ROLES_MAX_CHARS)
+        throw new NetworkError("response");
       const next = page.next_since ?? null;
       if (next === null) return statements;
       // Each page must continue where the last one ended.

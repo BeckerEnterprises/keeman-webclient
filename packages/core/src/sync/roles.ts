@@ -17,6 +17,7 @@ import {
   checkGrantRoles,
   checkRoleChain,
   genesisStatement,
+  readSignedRoles,
   roleOwner,
   signRoleStatement,
   successorStatement,
@@ -107,6 +108,15 @@ export interface RolesPort {
   points?(vaultId: string): readonly RolePoint[];
   /** State codes members gave that contradicted; they only restrict. */
   comparisons?(vaultId: string, marks: UserMarks): readonly StateCode[];
+  /**
+   * Whether a commitment fits the vault key of that version this device
+   * holds; `undefined` without that key.
+   */
+  holdsCommitted?(
+    vaultId: string,
+    keyVersion: number,
+    commitment: string,
+  ): boolean | undefined;
 }
 
 function pointOf(head: VerifiedRoles): RolePoint {
@@ -245,8 +255,8 @@ export class RolesKeeper {
       delivered = await this.#load(vaultId, version);
     } catch (error) {
       if (error instanceof CryptoError && error.code === "locked") throw error;
-      // Keep the last result with a chain; nothing is accepted on a stale
-      // one. Points up to its head can still be checked against it.
+      // Keep the last result with a chain: a key is accepted only with a
+      // commitment of it. Points up to its head are still checked against it.
       if (previous && previous.status !== "none")
         return previous.status === "unavailable"
           ? this.unavailable(vaultId, version)
@@ -424,6 +434,15 @@ export class RolesKeeper {
       );
     if (result.status !== "ok")
       return { ...base, status: result.status, deliveredOwners };
+    // A statement in this account's name with keys that are not its own
+    // would count for the other members.
+    if (this.#namesSelfWrongly(result.statements))
+      return { ...base, status: "invalid", deliveredOwners };
+    // A commitment to another key than the one this device holds for that
+    // version: the server put another statement in the place of one this
+    // device took part in (a rotation of its own, a key it accepted).
+    if (this.#contradictsHeldKeys(vaultId, result.statements))
+      return { ...base, status: "fork", deliveredOwners };
     // Every lower point must be delivered as that very statement: a chain
     // that starts above it could hide a contradiction below the point the
     // check starts from.
@@ -476,6 +495,56 @@ export class RolesKeeper {
       v2: fingerprint2Hex(publicKey, fromBase64Url(entry.signingKey, 32)),
     });
     return status === "verified" || status === "outdated";
+  }
+
+  #namesSelfWrongly(statements: readonly VerifiedRoles[]): boolean {
+    const self = this.#port.userId;
+    const named = statements.flatMap((s) =>
+      s.statement.owners.filter((o) => o.userId === self),
+    );
+    if (named.length === 0) return false;
+    const own = this.#ownEntry();
+    return named.some(
+      (o) => o.publicKey !== own.publicKey || o.signingKey !== own.signingKey,
+    );
+  }
+
+  #contradictsHeldKeys(
+    vaultId: string,
+    statements: readonly VerifiedRoles[],
+  ): boolean {
+    const port = this.#port;
+    if (!port.holdsCommitted) return false;
+    return statements.some(
+      (s) =>
+        port.holdsCommitted?.(
+          vaultId,
+          s.statement.keyVersion,
+          s.statement.keyCommitment,
+        ) === false,
+    );
+  }
+
+  /**
+   * A statement of this device the server took (`2xx`) becomes the anchor
+   * at once: a server that drops it and delivers another one of the same
+   * version then shows as a fork, also on this device.
+   */
+  async adoptOwn(vaultId: string, signed: SignedRoles): Promise<void> {
+    const own = readSignedRoles(signed);
+    const head: VerifiedRoles = {
+      statement: own.statement,
+      hash: own.hash,
+      signed,
+    };
+    const marks = await this.#port.marks.read(this.#port.userId);
+    this.#raise(
+      vaultId,
+      head,
+      this.#port.anchor(vaultId),
+      marks.vaults[vaultId]?.rl,
+    );
+    await this.flush();
   }
 
   /** Queues the head as new anchor where it is newer than the stored one. */
@@ -740,6 +809,7 @@ export class RolesKeeper {
   async #append(vaultId: string, signed: SignedRoles): Promise<boolean> {
     try {
       await this.#port.api.appendRoles(vaultId, signed);
+      await this.adoptOwn(vaultId, signed);
       return true;
     } catch (error) {
       if (error instanceof CryptoError && error.code === "locked") throw error;
@@ -792,6 +862,7 @@ export class RolesKeeper {
             );
       try {
         await send(signed);
+        if (signed) await this.adoptOwn(vaultId, signed);
         return;
       } catch (error) {
         if (

@@ -379,6 +379,51 @@ describe("signed roles", () => {
     expect(marks.vaults[vaultId]?.rl?.[0]).toBe(1);
   });
 
+  it("notices a statement put in the place of its own rotation", async () => {
+    const { server, alice, vaultId } = await team();
+    const evil = mallory(server, vaultId);
+    await trust(alice, { email: evil.email, engine: alice.engine } as never);
+    await alice.engine.setMemberRole(vaultId, evil.userId, "owner");
+    const chain = server.vaults.get(vaultId)?.roles ?? [];
+    expect(chain.map((r) => r.version)).toEqual([1, 2]);
+    // The server takes Alice's statement but never delivers it: Mallory's
+    // goes in its place, she stays owner and commits to a key of her own.
+    const review = await alice.engine.prepareRotation(vaultId);
+    let hiding = true;
+    server.loseResponses = (path, method) =>
+      hiding && method === "GET" && path === `/v1/vaults/${vaultId}/roles`;
+    await alice.engine.runRotation(review, {
+      remove: [evil.userId],
+      dropCorrupt: false,
+    });
+    expect(chain.map((r) => r.version)).toEqual([1, 2, 3]);
+    const second = chain[1];
+    if (!second) throw new Error("no statement 2");
+    const head = readSignedRoles(second);
+    const forged = signRoleStatement(
+      successorStatement(
+        { statement: head.statement, hash: head.hash, signed: second },
+        {
+          owners: head.statement.owners,
+          signer: evil.userId,
+          created: new Date().toISOString(),
+          rotation: {
+            keyVersion: 2,
+            vaultKey: tv("roles-sync-mallory-vault-key", 32),
+          },
+        },
+      ),
+      evil.signing.secretKey,
+    );
+    chain[2] = { version: 3, ...forged, hash: readSignedRoles(forged).hash };
+    hiding = false;
+    await alice.engine.refresh();
+    expect(vault(alice.engine, vaultId)).toMatchObject({
+      roles: { status: "fork" },
+      writable: false,
+    });
+  });
+
   it("signs promotions only for verified contacts and carries them to members", async () => {
     const { server, alice, bob, carol, vaultId } = await team();
     await expect(

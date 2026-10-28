@@ -20,7 +20,7 @@ import {
 } from "../crypto/flows/vault";
 import { decryptObject } from "../crypto/objects";
 import { systemRandomness } from "../crypto/random";
-import type { RoleOwner, VerifiedRoles } from "../crypto/roles";
+import type { RoleOwner, SignedRoles, VerifiedRoles } from "../crypto/roles";
 import {
   bucketOf,
   checkManifest,
@@ -82,6 +82,8 @@ export interface RotationRun {
     removed: ReadonlySet<string>,
     reload: boolean,
   ) => Promise<{ head: VerifiedRoles; owners: RoleOwner[] } | undefined>;
+  /** The statement the server took with the commit, to be the new anchor. */
+  committed?: (roles: SignedRoles) => Promise<void>;
 }
 
 interface Collected {
@@ -376,6 +378,7 @@ async function attempt(
   const newKeyVersion = collected.keyVersion + 1;
   const vaultKey = rotationKey(systemRandomness);
   let stored = false;
+  let committed: SignedRoles | undefined;
   try {
     const now = new Date(ctx.now?.() ?? Date.now()).toISOString();
     const owner = { vaultId, ownerId: ctx.userId, newKeyVersion };
@@ -498,6 +501,7 @@ async function attempt(
         ),
       );
       const body = JSON.stringify({ ...commit, remove_user_ids: removeIds });
+      committed = commit.roles;
       const key = systemRandomness.id("idempotency_key");
       try {
         await call(() =>
@@ -517,6 +521,7 @@ async function attempt(
     }
     ctx.keys.setVaultKey(vaultId, newKeyVersion, vaultKey);
     stored = true;
+    if (committed) await run.committed?.(committed);
     return newKeyVersion;
   } finally {
     if (!stored) wipe(vaultKey);

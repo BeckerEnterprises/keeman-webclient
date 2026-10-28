@@ -205,6 +205,38 @@ describe("ApiClient requests", () => {
   });
 });
 
+describe("ApiClient roles chain", () => {
+  it("stops loading a roles chain that pages on and on", async () => {
+    let version = 0;
+    let pages = 0;
+    const fetch = ((input: RequestInfo | URL) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.endsWith("/v1/auth/login"))
+        return Promise.resolve(sessionResponse());
+      pages += 1;
+      version += 1;
+      return Promise.resolve(
+        json(200, {
+          statements: [
+            { version, statement: "A".repeat(16), signature: "B".repeat(86) },
+          ],
+          next_since: version,
+        }),
+      );
+    }) as typeof globalThis.fetch;
+    const { api } = client(fetch);
+    await api.login({
+      email: "a@example.com",
+      auth_key: TOKEN_C,
+      device: { name: "x", client_type: "web" },
+    });
+    await expect(
+      api.roles("0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a70", 0),
+    ).rejects.toBeInstanceOf(NetworkError);
+    expect(pages).toBe(10_001);
+  });
+});
+
 describe("ApiClient tokens", () => {
   it("refreshes on demand when the token is missing or expired", async () => {
     let now = 1_000_000;
