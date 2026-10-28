@@ -554,6 +554,7 @@ defineExpose({
             row.vault.roles.status === 'rollback' ||
             row.vault.roles.status === 'fork' ||
             row.vault.roles.status === 'invalid' ||
+            row.vault.roles.status === 'unavailable' ||
             row.vault.corrupt.length > 0)
         "
         class="tag text-error"

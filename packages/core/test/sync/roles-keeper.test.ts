@@ -117,10 +117,12 @@ describe("roles keeper", () => {
       { status: 503, code: "internal_error" },
       { status: 503, code: "internal_error" },
     ] as never);
-    await expect(other.roles.update(vaultId, 2, undefined)).rejects.toThrow();
-    await expect(other.roles.confirm(vaultId)).rejects.toMatchObject({
-      code: "not_found",
-    });
+    expect((await other.roles.update(vaultId, 2, undefined)).status).toBe(
+      "unavailable",
+    );
+    await expect(
+      other.roles.confirm(vaultId, { head: null }),
+    ).rejects.toMatchObject({ code: "not_found" });
     expect(other.roles.point(vaultId)).toBeUndefined();
     expect(
       other.roles.check(vaultId, 1, {
@@ -130,6 +132,53 @@ describe("roles keeper", () => {
     ).toBe("unchecked");
     k.roles.forget(vaultId);
     expect(k.roles.get(vaultId)).toBeUndefined();
+  });
+
+  it("never falls back to the older rules when a named chain cannot be checked", async () => {
+    const { bob, vaultId, chain } = await setup();
+    const fail = () =>
+      bob.server.failures.set(`/v1/vaults/${vaultId}/roles`, [
+        { status: 503, code: "internal_error" },
+        { status: 503, code: "internal_error" },
+        { status: 503, code: "internal_error" },
+      ] as never);
+    // The load fails and this unlock has no result yet.
+    const fresh = keeper(bob);
+    fail();
+    const failed = await fresh.roles.update(vaultId, 2, undefined);
+    expect(failed).toMatchObject({ status: "unavailable", head: undefined });
+    expect(fresh.roles.point(vaultId)).toBeUndefined();
+    // Nothing to take over and nothing to understand.
+    await expect(
+      fresh.roles.acknowledge(vaultId, 2, { head: null }),
+    ).rejects.toMatchObject({ code: "roles_unavailable" });
+    expect(fresh.saved).toEqual([]);
+    // The last result had no chain: a named one that fails to load does
+    // not keep that.
+    const none = keeper(bob);
+    expect((await none.roles.update(vaultId, null, undefined)).status).toBe(
+      "none",
+    );
+    fail();
+    expect((await none.roles.update(vaultId, 2, undefined)).status).toBe(
+      "unavailable",
+    );
+    // The server names a head it does not deliver: an empty chain, or one
+    // that ends below the named version.
+    const short = keeper(bob);
+    expect((await short.roles.update(vaultId, 5, undefined)).status).toBe(
+      "unavailable",
+    );
+    const saved = chain.splice(0);
+    const empty = keeper(bob);
+    expect((await empty.roles.update(vaultId, 2, undefined)).status).toBe(
+      "unavailable",
+    );
+    // Once it delivers the chain again, the same named version loads.
+    chain.push(...saved);
+    expect((await empty.roles.update(vaultId, 2, undefined)).status).toBe(
+      "unanchored",
+    );
   });
 
   it("keeps the points of own attestations when the chain is reloaded", async () => {
@@ -176,14 +225,15 @@ describe("roles keeper", () => {
     await k.marks.raise(bob.account.userId ?? "", {
       vaults: { [vaultId]: { rev: 0, obj: {}, rl: [2, second.hash] } },
     });
-    await k.roles.acknowledge(vaultId);
+    // No version named: a server without chains.
+    await k.roles.acknowledge(vaultId, undefined, { head: null });
     expect(k.anchors.has(vaultId)).toBe(false);
     const marks = await k.marks.read(bob.account.userId ?? "");
     expect(marks.vaults[vaultId]?.rl).toBeUndefined();
   });
 
   it("asks before taking over a list whose signer it does not know", async () => {
-    const { bob, vaultId } = await setup();
+    const { bob, vaultId, points } = await setup();
     const k = keeper(bob);
     // The signer is no remembered owner.
     expect((await k.roles.update(vaultId, 2, [])).status).toBe("unanchored");
@@ -195,7 +245,12 @@ describe("roles keeper", () => {
     expect((await known.roles.update(vaultId, 2, [signer])).status).toBe(
       "unanchored",
     );
-    await k.roles.confirm(vaultId);
+    // Only the head that was shown.
+    await expect(
+      k.roles.confirm(vaultId, { head: points[0] ?? null }),
+    ).rejects.toMatchObject({ code: "roles_changed" });
+    expect(k.anchors.has(vaultId)).toBe(false);
+    await k.roles.confirm(vaultId, { head: points[1] ?? null });
     expect(k.anchors.get(vaultId)?.version).toBe(2);
     expect((await k.roles.update(vaultId, 2, [])).status).toBe("ok");
   });
@@ -210,7 +265,7 @@ describe("roles keeper", () => {
     expect((await k.roles.update(vaultId, null, undefined)).status).toBe(
       "rollback",
     );
-    expect(await k.roles.invitationChain(vaultId)).toBeUndefined();
+    expect(await k.roles.invitationChain(vaultId, null)).toBeUndefined();
     // Anchored but without chain: no rotation statement can be built.
     await expect(
       k.roles.rotationRoles(vaultId, [], new Set(), true),
@@ -219,7 +274,7 @@ describe("roles keeper", () => {
     expect(
       await keeper(bob).roles.rotationRoles(vaultId, [], new Set(), true),
     ).toBeUndefined();
-    await k.roles.acknowledge(vaultId);
+    await k.roles.acknowledge(vaultId, null, { head: null });
     expect(k.anchors.has(vaultId)).toBe(false);
     // A chain whose first statement is broken cannot be taken over.
     chain.push({
@@ -228,12 +283,12 @@ describe("roles keeper", () => {
     } as never);
     const broken = keeper(bob, new Map([[vaultId, { ...second, owners: [] }]]));
     expect((await broken.roles.reload(vaultId)).status).toBe("rollback");
-    await expect(broken.roles.acknowledge(vaultId)).rejects.toMatchObject({
-      code: "roles_invalid",
-    });
-    await expect(broken.roles.invitationChain(vaultId)).rejects.toMatchObject({
-      code: "roles_invalid",
-    });
+    await expect(
+      broken.roles.acknowledge(vaultId, 1, { head: null }),
+    ).rejects.toMatchObject({ code: "roles_invalid" });
+    await expect(
+      broken.roles.invitationChain(vaultId, 1),
+    ).rejects.toMatchObject({ code: "roles_invalid" });
     await expect(
       broken.roles.rotationRoles(vaultId, [], new Set(), false),
     ).rejects.toMatchObject({ code: "roles_invalid" });

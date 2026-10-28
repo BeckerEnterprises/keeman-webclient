@@ -16,7 +16,13 @@ import {
 } from "../../src/crypto/roles";
 import { deriveSigningKeyPair } from "../../src/crypto/signing";
 import { newMember } from "../account/fake-sharing";
-import { newAccount, PASSWORD, rootOf, vault } from "../sync/devices";
+import {
+  newAccount,
+  PASSWORD,
+  rootOf,
+  shownHead,
+  vault,
+} from "../sync/devices";
 import { tv } from "../helpers";
 import { owner, person, share, type Person } from "./people";
 
@@ -308,7 +314,10 @@ describe("a chain a former owner forks", () => {
     await expect(alice.engine.stepDownEverywhere()).rejects.toMatchObject({
       code: "roles_warning_open",
     });
-    await alice.engine.acknowledgeRoles(vaultId);
+    await alice.engine.acknowledgeRoles(
+      vaultId,
+      shownHead(alice.engine, vaultId),
+    );
     expect(vault(alice.engine, vaultId)).toMatchObject({
       writable: true,
       roles: { status: "ok", compared: undefined },
@@ -453,7 +462,39 @@ describe("a server without roles chains", () => {
       writable: false,
       roles: { status: "rollback" },
     });
-    await alice.engine.acknowledgeRoles(vaultId);
+    await alice.engine.acknowledgeRoles(
+      vaultId,
+      shownHead(alice.engine, vaultId),
+    );
+    expect(vault(alice.engine, vaultId).writable).toBe(true);
+  });
+
+  it("treats a comparison point alone as a hidden chain", async () => {
+    const { server, alice, vaultId } = await team();
+    const code = vault(alice.engine, vaultId).roles.code;
+    if (!code) throw new Error("no state code");
+    server.rolesEnabled = false;
+    await alice.engine.refresh();
+    await alice.engine.acknowledgeRoles(
+      vaultId,
+      shownHead(alice.engine, vaultId),
+    );
+    // No anchor and no floor any more, only a member's code: the server
+    // still hides a chain from this device.
+    await alice.marks.raise(id(alice), {
+      vaults: {
+        [vaultId]: { rev: 0, obj: {}, cp: [[code.version, code.code, 0]] },
+      },
+    });
+    await alice.engine.refresh();
+    expect(vault(alice.engine, vaultId)).toMatchObject({
+      writable: false,
+      roles: { status: "rollback", head: null },
+    });
+    await alice.engine.acknowledgeRoles(
+      vaultId,
+      shownHead(alice.engine, vaultId),
+    );
     expect(vault(alice.engine, vaultId).writable).toBe(true);
   });
 });

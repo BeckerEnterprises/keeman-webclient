@@ -44,10 +44,19 @@ const MAX_ATTEMPTS = 3;
 /**
  * `none`: the vault has no chain; `ok`: checked from the anchor;
  * `unanchored`: a chain this account has no anchor for yet and cannot take
- * over on its own; the others are warnings.
+ * over on its own; `unavailable`: the server names a chain that this
+ * unlock could not check (it did not load, or ends below the named head),
+ * which blocks like a warning but cannot be understood away; the others are
+ * warnings.
  */
 export type RolesStatus =
-  "none" | "ok" | "unanchored" | "rollback" | "fork" | "invalid";
+  | "none"
+  | "ok"
+  | "unanchored"
+  | "unavailable"
+  | "rollback"
+  | "fork"
+  | "invalid";
 
 export interface VaultRoles {
   /** `roles_version` of the vault list the check is for. */
@@ -60,6 +69,11 @@ export interface VaultRoles {
   readonly anchor: RoleAnchor | undefined;
   /** Owners of the delivered head (also for warnings), if it can be read. */
   readonly deliveredOwners: readonly string[];
+  /**
+   * The delivered head as "understood" or "take over" would adopt it;
+   * `null` for an empty chain, `undefined` if it cannot be read.
+   */
+  readonly deliveredHead?: RolePoint | null;
   /** Co-owners need to be verified before this owner can start a chain. */
   readonly verifyOwners: boolean;
   /** The comparison point behind a warning, if one is. */
@@ -122,6 +136,21 @@ function ownerIds(statement: VerifiedRoles | undefined): string[] {
   return statement?.statement.owners.map((o) => o.userId) ?? [];
 }
 
+/** Whether a delivered chain goes up to the head the server named. */
+function reaches(
+  statements: readonly DeliveredRoles[],
+  version: number,
+): boolean {
+  return (statements[statements.length - 1]?.version ?? 0) >= version;
+}
+
+function samePoint(
+  a: RolePoint | null | undefined,
+  b: RolePoint | null | undefined,
+): boolean {
+  return (a ?? null)?.version === (b ?? null)?.version && a?.hash === b?.hash;
+}
+
 export class RolesKeeper {
   readonly #port: RolesPort;
   readonly #vaults = new Map<string, VaultRoles>();
@@ -156,8 +185,31 @@ export class RolesKeeper {
     const known = this.#delivered.get(vaultId);
     if (known && known.version === version) return known.statements;
     const statements = await this.#port.api.roles(vaultId, 0);
-    this.#delivered.set(vaultId, { version, statements });
+    // A chain that ends below the named head is not kept: the next update
+    // loads it again.
+    if (reaches(statements, version))
+      this.#delivered.set(vaultId, { version, statements });
     return statements;
+  }
+
+  /**
+   * A named chain this unlock cannot check. It never counts as "no chain":
+   * the older owner rule would then accept a key from anyone the server
+   * calls an owner.
+   */
+  unavailable(vaultId: string, version: number | null): VaultRoles {
+    const previous = this.#vaults.get(vaultId);
+    const result: VaultRoles = {
+      version,
+      status: "unavailable",
+      statements: [],
+      head: undefined,
+      anchor: previous?.anchor,
+      deliveredOwners: [],
+      verifyOwners: previous?.verifyOwners ?? false,
+    };
+    this.#vaults.set(vaultId, result);
+    return result;
   }
 
   /**
@@ -178,12 +230,16 @@ export class RolesKeeper {
       delivered = await this.#load(vaultId, version);
     } catch (error) {
       if (error instanceof CryptoError && error.code === "locked") throw error;
-      // Keep the last result; nothing is accepted on a stale one. Points up
-      // to its head can still be checked against it.
-      if (previous)
-        return this.#stillAgrees(vaultId, previous, points, compared);
-      throw error;
+      // Keep the last result with a chain; nothing is accepted on a stale
+      // one. Points up to its head can still be checked against it.
+      if (previous && previous.status !== "none")
+        return previous.status === "unavailable"
+          ? this.unavailable(vaultId, version)
+          : this.#stillAgrees(vaultId, previous, points, compared);
+      return this.unavailable(vaultId, version);
     }
+    if (version !== null && !reaches(delivered, version))
+      return this.unavailable(vaultId, version);
     const floor = marks.vaults[vaultId]?.rl;
     const stored = this.#port.anchor(vaultId);
     const effective = effectiveAnchor(stored, floor);
@@ -299,18 +355,24 @@ export class RolesKeeper {
     },
   ): VaultRoles {
     const { anchor, lowers, fork, compared } = against;
+    // Even with a warning the delivered head and its owners are shown.
+    const plain = checkRoleChain({ vaultId, statements: delivered });
+    const deliveredOwners =
+      plain.status === "ok" ? ownerIds(plain.head) : ([] as string[]);
     const base = {
       version,
       statements: [] as VerifiedRoles[],
       head: undefined,
       anchor,
       deliveredOwners: [] as string[],
+      deliveredHead:
+        plain.status === "ok"
+          ? pointOf(plain.head)
+          : plain.status === "empty"
+            ? null
+            : undefined,
       verifyOwners: false,
     };
-    // Even with a warning the delivered head's owners are shown.
-    const plain = checkRoleChain({ vaultId, statements: delivered });
-    const deliveredOwners =
-      plain.status === "ok" ? ownerIds(plain.head) : ([] as string[]);
     if (fork) return { ...base, status: "fork", deliveredOwners };
     const result = checkRoleChain({
       vaultId,
@@ -408,23 +470,49 @@ export class RolesKeeper {
     if (Object.keys(anchors).length > 0) await this.#port.saveAnchors(anchors);
   }
 
-  /** Takes the delivered head as anchor ("take over the owner list"). */
-  async confirm(vaultId: string): Promise<void> {
+  /**
+   * Takes the delivered head as anchor ("take over the owner list"), only
+   * the head that was shown.
+   */
+  async confirm(
+    vaultId: string,
+    expected: { head: RolePoint | null },
+  ): Promise<void> {
     const roles = this.#vaults.get(vaultId);
     if (roles?.status !== "unanchored" || !roles.head)
       throw new SyncError("not_found");
+    if (!samePoint(pointOf(roles.head), expected.head))
+      throw new SyncError("roles_changed");
     await this.#adopt(vaultId, roles.head);
   }
 
   /**
    * "Understood" at a roles warning: the delivered chain becomes the anchor,
-   * also lowering the floor; it must be valid from its first statement.
+   * also lowering the floor; it must be valid from its first statement and
+   * be the head that was shown. `version` is the one the vault list names;
+   * without it (a server without chains) the chain is empty. `before` runs
+   * once everything is checked, before anything is written.
    */
-  async acknowledge(vaultId: string): Promise<void> {
-    // A chain this device never checked (a server without chains) counts
-    // as empty.
-    const delivered = this.#delivered.get(vaultId)?.statements ?? [];
+  async acknowledge(
+    vaultId: string,
+    version: number | null | undefined,
+    expected: { head: RolePoint | null },
+    before?: () => Promise<void>,
+  ): Promise<void> {
+    if (this.#vaults.get(vaultId)?.status === "unavailable")
+      throw new SyncError("roles_unavailable");
+    const delivered =
+      version === undefined || version === null
+        ? []
+        : this.#delivered.get(vaultId)?.statements;
+    // Nothing loaded for a named chain: there is nothing to take over.
+    if (delivered === undefined) throw new SyncError("roles_unavailable");
     const result = checkRoleChain({ vaultId, statements: delivered });
+    if (result.status !== "ok" && result.status !== "empty")
+      throw new SyncError("roles_invalid");
+    const head = result.status === "ok" ? pointOf(result.head) : null;
+    if (!samePoint(head, expected.head)) throw new SyncError("roles_changed");
+    await before?.();
     if (result.status === "empty") {
       await this.#port.marks.replaceRoles(
         this.#port.userId,
@@ -434,7 +522,6 @@ export class RolesKeeper {
       await this.#port.saveAnchors({ [vaultId]: null });
       return;
     }
-    if (result.status !== "ok") throw new SyncError("roles_invalid");
     await this.#adopt(vaultId, result.head);
   }
 
@@ -473,8 +560,12 @@ export class RolesKeeper {
    */
   async invitationChain(
     vaultId: string,
+    version: number | null | undefined,
   ): Promise<readonly VerifiedRoles[] | undefined> {
+    if (version === undefined || version === null) return undefined;
     const delivered = await this.#port.api.roles(vaultId, 0);
+    // A named chain that is not delivered up to its head is not "no chain".
+    if (!reaches(delivered, version)) throw new SyncError("roles_unavailable");
     const result = checkRoleChain({ vaultId, statements: delivered });
     if (result.status === "empty") return undefined;
     if (result.status !== "ok") throw new SyncError("roles_invalid");

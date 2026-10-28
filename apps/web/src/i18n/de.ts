@@ -224,6 +224,8 @@ export default {
       ackCompare:
         "Übergeht den Code des Mitglieds und übernimmt die gelieferte Eigentümerliste. Tu das nur, wenn ihr geklärt habt, dass der Code falsch eingegeben war oder die Liste stimmt.",
       tree: "Warnung zur Eigentümerliste",
+      unavailable:
+        "Die Eigentümerliste ließ sich nicht laden. Die Datenbank ist schreibgeschützt, bis sie sich laden lässt; bis dahin nimmt dieses Gerät keine neuen Schlüssel an und ändert keine Rollen.",
     },
     status: {
       loading: "Lädt…",
@@ -753,7 +755,7 @@ export default {
     submit: "Konto endgültig löschen",
     done: "Dein Konto wurde gelöscht.",
     rolesWarning:
-      "Für diese Datenbanken ist eine Warnung zur Eigentümerliste offen. Als Eigentümer stufst du dich vor dem Löschen signiert herab; übernimm die Warnung dort zuerst mit „Verstanden“:",
+      "Für diese Datenbanken ist eine Warnung zur Eigentümerliste offen, oder die Liste lässt sich nicht laden. Als Eigentümer stufst du dich vor dem Löschen signiert herab; übernimm die Warnung dort zuerst mit „Verstanden“ bzw. warte, bis die Liste lädt:",
   },
   account: {
     title: "Konto",
@@ -1060,6 +1062,8 @@ export default {
     leaveWarning:
       "Für diese Datenbank ist eine Warnung zur Eigentümerliste offen. Als Eigentümer stufst du dich vor dem Austritt signiert herab; dafür übernimmst du zuerst die gelieferte Eigentümerliste.",
     leaveUnderstood: "Verstanden und austreten",
+    leaveUnavailable:
+      "Die Eigentümerliste ließ sich nicht laden. Als Eigentümer kannst du erst austreten, wenn sie lädt, weil du dich vorher signiert herabstufst.",
   },
   rotation: {
     title: "Schlüssel erneuern",
@@ -1094,6 +1098,8 @@ export default {
       "Ein neuer Schlüssel für „{name}“ wartet, bis der Stand dieser Datenbank bestätigt ist.",
     keyRolesInvalid:
       "Ein neuer Schlüssel für „{name}“ wartet, aber die Eigentümerliste dieser Datenbank ist nicht geprüft. Sieh dir zuerst die Warnung auf der Seite der Datenbank an.",
+    keyRolesUnavailable:
+      "Ein neuer Schlüssel für „{name}“ wartet, bis sich die Eigentümerliste dieser Datenbank laden lässt.",
     keyRejected:
       "Der neue Schlüssel für „{name}“ ist nicht von der signierten Eigentümerliste gedeckt und wurde nicht angenommen. Das kann ein Angriff auf den Server sein.",
     keyCheck: "Prüfen",
@@ -1220,6 +1226,8 @@ export default {
     unsupported: "Dieser Server führt keine signierten Eigentümerlisten.",
     warning:
       "Solange die Warnung zur Eigentümerliste offen ist, gibt es keinen Stand-Code.",
+    listUnavailable:
+      "Die Eigentümerliste ließ sich nicht laden, deshalb gibt es gerade keinen Stand-Code.",
   },
   invitationDialog: {
     title: "Einladung annehmen",
@@ -1412,6 +1420,8 @@ export default {
       "Der Absender ist kein Eigentümer der Eigentümerliste, die seine Einladung nennt.",
     sync_roles_warning_open:
       "Für eine Datenbank ist eine Warnung zur Eigentümerliste offen. Übernimm sie zuerst mit „Verstanden“.",
+    sync_roles_unavailable:
+      "Die Eigentümerliste einer Datenbank ließ sich nicht laden. Versuche es erneut, sobald die Verbindung zum Server steht.",
     sync_unknown_owner:
       "Der Absender ist auf diesem Gerät nicht als Eigentümer bekannt. Bestätige den neuen Schlüssel zuerst.",
     sync_self: "Dich selbst kannst du nicht einladen.",

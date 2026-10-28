@@ -147,6 +147,14 @@ export function rolesWarning(state: VaultState): boolean {
   return status === "rollback" || status === "fork" || status === "invalid";
 }
 
+/**
+ * A warning, or a named owner list this device could not check: either way
+ * it cannot tell whether a rotation was hidden from it.
+ */
+export function rolesBlocked(state: VaultState): boolean {
+  return rolesWarning(state) || state.roles?.status === "unavailable";
+}
+
 export function vaultWritable(state: VaultState, rebuild = false): boolean {
   const meta = state.meta;
   const root = state.objects.get(manifestIds(state.id).root);
@@ -156,7 +164,7 @@ export function vaultWritable(state: VaultState, rebuild = false): boolean {
     state.keyStatus === "ok" &&
     state.synced &&
     !state.rollback &&
-    !rolesWarning(state) &&
+    !rolesBlocked(state) &&
     state.freshness?.status === "fresh" &&
     meta !== undefined &&
     !meta.readOnly &&

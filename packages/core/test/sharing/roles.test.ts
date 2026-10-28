@@ -17,7 +17,7 @@ import {
 import { deriveSigningKeyPair } from "../../src/crypto/signing";
 import { FakeServer } from "../account/fake-server";
 import { newMember } from "../account/fake-sharing";
-import { ManualTimers, PASSWORD, vault } from "../sync/devices";
+import { ManualTimers, PASSWORD, shownHead, vault } from "../sync/devices";
 import { tv } from "../helpers";
 import {
   acceptShown,
@@ -189,6 +189,134 @@ describe("signed roles", () => {
     });
   });
 
+  it("accepts no key and stays read-only while a named chain cannot be checked", async () => {
+    const { server, bob, vaultId } = await team();
+    const evil = mallory(server, vaultId);
+    await trust(bob, { email: evil.email, engine: bob.engine } as never);
+    const record = server.vaults.get(vaultId);
+    const member = record?.members.get(evil.userId);
+    if (member) member.role = "owner";
+    let failing = true;
+    server.loseResponses = (path, method) =>
+      failing && method === "GET" && path === `/v1/vaults/${vaultId}/roles`;
+    // A new unlock has no checked chain yet; the server lets it fail and
+    // names Mallory as owner.
+    bob.account.lock();
+    await bob.account.unlock(PASSWORD);
+    bob.engine = bob.account.startSync();
+    await bob.engine.refresh();
+    expect(vault(bob.engine, vaultId)).toMatchObject({
+      writable: false,
+      roles: { status: "unavailable", head: undefined },
+    });
+    // Nothing is attested or passed on for a chain it could not check, and
+    // the server's owners are not remembered.
+    expect(bob.engine.unconfirmableVaults).toBe(1);
+    const marks = await bob.marks.read(id(bob));
+    expect(marks.vaults[vaultId]?.ow ?? []).not.toContain(evil.userId);
+    await expect(
+      bob.engine.acknowledgeRoles(vaultId, { head: null }),
+    ).rejects.toMatchObject({ code: "roles_unavailable" });
+    // Then the server passes off Mallory's box as a rotation.
+    const bobUser = server.users.get(id(bob));
+    const box = buildKeyBox(systemRandomness, {
+      senderId: evil.userId,
+      senderPrivateKey: evil.privateKey,
+      recipientId: id(bob),
+      recipientPublicKey: Buffer.from(bobUser?.public_key ?? "", "base64url"),
+      vaultId,
+      keyVersion: 2,
+      vaultKey: tv("roles-sync-mallory-vault-key", 32),
+      vaultName: "x",
+      created: new Date().toISOString(),
+    });
+    server.tamperVaults = (list) => {
+      for (const summary of list)
+        if (summary.vault_id === vaultId)
+          Object.assign(summary, {
+            vault_key_version: 2,
+            pending_key: {
+              key_box: box,
+              key_version: 2,
+              sender_id: evil.userId,
+            },
+          });
+    };
+    const accepted = posts(server, "/key");
+    await bob.engine.refresh();
+    expect(vault(bob.engine, vaultId)).toMatchObject({
+      keyStatus: "pending",
+      pendingReason: "roles_unavailable",
+      writable: false,
+    });
+    expect(posts(server, "/key")).toBe(accepted);
+    // Once the chain loads, it does not commit to her key.
+    failing = false;
+    await bob.engine.refresh();
+    expect(vault(bob.engine, vaultId)).toMatchObject({
+      keyStatus: "invalid",
+      pendingReason: "roles_rejected",
+      roles: { status: "ok" },
+    });
+    expect(posts(server, "/key")).toBe(accepted);
+    server.tamperVaults = () => undefined;
+    await bob.engine.refresh();
+    expect(vault(bob.engine, vaultId)).toMatchObject({
+      keyStatus: "ok",
+      writable: true,
+    });
+    expect(bob.engine.unconfirmableVaults).toBe(0);
+  });
+
+  it("accepts no invitation whose named chain is not delivered", async () => {
+    const { server, alice, vaultId } = await team();
+    const dave = await person(server, "dave@example.com");
+    await trust(alice, dave);
+    await alice.engine.invite(
+      vaultId,
+      await alice.engine.lookupUser(dave.email),
+    );
+    // The list names a head the chain does not reach.
+    server.tamperVaults = (list) => {
+      for (const summary of list)
+        if (summary.vault_id === vaultId && summary.state === "pending")
+          summary.roles_version = 9;
+    };
+    await dave.engine.refresh();
+    const invitation = dave.engine.snapshot.invitations.find(
+      (i) => i.vaultId === vaultId,
+    );
+    if (!invitation?.sender) throw new Error("invitation missing");
+    await dave.account.verifyContact(invitation.sender);
+    await expect(dave.engine.invitationDetails(vaultId)).rejects.toMatchObject({
+      code: "roles_unavailable",
+    });
+    await expect(
+      dave.engine.acceptInvitation(vaultId, { head: undefined }),
+    ).rejects.toMatchObject({ code: "roles_unavailable" });
+    expect(posts(server, "/accept")).toBe(2);
+  });
+
+  it("checks a named chain also when the configuration does not load", async () => {
+    const { server, bob, vaultId } = await team();
+    bob.account.lock();
+    await bob.account.unlock(PASSWORD);
+    bob.engine = bob.account.startSync();
+    server.failures.set("/v1/config", [
+      { status: 503, code: "internal_error" },
+      { status: 503, code: "internal_error" },
+      { status: 503, code: "internal_error" },
+    ] as never);
+    await bob.engine.refresh();
+    // No rollback that "understood" would answer by deleting the anchor.
+    expect(vault(bob.engine, vaultId)).toMatchObject({
+      roles: { status: "ok" },
+      writable: true,
+    });
+    const marks = await bob.marks.read(id(bob));
+    expect(marks.vaults[vaultId]?.rl?.[0]).toBe(1);
+  });
+
   it("signs promotions only for verified contacts and carries them to members", async () => {
     const { server, alice, bob, carol, vaultId } = await team();
     await expect(
@@ -333,7 +461,7 @@ describe("signed roles", () => {
       status: "rollback",
       owners: [{ userId: id(alice) }],
     });
-    await bob.engine.acknowledgeRoles(vaultId);
+    await bob.engine.acknowledgeRoles(vaultId, shownHead(bob.engine, vaultId));
     expect(vault(bob.engine, vaultId).roles.status).toBe("ok");
     expect((await bob.marks.read(id(bob))).vaults[vaultId]?.rl?.[0]).toBe(1);
   });
@@ -476,7 +604,7 @@ describe("transition of older accounts and vaults", () => {
     timers.fire(60_000);
     await settle();
     expect(signed()).toBe(before);
-    await bob.engine.confirmRoles(vaultId);
+    await bob.engine.confirmRoles(vaultId, shownHead(bob.engine, vaultId));
     expect(vault(bob.engine, vaultId).roles.status).toBe("ok");
     timers.fire(60_000);
     await settle();

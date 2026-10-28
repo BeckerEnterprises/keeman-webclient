@@ -624,7 +624,10 @@ export class SyncEngine {
   #manifestSupported(): Promise<boolean> {
     this.#manifestFeature ??= this.#access.api.config().then(
       (config) => config.features.manifest === true,
-      () => false,
+      () => {
+        this.#manifestFeature = undefined;
+        return false;
+      },
     );
     return this.#manifestFeature;
   }
@@ -632,7 +635,10 @@ export class SyncEngine {
   #rolesSupported(): Promise<boolean> {
     this.#rolesFeature ??= this.#access.api.config().then(
       (config) => config.features.roles === true,
-      () => false,
+      () => {
+        this.#rolesFeature = undefined;
+        return false;
+      },
     );
     return this.#rolesFeature;
   }
@@ -826,8 +832,14 @@ export class SyncEngine {
     state: VaultState,
   ): Promise<{ version: number; hash: string } | undefined> {
     let roles = state.roles;
-    if (!(await this.#rolesSupported()) || !roles) return undefined;
+    if (!roles) return undefined;
+    if (roles.status === "unavailable")
+      throw new SyncError("roles_unavailable");
     if (roles.status === "none") {
+      // An unconfirmed vault gets no new chain: it would take over what the
+      // server delivers. Stepping down goes ahead without one.
+      if (!(await this.#rolesSupported()) || !this.#confirmed(state))
+        return undefined;
       const members =
         state.members ?? (await this.#access.api.members(state.id));
       const started = await this.#roles.ownerDuties(
@@ -844,21 +856,42 @@ export class SyncEngine {
     return point;
   }
 
-  /** Takes over the delivered owner list of a vault without anchor. */
-  async confirmRoles(vaultId: string): Promise<void> {
+  /**
+   * Takes over the delivered owner list of a vault without anchor; only the
+   * head that was shown (`roles_changed` otherwise).
+   */
+  async confirmRoles(
+    vaultId: string,
+    expected: { head: RolePoint | null },
+  ): Promise<void> {
     this.#state(vaultId);
-    await this.#roles.confirm(vaultId);
+    await this.#roles.confirm(vaultId, expected);
     await this.refresh();
   }
 
-  /** "Understood" at a warning about the owner list of a vault. */
-  async acknowledgeRoles(vaultId: string): Promise<void> {
+  /**
+   * "Understood" at a warning about the owner list of a vault, for the head
+   * the warning showed (`roles_changed` otherwise). A chain that cannot be
+   * checked is no warning to understand (`roles_unavailable`).
+   */
+  async acknowledgeRoles(
+    vaultId: string,
+    expected: { head: RolePoint | null },
+  ): Promise<void> {
     const state = this.#state(vaultId);
-    await this.#overrule(state);
+    if (state.roles?.status === "unavailable")
+      throw new SyncError("roles_unavailable");
+    if (!rolesWarning(state)) throw new SyncError("roles_changed");
     // A server that hides the chain delivers none: there is nothing to take
     // over, whatever was checked before.
     if (state.summary.roles_version === undefined) this.#roles.forget(vaultId);
-    await this.#roles.acknowledge(vaultId);
+    // Checked first: the state is confirmed only together with the chain.
+    await this.#roles.acknowledge(
+      vaultId,
+      state.summary.roles_version,
+      expected,
+      () => this.#overrule(state),
+    );
     // The member's code is overruled too, but only the points shown now.
     this.#comparisons.remove(vaultId, this.#comparisons.points(vaultId));
     await this.refresh();
@@ -1050,9 +1083,12 @@ export class SyncEngine {
     const sender = this.#candidate(invitation.sender);
     if (statusNow(sender, this.#access.contacts()) !== "verified")
       throw new SyncError("unverified");
-    const chain = (await this.#rolesSupported())
-      ? await this.#roles.invitationChain(vaultId)
-      : undefined;
+    // Checked whenever the list names a chain, whatever the configuration
+    // says: a chain is never ignored.
+    const chain = await this.#roles.invitationChain(
+      vaultId,
+      invitation.summary.roles_version,
+    );
     const opened = grantDetails(this.#access, vaultId, grant, sender, (box) =>
       chain
         ? !checkGrantRoles({
@@ -1117,9 +1153,12 @@ export class SyncEngine {
     input: string,
   ): Promise<StateComparisonView> {
     const entered = this.#enteredCode(input);
-    if (!this.#invitations.some((i) => i.summary.vault_id === vaultId))
-      throw new SyncError("not_found");
-    let chain = await this.#roles.invitationChain(vaultId);
+    const invitation = this.#invitations.find(
+      (i) => i.summary.vault_id === vaultId,
+    );
+    if (!invitation) throw new SyncError("not_found");
+    const version = invitation.summary.roles_version;
+    let chain = await this.#roles.invitationChain(vaultId, version);
     if (!chain)
       return {
         result: "unavailable",
@@ -1129,7 +1168,7 @@ export class SyncEngine {
       };
     let view = this.#comparisonView(vaultId, chain, entered);
     if (view.result === "missing" || view.result === "withheld") {
-      chain = (await this.#roles.invitationChain(vaultId)) ?? [];
+      chain = (await this.#roles.invitationChain(vaultId, version)) ?? [];
       view = this.#comparisonView(vaultId, chain, entered);
     }
     if (view.result === "match") {
@@ -1146,11 +1185,12 @@ export class SyncEngine {
   async stepDownEverywhere(): Promise<void> {
     const self = this.#access.userId;
     // On a chain with a warning nothing is signed, not even a step-down.
-    if (
-      [...this.#states.values()].some(
-        (s) => s.summary.role === "owner" && rolesWarning(s),
-      )
-    )
+    const owned = [...this.#states.values()].filter(
+      (s) => s.summary.role === "owner",
+    );
+    if (owned.some((s) => s.roles?.status === "unavailable"))
+      throw new SyncError("roles_unavailable");
+    if (owned.some((s) => rolesWarning(s)))
       throw new SyncError("roles_warning_open");
     for (const state of this.#states.values()) {
       const head = state.roles?.status === "ok" ? state.roles.head : undefined;
@@ -1254,6 +1294,8 @@ export class SyncEngine {
   async leaveVault(vaultId: string): Promise<void> {
     const state = this.#state(vaultId);
     const self = this.#access.userId;
+    if (state.summary.role === "owner" && state.roles?.status === "unavailable")
+      throw new SyncError("roles_unavailable");
     if (state.summary.role === "owner" && rolesWarning(state))
       throw new SyncError("roles_warning_open");
     const head = state.roles?.status === "ok" ? state.roles.head : undefined;
@@ -1288,9 +1330,10 @@ export class SyncEngine {
     )
       throw new SyncError("unverified");
     const grant = invitation.summary.invitation;
-    const chain = (await this.#rolesSupported())
-      ? await this.#roles.invitationChain(vaultId)
-      : undefined;
+    const chain = await this.#roles.invitationChain(
+      vaultId,
+      invitation.summary.roles_version,
+    );
     // Exactly the head the dialog showed, so its code was the one compared.
     const head = chain?.[chain.length - 1];
     if (
@@ -2908,10 +2951,11 @@ export class SyncEngine {
         state.rollback = true;
     }
     // The roles chain first: a pending key is accepted only against it.
-    const roles = await this.#rolesSupported();
     for (const state of this.#states.values())
-      await this.#updateRoles(state, marks, roles);
-    if (roles) await this.#roles.flush();
+      await this.#updateRoles(state, marks);
+    // A lock or another account may have stopped this engine meanwhile.
+    if (this.#isStopped()) return;
+    await this.#roles.flush();
     await this.#comparisons.flush([
       ...this.#states.keys(),
       ...this.#invitations.map((i) => i.summary.vault_id),
@@ -2927,7 +2971,8 @@ export class SyncEngine {
         .map((s) => this.#rememberOwners(s)),
     );
     if (this.#isStopped()) return;
-    if (roles && (await this.#ownerDuties())) void this.refresh();
+    if ((await this.#rolesSupported()) && (await this.#ownerDuties()))
+      void this.refresh();
     if (this.#isStopped()) return;
     this.#loaded = true;
     this.#emit();
@@ -2993,19 +3038,20 @@ export class SyncEngine {
    * The roles chain of a vault, loaded when the vault list names another
    * head; a key version below the chain's is a rollback.
    */
-  async #updateRoles(
-    state: VaultState,
-    marks: UserMarks,
-    supported: boolean,
-  ): Promise<void> {
+  async #updateRoles(state: VaultState, marks: UserMarks): Promise<void> {
+    // Only the list decides whether a vault has a chain; the configuration
+    // may fail to load, and checking never depends on it.
     const version = state.summary.roles_version;
-    if (!supported || version === undefined) {
+    if (version === undefined) {
       // A server that hides the chain of an anchored vault does not get the
-      // older rules back: that is a rollback.
+      // older rules back: that is a rollback. So is a comparison point,
+      // which then lies above a chain of nothing.
+      this.#roles.forget(state.id);
       const anchor =
         this.#access.roleAnchor(state.id) ??
         (marks.vaults[state.id]?.rl ||
-        this.#freshness.rolePoints(state.id).length > 0
+        this.#freshness.rolePoints(state.id).length > 0 ||
+        this.#comparisons.points(state.id, marks).length > 0
           ? { owners: [] }
           : undefined);
       state.roles = anchor
@@ -3030,10 +3076,11 @@ export class SyncEngine {
     } catch (error) {
       if (error instanceof CryptoError && error.code === "locked") throw error;
       state.error = error;
+      state.roles = this.#roles.unavailable(state.id, version);
     }
     state.lastMatch = this.#comparisons.lastMatch(state.id);
     // A point the checked chain satisfies is settled: the anchor holds it.
-    if (state.roles?.status === "ok") {
+    if (state.roles.status === "ok") {
       const statements = state.roles.statements;
       this.#comparisons.remove(
         state.id,
@@ -3042,7 +3089,7 @@ export class SyncEngine {
           .filter((p) => satisfies(statements, p)),
       );
     }
-    const head = state.roles?.status === "ok" ? state.roles.head : undefined;
+    const head = state.roles.status === "ok" ? state.roles.head : undefined;
     if (head) {
       state.keyFloor = Math.max(state.keyFloor, head.statement.keyVersion);
       if (state.summary.vault_key_version < state.keyFloor)
@@ -3115,6 +3162,9 @@ export class SyncEngine {
         .filter((m) => m.role === "owner" && m.state === "active")
         .map((m) => m.user_id);
     }
+    // While a named chain cannot be checked, the server's list of owners is
+    // not remembered: it would decide over pending keys later.
+    if (state.roles?.status === "unavailable") return;
     await this.#context.marks.rememberOwners(access.userId, state.id, owners);
   }
 
@@ -3155,7 +3205,9 @@ export class SyncEngine {
             ? undefined
             : roles.status === "unanchored"
               ? "roles_unconfirmed"
-              : "roles_invalid";
+              : roles.status === "unavailable"
+                ? "roles_unavailable"
+                : "roles_invalid";
     // A device with an unconfirmed state might be shown a forked chain
     // that commits to a former owner's key.
     const reason = waiting ?? (this.#confirmed(state) ? undefined : "stale");
@@ -3412,7 +3464,11 @@ export class SyncEngine {
       !this.#rollbackOpen(state) &&
       (state.manifest.status === "verified" ||
         state.manifest.status === "unverified") &&
-      (roles === undefined || roles === "ok" || roles === "none")
+      // Without a chain only when the list names none: a named chain that
+      // did not load would otherwise be attested as no chain at all.
+      (roles === "ok" ||
+        roles === "none" ||
+        (roles === undefined && summary.roles_version === undefined))
     );
   }
 

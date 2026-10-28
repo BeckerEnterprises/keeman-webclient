@@ -83,6 +83,8 @@ export type SyncErrorCode =
   | "sender_not_owner"
   /** A warning about the owner list is open; nothing is signed until understood. */
   | "roles_warning_open"
+  /** The server names an owner list this device cannot load or check yet; try again. */
+  | "roles_unavailable"
   | "locked";
 
 export class SyncError extends Error {

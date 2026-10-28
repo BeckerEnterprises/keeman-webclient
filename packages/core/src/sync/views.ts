@@ -4,6 +4,7 @@
  * Unchanged objects and vaults keep their identity between projections.
  */
 import type { ObjectType } from "../crypto/aad";
+import type { RolePoint } from "../crypto/roles";
 import type { JsonObject } from "../crypto/bytes";
 import {
   formatStateCode,
@@ -340,6 +341,11 @@ export interface RolesView {
         readonly partner: RoleOwnerView | undefined;
       }
     | undefined;
+  /**
+   * The head "understood" or "take over" adopts, to be passed back with
+   * them: `null` for no chain, `undefined` if it cannot be read.
+   */
+  readonly head: RolePoint | null | undefined;
 }
 
 /** A custom icon of a vault's library. */
@@ -940,6 +946,7 @@ function rolesView(state: VaultState): RolesView {
       code: undefined,
       compared: undefined,
       lastMatch: undefined,
+      head: null,
     };
   const members = state.members ?? [];
   const named = (userId: string): RoleOwnerView => ({
@@ -989,6 +996,14 @@ function rolesView(state: VaultState): RolesView {
               : named(state.lastMatch.partner),
         }
       : undefined,
+    head:
+      roles.status === "unanchored" && roles.head
+        ? { version: roles.head.statement.version, hash: roles.head.hash }
+        : roles.deliveredHead !== undefined
+          ? roles.deliveredHead
+          : roles.version === null
+            ? null
+            : undefined,
   };
 }
 

@@ -219,6 +219,8 @@ const en: typeof de = {
       ackCompare:
         "Overrules the member's code and takes over the delivered owner list. Do that only once you have made sure the code was mistyped or the list is right.",
       tree: "Warning about the owner list",
+      unavailable:
+        "The owner list could not be loaded. The database is read-only until it loads; until then this device accepts no new keys and changes no roles.",
     },
     status: {
       loading: "Loading…",
@@ -734,7 +736,7 @@ const en: typeof de = {
     submit: "Delete account for good",
     done: "Your account was deleted.",
     rolesWarning:
-      "A warning about the owner list is open for these databases. As an owner you step down, signed, before the deletion; take the warning over there with “Understood” first:",
+      "A warning about the owner list is open for these databases, or the list cannot be loaded. As an owner you step down, signed, before the deletion; take the warning over there with “Understood” first, or wait until the list loads:",
   },
   account: {
     title: "Account",
@@ -1032,6 +1034,8 @@ const en: typeof de = {
     leaveWarning:
       "A warning about the owner list of this database is open. As an owner you step down, signed, before leaving; for that you first take over the delivered owner list.",
     leaveUnderstood: "Understood, leave",
+    leaveUnavailable:
+      "The owner list could not be loaded. As an owner you can leave only once it loads, because you step down, signed, first.",
   },
   rotation: {
     title: "Renew key",
@@ -1065,6 +1069,8 @@ const en: typeof de = {
       "A new key for “{name}” waits until the state of this database is confirmed.",
     keyRolesInvalid:
       "A new key for “{name}” is waiting, but the owner list of this database is not checked. First look at the warning on the database page.",
+    keyRolesUnavailable:
+      "A new key for “{name}” waits until the owner list of this database can be loaded.",
     keyRejected:
       "The new key for “{name}” is not covered by the signed owner list and was not accepted. This may be an attack on the server.",
     keyCheck: "Verify",
@@ -1187,6 +1193,8 @@ const en: typeof de = {
     unsupported: "This server keeps no signed owner lists.",
     warning:
       "While the warning about the owner list is open, there is no state code.",
+    listUnavailable:
+      "The owner list could not be loaded, so there is no state code right now.",
   },
   invitationDialog: {
     title: "Accept invitation",
@@ -1384,6 +1392,8 @@ const en: typeof de = {
       "The sender is no owner of the owner list the invitation names.",
     sync_roles_warning_open:
       "A warning about the owner list of a database is open. Take it over with “Understood” first.",
+    sync_roles_unavailable:
+      "The owner list of a database could not be loaded. Try again once the connection to the server works.",
     sync_unknown_owner:
       "The sender is not known as an owner on this device. Confirm the new key first.",
     sync_self: "You cannot invite yourself.",

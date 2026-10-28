@@ -80,6 +80,7 @@ export type PendingReason =
   | "unknown_owner"
   | "roles_unconfirmed"
   | "roles_invalid"
+  | "roles_unavailable"
   | "roles_rejected"
   | "stale";
 

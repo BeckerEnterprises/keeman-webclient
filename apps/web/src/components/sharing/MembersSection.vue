@@ -151,6 +151,7 @@ function setRole(member: MemberView): Promise<void> {
 const keyWait = computed(() =>
   props.vault.pendingReason === "roles_unconfirmed" ||
   props.vault.pendingReason === "roles_invalid" ||
+  props.vault.pendingReason === "roles_unavailable" ||
   props.vault.pendingReason === "stale"
     ? props.vault.pendingReason
     : undefined,
@@ -168,6 +169,10 @@ const rolesWarning = computed(
       props.vault.roles.status === "fork" ||
       props.vault.roles.status === "invalid"),
 );
+/** An owner steps down signed before leaving: only on a list that loaded. */
+const rolesUnavailable = computed(
+  () => owner.value && props.vault.roles.status === "unavailable",
+);
 
 function withdraw(member: MemberView): Promise<void> {
   return run(() =>
@@ -180,7 +185,9 @@ async function leave(): Promise<void> {
   error.value = undefined;
   try {
     if (rolesWarning.value)
-      await vaults.engine().acknowledgeRoles(props.vault.id);
+      await vaults.engine().acknowledgeRoles(props.vault.id, {
+        head: props.vault.roles.head ?? null,
+      });
     await vaults.engine().leaveVault(props.vault.id);
     dialog.value = undefined;
     await router.push("/databases");
@@ -224,6 +231,16 @@ onMounted(() => void load());
       <p v-else-if="keyWait === 'roles_invalid'">
         {{
           t("invitation.keyRolesInvalid", {
+            name: vault.name ?? t("invitation.unknownName"),
+          })
+        }}
+      </p>
+      <p
+        v-else-if="keyWait === 'roles_unavailable'"
+        data-test="members-key-roles-unavailable"
+      >
+        {{
+          t("invitation.keyRolesUnavailable", {
             name: vault.name ?? t("invitation.unknownName"),
           })
         }}
@@ -388,13 +405,20 @@ onMounted(() => void load());
       <button
         type="button"
         class="secondary"
-        :disabled="busy"
+        :disabled="busy || rolesUnavailable"
         data-test="vault-leave"
         @click="dialog = { kind: 'leave' }"
       >
         {{ t("members.leave") }}
       </button>
     </div>
+    <p
+      v-if="rolesUnavailable"
+      class="notice notice-info"
+      data-test="members-leave-unavailable"
+    >
+      {{ t("members.leaveUnavailable") }}
+    </p>
 
     <StateCodeSection :vault="vault" :members="members" />
 

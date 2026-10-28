@@ -22,7 +22,10 @@ const error = ref<UiError>();
 
 const deleted = computed(() => vaults.vaults.filter((v) => v.memberCount <= 1));
 const left = computed(() => vaults.vaults.filter((v) => v.memberCount > 1));
-/** Owner of a list with an open warning: nothing is signed there, no step-down. */
+/**
+ * Owner of a list with an open warning, or one that does not load: nothing
+ * is signed there, no step-down.
+ */
 const warned = computed(() =>
   vaults.vaults.filter(
     (v) =>
@@ -30,7 +33,8 @@ const warned = computed(() =>
       v.memberCount > 1 &&
       (v.roles.status === "rollback" ||
         v.roles.status === "fork" ||
-        v.roles.status === "invalid"),
+        v.roles.status === "invalid" ||
+        v.roles.status === "unavailable"),
   ),
 );
 const matches = computed(

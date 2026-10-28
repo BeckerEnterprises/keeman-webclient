@@ -99,6 +99,14 @@ export async function secondDevice(
   return { ...device, engine };
 }
 
+/** The head a roles warning or "take over" shows, as the app passes it back. */
+export function shownHead(
+  engine: SyncEngine,
+  id: string,
+): { head: { version: number; hash: string } | null } {
+  return { head: vault(engine, id).roles.head ?? null };
+}
+
 export function vault(engine: SyncEngine, id: string): VaultView {
   const view = engine.snapshot.vaults.find((v) => v.id === id);
   if (!view) throw new Error("vault missing");

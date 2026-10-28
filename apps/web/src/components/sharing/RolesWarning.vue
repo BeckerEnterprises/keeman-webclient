@@ -2,8 +2,9 @@
 /**
  * The signed owner list of a database: warnings about an older or
  * contradictory list with "understood", the one-time take-over of a list
- * this account has no anchor for, the hint to verify co-owners first, and
- * a server that names other owners than the signed list.
+ * this account has no anchor for, the hint to verify co-owners first, a
+ * list the server names but this device could not load, and a server that
+ * names other owners than the signed list.
  */
 import type { VaultView } from "@keeman/core";
 import { computed, ref } from "vue";
@@ -52,18 +53,30 @@ async function run(action: () => Promise<void>): Promise<void> {
     await action();
   } catch (caught) {
     error.value = toUiError(caught);
+    // The list changed since it was shown: show the new one.
+    if (error.value.key === "sync_roles_changed")
+      await vaults.engine().refresh();
   } finally {
     busy.value = false;
     asking.value = false;
   }
 }
 
+/** Only the head shown here is taken over. */
+function shown(): { head: { version: number; hash: string } | null } {
+  return { head: roles.value.head ?? null };
+}
+
 function acknowledge(): Promise<void> {
-  return run(() => vaults.engine().acknowledgeRoles(props.vault.id));
+  return run(() => vaults.engine().acknowledgeRoles(props.vault.id, shown()));
 }
 
 function take(): Promise<void> {
-  return run(() => vaults.engine().confirmRoles(props.vault.id));
+  return run(() => vaults.engine().confirmRoles(props.vault.id, shown()));
+}
+
+function retry(): Promise<void> {
+  return run(() => vaults.engine().refresh());
 }
 </script>
 
@@ -101,6 +114,23 @@ function take(): Promise<void> {
       @click="asking = true"
     >
       {{ t("common.understood") }}
+    </button>
+  </div>
+  <div
+    v-else-if="roles.status === 'unavailable'"
+    class="notice notice-error"
+    role="alert"
+    data-test="vault-roles-unavailable"
+  >
+    <p>{{ t("vaults.roles.unavailable") }}</p>
+    <button
+      type="button"
+      class="small"
+      :disabled="busy"
+      data-test="vault-roles-retry"
+      @click="retry"
+    >
+      {{ t("common.retry") }}
     </button>
   </div>
   <div

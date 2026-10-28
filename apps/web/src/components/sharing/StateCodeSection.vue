@@ -30,6 +30,8 @@ const hint = computed(() => {
       return t("stateCode.unanchored");
     case "unsupported":
       return t("stateCode.unsupported");
+    case "unavailable":
+      return t("stateCode.listUnavailable");
     default:
       return t("stateCode.warning");
   }

@@ -17,7 +17,7 @@ import {
 import { inMemorySyncMarks } from "../../src/sync/marks";
 import { FakeServer, type VaultRecord } from "../account/fake-server";
 import { tv } from "../../src/crypto/internal/test-values";
-import { ManualTimers, NAMES, PASSWORD, vault } from "./devices";
+import { ManualTimers, NAMES, PASSWORD, shownHead, vault } from "./devices";
 import { acceptShown } from "../sharing/people";
 
 import {
@@ -750,7 +750,7 @@ describe("understood at a warning", () => {
     expect(vault(b.engine, a.vaultId)).toMatchObject({ keyRollback: true });
     expect(vault(b.engine, a.vaultId).roles.status).toBe("rollback");
     await b.account.acknowledgeUserDataRollback();
-    await b.engine.acknowledgeRoles(a.vaultId);
+    await b.engine.acknowledgeRoles(a.vaultId, shownHead(b.engine, a.vaultId));
     await b.engine.acknowledgeRollback(a.vaultId);
     await b.engine.refresh();
     expect(b.account.userDataRollback).toBe(false);
