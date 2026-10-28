@@ -34,10 +34,16 @@ const account = {
   lock: vi.fn(() => {
     account.isUnlocked = false;
   }),
-  startSync: vi.fn(() => ({
+  startSync: vi.fn<
+    (options?: { onSessionEnded?: () => void }) => {
+      snapshot: object;
+      subscribe: () => () => undefined;
+    }
+  >(() => ({
     snapshot: {},
     subscribe: () => () => undefined,
   })),
+  deleteAccount: vi.fn<(password: string) => Promise<void>>(),
 };
 
 vi.mock("../services", () => ({
@@ -140,5 +146,23 @@ describe("session store", () => {
       SETTING_DEFAULTS.autoLockMinutes,
     );
     account.isUnlocked = false;
+  });
+
+  it("reports a deleted account, not an expired session, when the server ends it first", async () => {
+    const session = useSessionStore();
+    session.startSync();
+    const options = account.startSync.mock.lastCall?.[0];
+    // The server ends this session with the account, before the answer to
+    // the deletion arrives.
+    account.deleteAccount.mockImplementationOnce(() => {
+      const locks = account.lock.mock.calls.length;
+      options?.onSessionEnded?.();
+      // Like the core: a lock meanwhile ends the deletion with "locked".
+      return account.lock.mock.calls.length > locks
+        ? Promise.reject(Object.assign(new Error("locked"), { code: "locked" }))
+        : Promise.resolve();
+    });
+    await session.deleteAccount("correct horse battery staple");
+    expect(session.notice).toBe("accountDeleted");
   });
 });

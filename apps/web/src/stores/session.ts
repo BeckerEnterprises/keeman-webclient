@@ -95,6 +95,11 @@ let autoLock: AutoLock | undefined;
  * counts: its result is dropped.
  */
 let generation = 0;
+/**
+ * The own account is being deleted: the server ends this session with it,
+ * which is no expiry to report; the deletion finishes as such.
+ */
+let deleting = false;
 
 /** Throws `locked` if the tab locked or logged out since `started`. */
 function stillCurrent(started: number): void {
@@ -360,7 +365,7 @@ export const useSessionStore = defineStore("session", {
       const engine = account.startSync({
         socket: browserSocket,
         onSessionEnded: () => {
-          this.expire();
+          if (!deleting) this.expire();
         },
         onUserDataChanged: () => {
           this.refreshFromAccount();
@@ -522,7 +527,12 @@ export const useSessionStore = defineStore("session", {
     async deleteAccount(password: string): Promise<void> {
       const { account, tabs } = useServices();
       const userId = account.userId;
-      await account.deleteAccount(password);
+      deleting = true;
+      try {
+        await account.deleteAccount(password);
+      } finally {
+        deleting = false;
+      }
       if (userId) viewState.forget(userId);
       autoLock?.stop();
       useVaultsStore().detach();
