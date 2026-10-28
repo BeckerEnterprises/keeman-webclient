@@ -9,7 +9,6 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { formatDate } from "../../format";
 import { drawQrCode } from "../../qr-code";
-import { useServices } from "../../services";
 import StateCompareDialog from "./StateCompareDialog.vue";
 
 const props = defineProps<{
@@ -39,12 +38,15 @@ const hint = computed(() => {
 const last = computed(() => {
   const match = roles.value.lastMatch;
   if (!match) return undefined;
+  // Named by the contact only if verified with the member's keys.
   const partner = match.partner;
-  const name = partner
-    ? (useServices().account.contactEmail(partner.userId) ??
-      partner.email ??
-      t("entry.member", { id: partner.userId.slice(0, 8) }))
+  const plain = partner
+    ? (partner.email ?? t("entry.member", { id: partner.userId.slice(0, 8) }))
     : undefined;
+  const name =
+    partner && plain && !partner.verified
+      ? t("vaults.roles.ownerUnverified", { name: plain })
+      : plain;
   const date = formatDate(match.at);
   return {
     text: name

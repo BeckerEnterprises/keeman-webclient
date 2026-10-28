@@ -955,6 +955,19 @@ export function usedIcons(state: VaultState): Set<string> {
 }
 
 /**
+ * An address from the server as it may be shown: none with whitespace,
+ * commas, control or format characters (bidi overrides), which could make
+ * it read as several names or as someone else's.
+ */
+export function plausibleEmail(email: string | undefined): string | undefined {
+  return email !== undefined &&
+    email.includes("@") &&
+    !/[\s,\p{C}]/u.test(email)
+    ? email
+    : undefined;
+}
+
+/**
  * The roles chain for display. An owner is named by the contact only if the
  * contact is verified with the keys the chain names; a contact's address
  * next to a forged head would otherwise look trustworthy.
@@ -979,11 +992,20 @@ function rolesView(state: VaultState, contacts: readonly Contact[]): RolesView {
     : roles.deliveredOwners;
   const named = (userId: string): RoleOwnerView => {
     const member = members.find((m) => m.user_id === userId);
-    const entry = entries.find((o) => o.userId === userId);
+    // Not in the chain (a comparison partner): the keys of the member list.
+    const entry =
+      entries.find((o) => o.userId === userId) ??
+      (member?.signing_public_key
+        ? {
+            userId,
+            publicKey: member.public_key,
+            signingKey: member.signing_public_key,
+          }
+        : undefined);
     if (!entry)
       return {
         userId,
-        email: member?.email,
+        email: plausibleEmail(member?.email),
         verified: false,
         keysDiffer: false,
       };
@@ -1001,7 +1023,7 @@ function rolesView(state: VaultState, contacts: readonly Contact[]): RolesView {
       };
     return {
       userId,
-      email: member?.email,
+      email: plausibleEmail(member?.email),
       verified: false,
       keysDiffer:
         member !== undefined &&

@@ -13,6 +13,7 @@ import { toUiError, type UiError } from "../../errors";
 import { useVaultsStore } from "../../stores/vaults";
 import ErrorNotice from "../ErrorNotice.vue";
 import ConfirmDialog from "../dialogs/ConfirmDialog.vue";
+import RoleOwnerRow from "./RoleOwnerRow.vue";
 
 const props = defineProps<{ vault: VaultView }>();
 const { t } = useI18n();
@@ -32,22 +33,12 @@ const warning = computed(() =>
 
 /**
  * The contact's address where the core found it verified with the keys of
- * the list, else the server's marked as unchecked, else a short form of
- * the ID.
+ * the list, else the server's, else a short form of the ID. Each owner is
+ * a line of its own with its own status: in one sentence an address of the
+ * server could pass for a verified one.
  */
-function names(owners: VaultView["roles"]["owners"]): string {
-  return owners
-    .map((o) => {
-      const name = o.email ?? t("entry.member", { id: o.userId.slice(0, 8) });
-      if (o.verified) return name;
-      return t(
-        o.keysDiffer
-          ? "vaults.roles.ownerKeysDiffer"
-          : "vaults.roles.ownerUnverified",
-        { name },
-      );
-    })
-    .join(", ");
+function ownerName(owner: VaultView["roles"]["owners"][number]): string {
+  return owner.email ?? t("entry.member", { id: owner.userId.slice(0, 8) });
 }
 
 async function run(action: () => Promise<void>): Promise<void> {
@@ -104,12 +95,22 @@ function retry(): Promise<void> {
     <p v-else>{{ t(`vaults.roles.${warning}`) }}</p>
     <p>{{ t("vaults.roles.blocked") }}</p>
     <p v-if="roles.compared">{{ t("vaults.roles.otherDevices") }}</p>
-    <p v-if="roles.owners.length > 0" data-test="vault-roles-owners">
-      {{ t("vaults.roles.owners", { names: names(roles.owners) }) }}
-    </p>
-    <p v-if="roles.newOwners.length > 0" data-test="vault-roles-new">
-      {{ t("vaults.roles.newOwners", { names: names(roles.newOwners) }) }}
-    </p>
+    <div v-if="roles.owners.length > 0" data-test="vault-roles-owners">
+      <p>{{ t("vaults.roles.owners") }}</p>
+      <ul class="member-list">
+        <li v-for="owner in roles.owners" :key="owner.userId">
+          <RoleOwnerRow :owner="owner" :name="ownerName(owner)" />
+        </li>
+      </ul>
+    </div>
+    <div v-if="roles.newOwners.length > 0" data-test="vault-roles-new">
+      <p>{{ t("vaults.roles.newOwners") }}</p>
+      <ul class="member-list">
+        <li v-for="owner in roles.newOwners" :key="owner.userId">
+          <RoleOwnerRow :owner="owner" :name="ownerName(owner)" />
+        </li>
+      </ul>
+    </div>
     <button
       type="button"
       class="small"
@@ -142,9 +143,12 @@ function retry(): Promise<void> {
     class="notice notice-warning"
     data-test="vault-roles-unanchored"
   >
-    <p>
-      {{ t("vaults.roles.unanchored", { names: names(roles.owners) }) }}
-    </p>
+    <p>{{ t("vaults.roles.unanchored") }}</p>
+    <ul class="member-list" data-test="vault-roles-unanchored-owners">
+      <li v-for="owner in roles.owners" :key="owner.userId">
+        <RoleOwnerRow :owner="owner" :name="ownerName(owner)" />
+      </li>
+    </ul>
     <button
       type="button"
       class="small"

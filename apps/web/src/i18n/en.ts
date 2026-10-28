@@ -197,13 +197,13 @@ const en: typeof de = {
       invalid: "The owner list is contradictory.",
       blocked:
         "Until you confirm, the database is read-only, and this device accepts no new keys and changes no roles. This may be an error, a restore of the server from a backup, or an attack; ask another owner.",
-      owners: "Owners according to the server: {names}",
-      newOwners: "New since your last state: {names}",
+      owners: "Owners according to the server:",
+      newOwners: "New since your last state:",
       ackTitle: "Take over the owner list",
       ackText:
         "The delivered owner list becomes your new state. Take it over only if another owner confirms that it is right.",
       unanchored:
-        "This database now has a signed owner list: {names}. Take it over only if these are the owners.",
+        "This database now has a signed owner list. Take it over only if these are the owners:",
       take: "Take over",
       verifyOwners:
         "Compare the fingerprints of the other owners so that the owner list of this database can be signed.",
@@ -220,8 +220,6 @@ const en: typeof de = {
         "Overrules the member's code and takes over the delivered owner list. Do that only once you have made sure the code was mistyped or the list is right.",
       tree: "Warning about the owner list",
       ownerUnverified: "{name} (the server's information, not verified)",
-      ownerKeysDiffer:
-        "{name} (the server's information, not verified; the server names other keys)",
       unavailable:
         "The owner list could not be loaded. The database is read-only until it loads; until then this device accepts no new keys and changes no roles.",
     },
@@ -1404,6 +1402,8 @@ const en: typeof de = {
       "The sender is no owner of the owner list the invitation names.",
     sync_roles_warning_open:
       "A warning about the owner list of a database is open. Take it over with “Understood” first.",
+    sync_former_conflict:
+      "The owner list of this invitation contradicts what your account knew of this database before. Accept it only with “Accept anyway”.",
     sync_roles_unavailable:
       "The owner list of a database could not be loaded. Try again once the connection to the server works.",
     sync_unknown_owner:

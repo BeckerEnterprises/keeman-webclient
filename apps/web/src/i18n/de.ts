@@ -202,13 +202,13 @@ export default {
       invalid: "Die Eigentümerliste ist widersprüchlich.",
       blocked:
         "Bis du bestätigst, ist die Datenbank schreibgeschützt, und dieses Gerät nimmt keine neuen Schlüssel an und ändert keine Rollen. Das kann ein Fehler, die Wiederherstellung des Servers aus einem Backup oder ein Angriff sein; frage einen anderen Eigentümer.",
-      owners: "Eigentümer laut Server: {names}",
-      newOwners: "Neu gegenüber deinem letzten Stand: {names}",
+      owners: "Eigentümer laut Server:",
+      newOwners: "Neu gegenüber deinem letzten Stand:",
       ackTitle: "Eigentümerliste übernehmen",
       ackText:
         "Die gelieferte Eigentümerliste wird dein neuer Stand. Übernimm sie nur, wenn ein anderer Eigentümer bestätigt, dass sie stimmt.",
       unanchored:
-        "Diese Datenbank hat jetzt eine signierte Eigentümerliste: {names}. Übernimm sie nur, wenn das die Eigentümer sind.",
+        "Diese Datenbank hat jetzt eine signierte Eigentümerliste. Übernimm sie nur, wenn das die Eigentümer sind:",
       take: "Übernehmen",
       verifyOwners:
         "Vergleiche die Fingerprints der anderen Eigentümer, damit die Eigentümerliste dieser Datenbank signiert werden kann.",
@@ -225,8 +225,6 @@ export default {
         "Übergeht den Code des Mitglieds und übernimmt die gelieferte Eigentümerliste. Tu das nur, wenn ihr geklärt habt, dass der Code falsch eingegeben war oder die Liste stimmt.",
       tree: "Warnung zur Eigentümerliste",
       ownerUnverified: "{name} (Angabe des Servers, nicht geprüft)",
-      ownerKeysDiffer:
-        "{name} (Angabe des Servers, nicht geprüft; der Server nennt andere Schlüssel)",
       unavailable:
         "Die Eigentümerliste ließ sich nicht laden. Die Datenbank ist schreibgeschützt, bis sie sich laden lässt; bis dahin nimmt dieses Gerät keine neuen Schlüssel an und ändert keine Rollen.",
     },
@@ -1432,6 +1430,8 @@ export default {
       "Der Absender ist kein Eigentümer der Eigentümerliste, die seine Einladung nennt.",
     sync_roles_warning_open:
       "Für eine Datenbank ist eine Warnung zur Eigentümerliste offen. Übernimm sie zuerst mit „Verstanden“.",
+    sync_former_conflict:
+      "Die Eigentümerliste dieser Einladung widerspricht dem, was dein Konto früher von dieser Datenbank kannte. Nimm sie nur mit „Trotzdem annehmen“ an.",
     sync_roles_unavailable:
       "Die Eigentümerliste einer Datenbank ließ sich nicht laden. Versuche es erneut, sobald die Verbindung zum Server steht.",
     sync_unknown_owner:

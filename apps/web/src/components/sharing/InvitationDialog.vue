@@ -74,7 +74,12 @@ async function run(action: () => Promise<void>): Promise<void> {
     if (caught instanceof SyncError && caught.code === "roles_changed") {
       changed.value = true;
       await load();
-    } else error.value = toUiError(caught);
+    } else {
+      error.value = toUiError(caught);
+      // Show the contradiction the core found, with "accept anyway".
+      if (caught instanceof SyncError && caught.code === "former_conflict")
+        await load();
+    }
   } finally {
     busy.value = false;
   }
@@ -244,9 +249,11 @@ onMounted(() => void load());
       >
         {{ t("invitationDialog.decline") }}
       </button>
+      <!-- Focused first: "decline" acts without asking. -->
       <button
         type="button"
         class="secondary"
+        autofocus
         data-test="invitation-dialog-close"
         @click="emit('close')"
       >

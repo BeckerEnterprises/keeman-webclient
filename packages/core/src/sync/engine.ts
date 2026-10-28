@@ -185,6 +185,7 @@ import {
   type SyncContext,
 } from "./vault";
 import {
+  plausibleEmail,
   stateCodeView,
   usedIcons,
   VaultProjection,
@@ -1074,7 +1075,7 @@ export class SyncEngine {
     const user = await this.#publicUser(owner.userId);
     return {
       userId: owner.userId,
-      email: user?.email,
+      email: plausibleEmail(user?.email),
       verified: false,
       keysDiffer:
         user !== undefined &&

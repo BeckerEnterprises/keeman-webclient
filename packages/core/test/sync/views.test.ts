@@ -140,6 +140,17 @@ describe("owners of a roles warning", () => {
         keysDiffer: true,
       },
     ]);
+    // An address of the server that would read as two names or as someone
+    // else's is not shown at all.
+    for (const email of [
+      "alice@example.org, bob@example.org",
+      "eve@example.org\u202Egro.elpmaxe@ecila",
+      "eve example@example.org",
+    ]) {
+      s.members = [{ ...(s.members[0] as object), email } as never];
+      const other = new VaultProjection(VAULT).view(s, collator, []);
+      expect(other.roles.owners[1]?.email).toBeUndefined();
+    }
   });
 });
 

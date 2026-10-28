@@ -1,10 +1,13 @@
 <script setup lang="ts">
-/** A yes/no question; the confirming button may be dangerous. */
+/**
+ * A yes/no question; the confirming button may be dangerous, and then
+ * "cancel" has the focus, so that a stray Enter does nothing.
+ */
 import { onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import AppDialog from "../ui/AppDialog.vue";
 
-defineProps<{
+const props = defineProps<{
   title: string;
   text: string;
   confirm: string;
@@ -15,7 +18,11 @@ const emit = defineEmits<{ confirm: []; close: [] }>();
 const { t } = useI18n();
 
 onMounted(() =>
-  document.querySelector<HTMLButtonElement>("[data-test=confirm-yes]")?.focus(),
+  document
+    .querySelector<HTMLButtonElement>(
+      props.danger ? "[data-test=confirm-no]" : "[data-test=confirm-yes]",
+    )
+    ?.focus(),
 );
 </script>
 
