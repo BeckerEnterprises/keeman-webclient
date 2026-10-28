@@ -12,6 +12,9 @@ Signed roles need a server that reports `features.roles`; with an older server t
 
 ### Security
 
+- State code: each database shows a short code of its checked owner list (version and 26 characters, also as a QR code that names the database) for members to compare over a second channel. A member's code is checked against the statement of the same version only; above the own head the whole list is loaded again. If a code contradicts the list, or names a newer list the server does not deliver, and the user confirms the input, the account keeps it, in the account data and on the device: the database warns about the owner list and stays read-only until "Understood". A server that hides a rotation from a whole account, or a former owner who forks the list to invite someone into an old state, is found this way from either side.
+- Every warning about the owner list now makes the database read-only, and nothing is signed on such a list; leaving and deleting the account wait for "Understood".
+- Accepting an invitation opens a dialog with the owners of the list the invitation names and the future state code, with the advice to compare it with a member other than the inviter. Accepting is bound to the list the dialog showed and refused when a member's code contradicts it, the invitation does not fit the signed list, or its sender is not an owner of the list it names.
 - Freshness on new and long-unused devices: each device signs, with the account's signing key, which state of a database and of the account data it confirmed and when. A device whose own confirmation is older than the period (7 days by default, 1–90 in the settings) needs such an attestation of its own account; otherwise the database stays read-only with the warning "No device of your account has confirmed the state since …", takes no new key and allows no invitation, promotion or key renewal until the device is paired or the user confirms. Own attestations also act as floors: an older key version, manifest root or owner list than one ever attested is a rollback. Only the own account's attestations count, checked with the locally derived key; anything else is ignored.
 - A device signs only states without warnings, and never an owner list it has not taken over. "Understood" at a rollback, manifest or owner list warning takes the delivered state as confirmed and replaces an own attestation that contradicts it.
 - An invitation confirms the new member's state only when its sender is an owner of the statement the box names; a pending key never confirms a state.
@@ -34,6 +37,14 @@ Signed roles need a server that reports `features.roles`; with an older server t
 
 - The main view no longer cancels a navigation started while the first database was still loading.
 - Every save also writes the manifest. Saves of two devices at the same time therefore always meet; the second is planned again without a notice, and only real conflicts count towards the three attempts.
+- Reading a QR code from an image (pairing, state code) uses one input for text, file, drop and paste.
+
+### Fixed
+
+- Reloading an owner list after a conflict now keeps the points of own attestations and pairings; a list that cannot be loaded is still checked against new points up to its last head.
+- On a server that stops delivering owner lists, an owner's device kept its last checked list instead of warning, and "Understood" took over that list instead of an empty one; it also works when the list was never checked.
+- Merging the account data after a conflict no longer undoes a removed owner list anchor.
+- Keys handed on with an invitation or rotation are dated with the device clock the sync uses.
 
 ## [0.1.1] - 2026-10-26
 
