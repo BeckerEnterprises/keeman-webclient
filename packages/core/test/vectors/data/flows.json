@@ -491,7 +491,9 @@
             "data": "AUAjFAe5zF5jrNKI3BhRKkabQoX3f2JNIsYJc4UGygq0Ya8wlFP3xE5B5NdLMHXraWjp_D9hoR-QJWhsVZTF1puLj0kn3G9DME3vYVIQmROFsnPhqHAMAAv3eEP9dl6HjU6qwLD1UE3ykwf0GPvZ75LGpXCfQBThjSzaSOkiJb0gyNxNjRXF8foYLeurjI1GKD7XttRNYT-7JwQ1c8TcwrMAb9qRI5LVgQd-ePqX-_dg9hGer8sgbqJiHyMAxgy2FWaklCnk-nX2eRS9aQVngP5RSbUSxyoY8de3TOsrk2AJcimyomGZfnUzg3OhpiMWoP50soWXU_kjDfKfwFro-fqv3Wmcs96Oxbp1DkrQXYd-RACpbAL8RDCUvD4Q313WrwxBpjUDQjH1"
           }
         ],
-        "drop_object_ids": ["0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5c03"],
+        "drop_object_ids": [
+          "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5c03"
+        ],
         "randomness": {
           "bytes": {
             "vault_key": "2995ac34a1472a894f1839610c72d6b3a03c7d6f23d3404aaec0031fed162ec0",
@@ -840,7 +842,9 @@
             "data": "AZ61_YGtRkSxnwhGZjMXgEFL-Et_zG0wsr8CtqGc55sOczArnlITLLnUi7Hw7RXNMHlp6Wo0d-WszE5pSDaet0EcB24F3P-FLzfCSkPJP_Rc6LgGASy4mSUkNvBPD2xlJQASeutjM5BCThdJiq0eDhpWKKY4VKtSJiqKheeeVe7S-6bGbM_LXL9MkcsrIpsxYDyupWtv-rcfQfblGqTWS-T86hwbiBbpnSXuVw-Pj9JCaWa4XwQZcfI-UMFsTEzJ6IMvXL5gqW9aluY2Tc5v1KBW96RrgNLdZ81gfyySi_vc1F4uzweFMDsQkmy35o8BbvBmOFHlcO-CMcW5AjqgnQVjuuqDTYK7Sck_DIO4up1uuyQH1kwVSKnPIPvo_44I4iz_-CAKBNBT"
           }
         ],
-        "drop_object_ids": ["0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5c03"],
+        "drop_object_ids": [
+          "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5c03"
+        ],
         "manifest_floor": 0,
         "randomness": {
           "bytes": {

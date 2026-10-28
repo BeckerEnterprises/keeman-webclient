@@ -13,8 +13,14 @@
         "user_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
         "time": "2026-10-27T08:42:00.000Z",
         "key_version": 3,
-        "manifest": [57, "J-r3VpfP1DOX0mWFCsVv1WMCLdjpJK9EYjA-XeofvDk"],
-        "roles": [4, "S3C2p86C5Dvy-SIapO7GPQfblz-a5dsmYOWha3J_omI"]
+        "manifest": [
+          57,
+          "J-r3VpfP1DOX0mWFCsVv1WMCLdjpJK9EYjA-XeofvDk"
+        ],
+        "roles": [
+          4,
+          "S3C2p86C5Dvy-SIapO7GPQfblz-a5dsmYOWha3J_omI"
+        ]
       },
       "signer_user_key_hex": "8ce506808278ed3c331a3002da04ce301cf4ef7bda7d7449900a3bf7300c8256",
       "expected": {
@@ -69,8 +75,14 @@
           "user_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
           "time": "2026-10-27T08:42:00.000Z",
           "key_version": 3,
-          "manifest": [57, "J-r3VpfP1DOX0mWFCsVv1WMCLdjpJK9EYjA-XeofvDk"],
-          "roles": [4, "S3C2p86C5Dvy-SIapO7GPQfblz-a5dsmYOWha3J_omI"]
+          "manifest": [
+            57,
+            "J-r3VpfP1DOX0mWFCsVv1WMCLdjpJK9EYjA-XeofvDk"
+          ],
+          "roles": [
+            4,
+            "S3C2p86C5Dvy-SIapO7GPQfblz-a5dsmYOWha3J_omI"
+          ]
         }
       }
     },
@@ -297,8 +309,14 @@
           "user_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
           "time": "2026-10-27T08:42:00.000Z",
           "key_version": 3,
-          "manifest": [57, "J-r3VpfP1DOX0mWFCsVv1WMCLdjpJK9EYjA-XeofvDk"],
-          "roles": [4, "S3C2p86C5Dvy-SIapO7GPQfblz-a5dsmYOWha3J_omI"]
+          "manifest": [
+            57,
+            "J-r3VpfP1DOX0mWFCsVv1WMCLdjpJK9EYjA-XeofvDk"
+          ],
+          "roles": [
+            4,
+            "S3C2p86C5Dvy-SIapO7GPQfblz-a5dsmYOWha3J_omI"
+          ]
         }
       }
     },
