@@ -58,6 +58,8 @@ export interface UserMarks {
   uf?: number;
   /** The confirmation period in days that applied at `uf`. */
   fd?: number;
+  /** Whether strict mode applied at `uf`. */
+  fs?: boolean;
   vaults: Record<string, VaultMarks>;
 }
 
@@ -164,7 +166,8 @@ function maxDefined(
 /**
  * Per-entry maximum of two mark sets. Owners are not a maximum: those of
  * `a` win, so stored owners come before the ones in memory. The period
- * `fd` goes with the later `uf`, so it can also go down.
+ * `fd` and strict mode `fs` go with the later `uf`, so they can also go
+ * down; where the later one has none, the other's stays.
  */
 export function mergeMarks(a: UserMarks, b: UserMarks): UserMarks {
   const result: UserMarks = { vaults: {} };
@@ -176,8 +179,12 @@ export function mergeMarks(a: UserMarks, b: UserMarks): UserMarks {
   if (a.uf !== undefined || b.uf !== undefined) {
     const later = b.uf !== undefined && (a.uf === undefined || b.uf > a.uf);
     const source = later ? b : a;
+    const other = later ? a : b;
     result.uf = source.uf;
-    if (source.fd !== undefined) result.fd = source.fd;
+    const fd = source.fd ?? other.fd;
+    if (fd !== undefined) result.fd = fd;
+    const fs = source.fs ?? other.fs;
+    if (fs !== undefined) result.fs = fs;
   }
   for (const id of new Set([
     ...Object.keys(a.vaults),
@@ -356,6 +363,7 @@ const StoredSchema = v.object({
       ud: v.optional(v.tuple([Counter, Counter])),
       uf: v.optional(Counter),
       fd: v.optional(v.pipe(Counter, v.minValue(1), v.maxValue(90))),
+      fs: v.optional(v.boolean()),
       vaults: v.record(
         Id,
         v.object({
@@ -420,6 +428,7 @@ export function storedSyncMarks(store: MarksStore, lock: MarksLock): SyncMarks {
             ...(marks.ud ? { ud: marks.ud } : {}),
             ...(marks.uf !== undefined ? { uf: marks.uf } : {}),
             ...(marks.fd !== undefined ? { fd: marks.fd } : {}),
+            ...(marks.fs !== undefined ? { fs: marks.fs } : {}),
             vaults: marks.vaults,
           },
         ]),

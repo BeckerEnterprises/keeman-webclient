@@ -74,6 +74,19 @@ describe("user_data defaults and validation", () => {
     });
   });
 
+  it("reads strict mode only as a boolean", () => {
+    const read = (value: unknown) =>
+      effectiveSettings({
+        schema: 1,
+        seq: 1,
+        settings: { requireConfirmation: value },
+      }).requireConfirmation;
+    expect(SETTING_DEFAULTS.requireConfirmation).toBe(false);
+    expect(read(true)).toBe(true);
+    expect(read(false)).toBe(false);
+    for (const value of [1, "true", null]) expect(read(value)).toBe(false);
+  });
+
   it("reads search and generator settings, the generator per field", () => {
     const settings = effectiveSettings({
       schema: 1,

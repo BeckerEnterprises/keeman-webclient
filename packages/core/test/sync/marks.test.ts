@@ -429,3 +429,43 @@ describe("comparison points", () => {
     ).toEqual([[2, A, 3]]);
   });
 });
+
+describe("confirmation of user_data", () => {
+  const USER = U(1);
+
+  it("keeps period and strict mode with the later uf, the other's where it has none", () => {
+    expect(
+      mergeMarks(
+        { uf: 1, fd: 7, fs: true, vaults: {} },
+        { uf: 2, fd: 3, fs: false, vaults: {} },
+      ),
+    ).toEqual({ uf: 2, fd: 3, fs: false, vaults: {} });
+    expect(
+      mergeMarks({ uf: 1, fd: 7, fs: true, vaults: {} }, { uf: 2, vaults: {} }),
+    ).toEqual({ uf: 2, fd: 7, fs: true, vaults: {} });
+    expect(
+      mergeMarks(
+        { uf: 3, fs: true, vaults: {} },
+        { uf: 2, fs: false, vaults: {} },
+      ),
+    ).toEqual({ uf: 3, fs: true, vaults: {} });
+  });
+
+  it("stores strict mode and drops marks where it is no boolean", async () => {
+    const store = memoryStore();
+    const marks = storedSyncMarks(store, lock);
+    await marks.raise(USER, { uf: 5, fd: 7, fs: true, vaults: {} });
+    expect(await storedSyncMarks(store, lock).read(USER)).toMatchObject({
+      uf: 5,
+      fd: 7,
+      fs: true,
+    });
+    store.text = JSON.stringify({
+      v: 1,
+      users: { [USER]: { uf: 5, fs: 1, vaults: {} } },
+    });
+    expect(await storedSyncMarks(store, lock).read(USER)).toEqual({
+      vaults: {},
+    });
+  });
+});

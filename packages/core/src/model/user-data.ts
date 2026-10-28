@@ -36,6 +36,8 @@ export interface Settings {
   passwordGenerator: GeneratorOptions;
   /** Days within which a device of the account must have confirmed a state. */
   freshnessDays: number;
+  /** Strict mode: attestations of other devices confirm nothing. */
+  requireConfirmation: boolean;
 }
 
 export type SettingKey = keyof Settings;
@@ -50,6 +52,7 @@ export const SETTING_DEFAULTS: Settings = {
   showTotpColumn: true,
   passwordGenerator: GENERATOR_DEFAULTS,
   freshnessDays: 7,
+  requireConfirmation: false,
 };
 
 /** `undefined` removes the setting, i.e. returns to the default. */
@@ -184,6 +187,7 @@ const SETTING_RULES: { [K in SettingKey]: (value: unknown) => boolean } = {
   showTotpColumn: (value) => typeof value === "boolean",
   passwordGenerator: isGeneratorOptions,
   freshnessDays: (value) => isInteger(value, 1, 90),
+  requireConfirmation: (value) => typeof value === "boolean",
 };
 
 function settingsOf(raw: JsonObject): JsonObject {
@@ -268,6 +272,7 @@ export function effectiveSettings(raw: JsonObject): Settings {
     showTotpColumn: read("showTotpColumn"),
     passwordGenerator: generatorOptionsOf(own(stored, "passwordGenerator")),
     freshnessDays: read("freshnessDays"),
+    requireConfirmation: read("requireConfirmation"),
   };
 }
 
