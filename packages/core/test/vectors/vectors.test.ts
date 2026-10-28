@@ -819,6 +819,9 @@ describe("test vectors", () => {
         );
         expect(toHex(signature), c.id).toBe(c.expected.signature_hex);
         expect(toHex(pair.publicKey)).toBe(c.public_key_hex);
+      } else if (effective.signature_hex !== undefined) {
+        // A signature built for the case: small-order R or public key.
+        signature = fromHex(effective.signature_hex);
       } else {
         signature = fromHex(base.expected.signature_hex);
         if (c.mutations) signature = mutate(signature, c.mutations);
