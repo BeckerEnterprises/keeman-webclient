@@ -256,13 +256,21 @@ function copyVault(marks: VaultMarks): VaultMarks {
   };
 }
 
+/**
+ * A vault entry written before any sync: confirmed never, so that it is
+ * not taken for marks from before confirmation times.
+ */
+function newVaultMarks(): VaultMarks {
+  return { rev: 0, obj: {}, ft: 0 };
+}
+
 function withComparisons(
   marks: UserMarks,
   vaultId: string,
   cp: readonly ComparisonMark[],
 ): UserMarks {
   const next = copy(marks);
-  const vault = { ...(next.vaults[vaultId] ?? { rev: 0, obj: {} }) };
+  const vault = { ...(next.vaults[vaultId] ?? newVaultMarks()) };
   if (cp.length > 0)
     vault.cp = cp.map((m): ComparisonMark => [m[0], m[1], m[2]]);
   else Reflect.deleteProperty(vault, "cp");
@@ -276,7 +284,7 @@ function withRoles(
   rl: [number, string] | undefined,
 ): UserMarks {
   const next = copy(marks);
-  const vault = { ...(next.vaults[vaultId] ?? { rev: 0, obj: {} }) };
+  const vault = { ...(next.vaults[vaultId] ?? newVaultMarks()) };
   if (rl) vault.rl = [rl[0], rl[1]];
   else Reflect.deleteProperty(vault, "rl");
   next.vaults[vaultId] = vault;
@@ -290,7 +298,7 @@ function withOwners(
 ): UserMarks {
   const next = copy(marks);
   next.vaults[vaultId] = {
-    ...(next.vaults[vaultId] ?? { rev: 0, obj: {} }),
+    ...(next.vaults[vaultId] ?? newVaultMarks()),
     ow: [...owners],
   };
   return next;

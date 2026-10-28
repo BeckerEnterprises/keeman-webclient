@@ -17,7 +17,14 @@ import {
 import { inMemorySyncMarks } from "../../src/sync/marks";
 import { FakeServer, type VaultRecord } from "../account/fake-server";
 import { tv } from "../../src/crypto/internal/test-values";
-import { ManualTimers, NAMES, PASSWORD, shownHead, vault } from "./devices";
+import {
+  EMAIL,
+  ManualTimers,
+  NAMES,
+  PASSWORD,
+  shownHead,
+  vault,
+} from "./devices";
 import { acceptShown } from "../sharing/people";
 
 import {
@@ -529,6 +536,77 @@ describe("marks from before confirmation times", () => {
     const seen = await marks.read(userId);
     expect(seen.vaults[a.vaultId]?.ft).toBe(a.clock.t);
     expect(seen.uf).toBe(a.clock.t);
+  });
+
+  it("are not made up by a first sync the server lets fail", async () => {
+    const a = await first();
+    const userId = a.account.userId ?? "";
+    a.account.lock();
+    withhold(a.server);
+    // The first unlock of a new device writes owners and the roles floor,
+    // then the server lets the sync fail.
+    let failing = true;
+    a.server.loseResponses = (path) =>
+      failing && path === `/v1/vaults/${a.vaultId}/changes`;
+    const marks = inMemorySyncMarks();
+    const b = await another(a.server, a.clock, marks);
+    const seen = (await marks.read(userId)).vaults[a.vaultId];
+    expect(seen).toMatchObject({ rev: 0, obj: {} });
+    // The next unlock syncs: nothing confirms it, in strict mode neither.
+    failing = false;
+    b.account.lock();
+    await b.account.unlock(PASSWORD);
+    const engine = b.account.startSync();
+    await engine.refresh();
+    expect(vault(engine, a.vaultId).freshness).toBe("stale");
+  });
+
+  it("are not made up by a rolled-back user_data", async () => {
+    const a = await first();
+    const userId = a.account.userId ?? "";
+    const user = a.server.userByEmail(EMAIL);
+    if (!user) throw new Error("no user");
+    const old = { ...user.user_data };
+    await a.account.updateSettings({ autoLockMinutes: 5 });
+    await settle();
+    a.account.lock();
+    const current = { ...user.user_data };
+    // A new device gets the older copy next to the newer attestation.
+    user.user_data = { ...old };
+    const marks = inMemorySyncMarks();
+    const b = await another(a.server, a.clock, marks);
+    expect(b.account.userDataRollback).toBe(true);
+    expect((await marks.read(userId)).uf).toBe(0);
+    b.account.lock();
+    // Later the current copy, but no attestation that would confirm it.
+    user.user_data = current;
+    withhold(a.server);
+    await b.account.unlock(PASSWORD);
+    expect(b.account.userDataStale).toBe(true);
+  });
+});
+
+describe("resetting corrupt user_data", () => {
+  it("writes above the floor and confirms it", async () => {
+    const a = await first();
+    const user = a.server.userByEmail(EMAIL);
+    if (!user) throw new Error("no user");
+    await a.account.updateSettings({ autoLockMinutes: 5 });
+    await settle();
+    user.user_data = {
+      revision: user.user_data.revision + 1,
+      data: user.user_data.data.slice(0, -8) + "AAAAAAAA",
+    };
+    await a.account.reloadUserData();
+    expect(a.account.userDataState?.status).toBe("corrupt");
+    await a.account.resetUserData("de");
+    // Neither this device nor another one takes it for a rollback.
+    await a.account.reloadUserData();
+    expect(a.account.userDataRollback).toBe(false);
+    expect(a.account.userDataStale).toBe(false);
+    await settle();
+    const b = await another(a.server, a.clock);
+    expect(b.account.userDataRollback).toBe(false);
   });
 });
 

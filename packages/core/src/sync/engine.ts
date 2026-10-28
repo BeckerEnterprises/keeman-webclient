@@ -2935,7 +2935,13 @@ export class SyncEngine {
       if (!state) {
         state = new VaultState(summary);
         // Marks from before confirmation times: the first check confirms.
-        state.transition = seen !== undefined && seen.ft === undefined;
+        // Only marks of a synced state count as such; owners, the roles
+        // floor or comparison points alone are written before any sync,
+        // and a server could keep that sync failing.
+        state.transition =
+          seen !== undefined &&
+          seen.ft === undefined &&
+          (seen.rev > 0 || Object.keys(seen.obj).length > 0);
         this.#states.set(id, state);
       }
       state.confirmedAt = Math.max(state.confirmedAt, seen?.ft ?? 0);

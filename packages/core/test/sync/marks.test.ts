@@ -220,15 +220,18 @@ describe("stored marks", () => {
     const user = U(1);
     await marks.rememberOwners(user, VAULT, [U(2), U(3)]);
     await marks.raise(user, { vaults: { [VAULT]: { rev: 5, obj: {} } } });
+    // Written before any sync: confirmed never, no marks from before
+    // confirmation times.
     expect((await marks.read(user)).vaults[VAULT]).toEqual({
       rev: 5,
       ow: [U(2), U(3)],
+      ft: 0,
       obj: {},
     });
     // Replaced, not merged: a demoted owner is gone.
     await marks.rememberOwners(user, VAULT, [U(2)]);
     expect(parse(store.text).users[user]).toEqual({
-      vaults: { [VAULT]: { rev: 5, ow: [U(2)], obj: {} } },
+      vaults: { [VAULT]: { rev: 5, ow: [U(2)], ft: 0, obj: {} } },
     });
     // Another tab stored newer owners: stored ones come before memory.
     store.text = JSON.stringify({
