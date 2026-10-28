@@ -592,7 +592,9 @@ export class SyncEngine {
       this.#stopped ||
       state.manifest.status !== "unverified" ||
       this.#manifestTried.has(state.id) ||
-      !vaultWritable(state)
+      !vaultWritable(state) ||
+      // It would commit to a rolled-back object as delivered.
+      this.#rollbackOpen(state)
     )
       return;
     this.#manifestTried.add(state.id);

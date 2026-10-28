@@ -333,6 +333,29 @@ describe("vault manifest: writing", () => {
     expect(vault(a.engine, a.vaultId).manifest).toBe("verified");
   });
 
+  it("creates no manifest from a state with a rolled-back object", async () => {
+    const server = new FakeServer();
+    server.manifestEnabled = false;
+    const a = await firstDevice(server);
+    const id = await group(a.engine, a.vaultId, "Alt");
+    const old = { ...stored(server, a.vaultId, id) };
+    await a.engine.renameGroup(a.vaultId, id, "Neu");
+    server.manifestEnabled = true;
+    // The server plays back the older group to a device that knows better;
+    // a manifest made now would commit to it.
+    server.tamperChanges = (page) => {
+      page.objects = page.objects.map((o) =>
+        o.id === id ? { ...old, revision: page.vault_revision } : o,
+      );
+    };
+    const b = await secondDevice(server, undefined, a.marks);
+    expect(vault(b.engine, a.vaultId)).toMatchObject({
+      manifest: "unverified",
+      rollback: true,
+    });
+    expect(manifestObjects(server, a.vaultId)).toEqual([]);
+  });
+
   it("an older server without the manifest keeps working", async () => {
     const server = new FakeServer();
     server.manifestEnabled = false;
