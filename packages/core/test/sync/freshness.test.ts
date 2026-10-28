@@ -297,6 +297,22 @@ describe("a new device", () => {
     await b.account.updateSettings({ autoLockMinutes: 5 });
   });
 
+  it("is not confirmed by a matching state code", async () => {
+    const a = await first();
+    withhold(a.server);
+    const b = await another(a.server, a.clock);
+    const code = vault(a.engine, a.vaultId).roles.code;
+    if (!code) throw new Error("no state code");
+    expect(
+      (await b.engine.compareStateCode(a.vaultId, code.display)).result,
+    ).toBe("match");
+    await b.engine.refresh();
+    expect(vault(b.engine, a.vaultId)).toMatchObject({
+      freshness: "stale",
+      writable: false,
+    });
+  });
+
   it("does not count an attestation older than the period", async () => {
     const a = await first();
     a.account.lock();
