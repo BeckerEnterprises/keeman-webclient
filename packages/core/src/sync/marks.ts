@@ -142,6 +142,24 @@ function higherRoles(
 }
 
 /** Comparison points of both, each once with the higher `seq`. */
+/** At most this many comparison points per vault on the device. */
+export const MARKS_MAX_COMPARISONS = 64;
+
+/**
+ * At most the limit: points already written to user_data give way first,
+ * the oldest of them first; unwritten ones stay, they exist nowhere else.
+ */
+function cappedComparisons(points: ComparisonMark[]): ComparisonMark[] {
+  if (points.length <= MARKS_MAX_COMPARISONS) return points;
+  const drop = new Set(
+    points
+      .filter((m) => m[2] > 0)
+      .sort((x, y) => x[2] - y[2])
+      .slice(0, points.length - MARKS_MAX_COMPARISONS),
+  );
+  return points.filter((m) => !drop.has(m)).slice(-MARKS_MAX_COMPARISONS);
+}
+
 function unitedComparisons(
   a: readonly ComparisonMark[] | undefined,
   b: readonly ComparisonMark[] | undefined,
@@ -153,7 +171,7 @@ function unitedComparisons(
     if (known) known[2] = Math.max(known[2], seq);
     else result.push([version, code, seq]);
   }
-  return result;
+  return cappedComparisons(result);
 }
 
 function maxDefined(
@@ -272,7 +290,9 @@ function withComparisons(
   const next = copy(marks);
   const vault = { ...(next.vaults[vaultId] ?? newVaultMarks()) };
   if (cp.length > 0)
-    vault.cp = cp.map((m): ComparisonMark => [m[0], m[1], m[2]]);
+    vault.cp = cappedComparisons(
+      cp.map((m): ComparisonMark => [m[0], m[1], m[2]]),
+    );
   else Reflect.deleteProperty(vault, "cp");
   next.vaults[vaultId] = vault;
   return next;
@@ -363,47 +383,70 @@ const ObjectMark = v.pipe(
   v.check((n) => n !== 0),
 );
 
+const UserFields = {
+  ud: v.tuple([Counter, Counter]),
+  uf: Counter,
+  fd: v.pipe(Counter, v.minValue(1), v.maxValue(90)),
+  fs: v.boolean(),
+} as const;
+
+const VaultSchema = v.object({
+  rev: Counter,
+  kv: v.optional(Counter),
+  ow: v.optional(v.array(Id)),
+  mf: v.optional(Counter),
+  rl: v.optional(
+    v.tuple([
+      v.pipe(Counter, v.minValue(1)),
+      v.pipe(v.string(), v.regex(/^[A-Za-z0-9_-]{43}$/)),
+    ]),
+  ),
+  ft: v.optional(Counter),
+  cp: v.optional(
+    v.pipe(
+      v.array(
+        v.tuple([
+          v.pipe(Counter, v.minValue(1)),
+          v.pipe(v.string(), v.regex(/^[A-Z2-7]{25}[AEIMQUY4]$/)),
+          Counter,
+        ]),
+      ),
+      v.maxLength(MARKS_MAX_COMPARISONS),
+    ),
+  ),
+  obj: v.record(Id, ObjectMark),
+});
+
 const StoredSchema = v.object({
   v: v.literal(1),
-  users: v.record(
-    Id,
-    v.object({
-      ud: v.optional(v.tuple([Counter, Counter])),
-      uf: v.optional(Counter),
-      fd: v.optional(v.pipe(Counter, v.minValue(1), v.maxValue(90))),
-      fs: v.optional(v.boolean()),
-      vaults: v.record(
-        Id,
-        v.object({
-          rev: Counter,
-          kv: v.optional(Counter),
-          ow: v.optional(v.array(Id)),
-          mf: v.optional(Counter),
-          rl: v.optional(
-            v.tuple([
-              v.pipe(Counter, v.minValue(1)),
-              v.pipe(v.string(), v.regex(/^[A-Za-z0-9_-]{43}$/)),
-            ]),
-          ),
-          ft: v.optional(Counter),
-          cp: v.optional(
-            v.pipe(
-              v.array(
-                v.tuple([
-                  v.pipe(Counter, v.minValue(1)),
-                  v.pipe(v.string(), v.regex(/^[A-Z2-7]{25}[AEIMQUY4]$/)),
-                  Counter,
-                ]),
-              ),
-              v.maxLength(64),
-            ),
-          ),
-          obj: v.record(Id, ObjectMark),
-        }),
-      ),
-    }),
-  ),
+  users: v.record(Id, v.looseObject({ vaults: v.record(Id, v.unknown()) })),
 });
+
+/**
+ * The valid parts of one account's stored marks: a broken value drops only
+ * its field or its vault, not the marks of every account (the server could
+ * otherwise plant one to wipe the rollback detection).
+ */
+function validUserMarks(stored: {
+  vaults: Record<string, unknown>;
+  [key: string]: unknown;
+}): UserMarks {
+  const marks: UserMarks = { vaults: {} };
+  for (const key of ["ud", "uf", "fd", "fs"] as const) {
+    if (stored[key] === undefined) continue;
+    const field = v.safeParse(UserFields[key], stored[key]);
+    if (field.success) Object.assign(marks, { [key]: field.output });
+    // A broken confirmation time is "never", not marks from before
+    // confirmation times; a broken strict floor stays strict.
+    else if (key === "uf") marks.uf = 0;
+    else if (key === "fs") marks.fs = true;
+  }
+  for (const [id, vault] of Object.entries(stored.vaults)) {
+    const parsed = v.safeParse(VaultSchema, vault);
+    if (parsed.success) marks.vaults[id] = parsed.output;
+  }
+  return marks;
+}
 
 export interface MarksStore {
   /** The stored text, or `null`. */
@@ -432,13 +475,7 @@ export function storedSyncMarks(store: MarksStore, lock: MarksLock): SyncMarks {
       return new Map(
         Object.entries(parsed.users).map(([id, marks]): [string, UserMarks] => [
           id,
-          {
-            ...(marks.ud ? { ud: marks.ud } : {}),
-            ...(marks.uf !== undefined ? { uf: marks.uf } : {}),
-            ...(marks.fd !== undefined ? { fd: marks.fd } : {}),
-            ...(marks.fs !== undefined ? { fs: marks.fs } : {}),
-            vaults: marks.vaults,
-          },
+          validUserMarks(marks),
         ]),
       );
     } catch {

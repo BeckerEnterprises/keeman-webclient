@@ -454,7 +454,7 @@ describe("confirmation of user_data", () => {
     ).toEqual({ uf: 3, fs: true, vaults: {} });
   });
 
-  it("stores strict mode and drops marks where it is no boolean", async () => {
+  it("stores strict mode and stays strict where it is no boolean", async () => {
     const store = memoryStore();
     const marks = storedSyncMarks(store, lock);
     await marks.raise(USER, { uf: 5, fd: 7, fs: true, vaults: {} });
@@ -468,7 +468,53 @@ describe("confirmation of user_data", () => {
       users: { [USER]: { uf: 5, fs: 1, vaults: {} } },
     });
     expect(await storedSyncMarks(store, lock).read(USER)).toEqual({
+      uf: 5,
+      fs: true,
       vaults: {},
     });
+  });
+
+  it("drops only the broken part of the stored marks", async () => {
+    const store = memoryStore();
+    const other = U(9);
+    store.text = JSON.stringify({
+      v: 1,
+      users: {
+        [USER]: {
+          ud: [3, 4],
+          uf: "never",
+          vaults: {
+            [VAULT]: { rev: 2, obj: {}, kv: 1e20 },
+            [U(8)]: { rev: 5, obj: {}, ft: 1 },
+          },
+        },
+        [other]: { vaults: { [VAULT]: { rev: 7, obj: {} } } },
+      },
+    });
+    const marks = storedSyncMarks(store, lock);
+    // A broken confirmation time counts as never, not as marks from before
+    // confirmation times; the other vault and account stay.
+    expect(await marks.read(USER)).toEqual({
+      ud: [3, 4],
+      uf: 0,
+      vaults: { [U(8)]: { rev: 5, obj: {}, ft: 1 } },
+    });
+    expect((await marks.read(other)).vaults[VAULT]?.rev).toBe(7);
+  });
+
+  it("keeps at most 64 comparison points per vault, unwritten ones first", async () => {
+    const marks = inMemorySyncMarks();
+    const code = (i: number) =>
+      `${"A".repeat(24)}${"BCDEFGHIJKLMNOPQRSTUVWXYZ234567"[Math.floor(i / 4) % 31] ?? "B"}${"AEIMQUY4"[i % 4] ?? "A"}`;
+    const points = Array.from(
+      { length: 70 },
+      (_, i): [number, string, number] => [i + 1, code(i), i < 10 ? 0 : i],
+    );
+    await marks.replaceComparisons(USER, VAULT, points);
+    const kept = (await marks.read(USER)).vaults[VAULT]?.cp ?? [];
+    expect(kept).toHaveLength(64);
+    // The unwritten ones exist nowhere else; the oldest written ones go.
+    expect(kept.filter((p) => p[2] === 0)).toHaveLength(10);
+    expect(kept.some((p) => p[2] === 10)).toBe(false);
   });
 });

@@ -10,8 +10,9 @@ const base64url = (length: number) =>
 
 const Uuid = v.pipe(v.string(), v.regex(UUID_PATTERN));
 const Token = base64url(43);
-const PositiveInteger = v.pipe(v.number(), v.integer(), v.minValue(1));
-const Count = v.pipe(v.number(), v.integer(), v.minValue(0));
+// Safe integers only: counters from the server end up in the device's marks.
+const PositiveInteger = v.pipe(v.number(), v.safeInteger(), v.minValue(1));
+const Count = v.pipe(v.number(), v.safeInteger(), v.minValue(0));
 
 export const TimeSchema = v.object({
   now_ms: v.pipe(v.number(), v.integer(), v.minValue(0)),
