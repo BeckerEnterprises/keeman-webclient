@@ -106,6 +106,14 @@ import {
   type PairingContent,
 } from "../../src/crypto/pairing";
 import {
+  compareStateCode,
+  comparisonPointsStatus,
+  formatStateCode,
+  parseStateCode,
+  stateCodeOf,
+  stateCodeUri,
+} from "../../src/crypto/state-code";
+import {
   deriveSigningKeyPair,
   sign,
   verifySignature,
@@ -1053,6 +1061,78 @@ describe("test vectors", () => {
             expect(wire(opened), c.id).toEqual(e.content);
           });
           break;
+        default:
+          throw new Error(`unknown kind ${String(c.kind)}`);
+      }
+    }
+  });
+
+  it("state-code.json", () => {
+    const { cases } = load("state-code");
+    type Wire = { version: number; hash: string };
+    const chain = (statements: Wire[]) =>
+      statements.map((s) => ({
+        statement: { version: s.version },
+        hash: s.hash,
+      }));
+    for (const c of cases) {
+      const e = c.expected;
+      switch (c.kind) {
+        case "code": {
+          const code = stateCodeOf(c.hash);
+          const point = { version: c.version as number, code };
+          expect(
+            [code, formatStateCode(point), stateCodeUri(c.vault_id, point)],
+            c.id,
+          ).toEqual([e.code, e.display, e.uri]);
+          break;
+        }
+        case "parse":
+          expectOutcome(c, () => {
+            const parsed = parseStateCode(c.input);
+            expect(
+              {
+                version: parsed.version,
+                code: parsed.code,
+                vault_id: parsed.vaultId,
+              },
+              c.id,
+            ).toEqual(e);
+          });
+          break;
+        case "compare":
+          expect(
+            compareStateCode({
+              vaultId: c.vault_id,
+              statements: chain(c.statements),
+              entered: {
+                version: c.entered.version,
+                code: c.entered.code,
+                vaultId: c.entered.vault_id,
+              },
+            }),
+            c.id,
+          ).toEqual(e);
+          break;
+        case "points": {
+          const status = comparisonPointsStatus(
+            chain(c.statements),
+            (c.points as [number, string][]).map(([version, code]) => ({
+              version,
+              code,
+            })),
+          );
+          expect(
+            status.status === "ok"
+              ? status
+              : {
+                  status: status.status,
+                  point: [status.point.version, status.point.code],
+                },
+            c.id,
+          ).toEqual(e);
+          break;
+        }
         default:
           throw new Error(`unknown kind ${String(c.kind)}`);
       }
