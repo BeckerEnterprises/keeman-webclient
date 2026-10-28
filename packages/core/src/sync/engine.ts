@@ -1227,8 +1227,10 @@ export class SyncEngine {
   async stepDownEverywhere(): Promise<void> {
     const self = this.#access.userId;
     // On a chain with a warning nothing is signed, not even a step-down.
+    // Only where others stay is a step-down needed; the other vaults go
+    // with the account.
     const owned = [...this.#states.values()].filter(
-      (s) => s.summary.role === "owner",
+      (s) => s.summary.role === "owner" && s.summary.member_count > 1,
     );
     if (owned.some((s) => s.roles?.status === "unavailable"))
       throw new SyncError("roles_unavailable");
@@ -3528,6 +3530,9 @@ export class SyncEngine {
     for (const state of this.#states.values())
       if (state.synced && state.keyStatus === "ok") this.#evaluate(state);
     this.#emit();
+    // The app shows a rollback or an unconfirmed user_data found while
+    // writing at once, not only after the next unlock.
+    this.#options.onUserDataChanged?.();
   }
 
   /**

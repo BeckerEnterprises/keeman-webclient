@@ -825,7 +825,14 @@ export class Account {
         await this.#marks.raise(userId, { uf: 0, vaults: {} });
       return { rollback: true, stale: false };
     }
-    await this.#marks.raise(userId, { ud: [slot.revision, seq], vaults: {} });
+    // With "never" until a confirmation follows: interrupted before it, the
+    // next unlock must not take this for marks from before confirmation
+    // times.
+    await this.#marks.raise(userId, {
+      ud: [slot.revision, seq],
+      ...(marks.uf === undefined ? { uf: 0 } : {}),
+      vaults: {},
+    });
     this.#current(epoch);
     const now = this.#now();
     // Marks from before confirmation times: the first check confirms. Only
@@ -1229,8 +1236,21 @@ export class Account {
     await this.#marks.raise(userId, { ud: [revision, seq], vaults: {} });
     // Written on this device: current, like after any own write.
     await this.#confirmUserData(userId, next);
+    // The device's comparison points count as not yet written, so they go
+    // into the new user_data instead of being dropped as removed there.
+    const after = await this.#marks.read(userId);
+    this.#current(epoch);
+    for (const [vaultId, vault] of Object.entries(after.vaults))
+      if (vault.cp?.some((point) => point[2] > 0))
+        await this.#marks.replaceComparisons(
+          userId,
+          vaultId,
+          vault.cp.map(([version, code]) => [version, code, 0]),
+        );
+    this.#current(epoch);
     this.#engine?.contactsChanged();
     this.#engine?.userDataStateChanged();
+    void this.#engine?.refresh().catch(() => undefined);
     void this.#attestUserData().catch(() => undefined);
   }
 

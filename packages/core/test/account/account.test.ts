@@ -492,16 +492,20 @@ describe("settings", () => {
     expect(account.strictMode).toBe(true);
     // The server makes the next write conflict and then delivers the old
     // copy under a newer revision.
+    let shown = 0;
+    account.startSync({ onUserDataChanged: () => (shown += 1) });
     server.failures.set("/v1/me/user-data", [
       { status: 409, code: "conflict", extra: { current_revision: 99 } },
     ] as never);
     user.user_data = { ...old, revision: 99 };
+    const before = shown;
     await expectAccountError(
       account.updateSettings({ autoLockMinutes: 5 }),
       "user_data_read_only",
     );
-    // Shown as a rollback, nothing written, strict mode still on.
+    // Shown as a rollback at once, nothing written, strict mode still on.
     expect(account.userDataRollback).toBe(true);
+    expect(shown).toBeGreaterThan(before);
     expect(user.user_data).toEqual({ ...old, revision: 99 });
     expect(
       server.requests("/v1/me/user-data").filter((r) => r.method === "PUT"),

@@ -573,6 +573,16 @@ describe("signed roles", () => {
     expect((await bob.marks.read(id(bob))).vaults[vaultId]?.rl?.[0]).toBe(1);
   });
 
+  it("deletes an account whose own vault has a warning", async () => {
+    const server = new FakeServer();
+    const alice = await owner(server);
+    server.rolesEnabled = false;
+    await alice.engine.refresh();
+    expect(vault(alice.engine, alice.vaultId).roles.status).toBe("rollback");
+    // The vault goes with the account: no step-down is needed there.
+    await expect(alice.engine.stepDownEverywhere()).resolves.toBeUndefined();
+  });
+
   it("does not let a server hide the chain of an anchored vault", async () => {
     const { server, bob, vaultId } = await team();
     server.rolesEnabled = false;

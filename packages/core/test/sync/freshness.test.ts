@@ -573,6 +573,24 @@ describe("marks from before confirmation times", () => {
     expect(vault(engine, a.vaultId).freshness).toBe("stale");
   });
 
+  it("are not made up by an unlock interrupted after the first user_data mark", async () => {
+    const a = await first();
+    a.account.lock();
+    const inner = inMemorySyncMarks();
+    const patches: Parameters<typeof inner.raise>[1][] = [];
+    const marks: typeof inner = {
+      ...inner,
+      raise: (userId, patch) => {
+        patches.push(patch);
+        return inner.raise(userId, patch);
+      },
+    };
+    await another(a.server, a.clock, marks);
+    // The first revision of user_data on this device comes with "never".
+    const firstMark = patches.find((p) => (p.ud?.[0] ?? 0) > 0);
+    expect(firstMark?.uf).toBe(0);
+  });
+
   it("are not made up by a rolled-back user_data", async () => {
     const a = await first();
     const userId = a.account.userId ?? "";
@@ -641,6 +659,34 @@ describe("the manifest floor of an attestation", () => {
 });
 
 describe("resetting corrupt user_data", () => {
+  it("keeps the comparison points of the device", async () => {
+    const a = await first();
+    const user = a.server.userByEmail(EMAIL);
+    if (!user) throw new Error("no user");
+    // A member's code for a newer list than the server delivers, kept.
+    const head = vault(a.engine, a.vaultId).roles.code?.version ?? 1;
+    const code = "K3QF6XMA2PLRTB6WQH4N7ZDEXA";
+    await a.engine.confirmStateContradiction(a.vaultId, {
+      version: head + 1,
+      code,
+    });
+    await settle();
+    user.user_data = {
+      revision: user.user_data.revision + 1,
+      data: user.user_data.data.slice(0, -8) + "AAAAAAAA",
+    };
+    await a.account.reloadUserData();
+    await a.account.resetUserData("de");
+    await settle();
+    // Another device learns it from the new user_data.
+    a.account.lock();
+    const b = await another(a.server, a.clock);
+    expect(vault(b.engine, a.vaultId).roles).toMatchObject({
+      status: "rollback",
+      compared: { kind: "missing", code: { code } },
+    });
+  });
+
   it("writes above the floor and confirms it", async () => {
     const a = await first();
     const user = a.server.userByEmail(EMAIL);
