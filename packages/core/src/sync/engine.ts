@@ -178,6 +178,7 @@ import {
 } from "./tree-ops";
 import {
   acknowledgeRollback,
+  checkRootMark,
   pullVault,
   VaultState,
   type SyncContext,
@@ -1429,11 +1430,15 @@ export class SyncEngine {
       this.#access.userDataConfirmed() &&
       at !== undefined &&
       at >= now - this.#periodMs();
+    // The manifest floor holds for the delivered root too.
     await this.#context.marks.raise(this.#access.userId, {
       vaults: {
         [vaultId]: {
           rev: 0,
-          obj: {},
+          obj:
+            box.manifest !== undefined
+              ? { [manifestIds(vaultId).root]: box.manifest }
+              : {},
           ...(box.manifest !== undefined ? { mf: box.manifest } : {}),
           ft: confirms ? at : 0,
         },
@@ -2998,7 +3003,12 @@ export class SyncEngine {
     const settled = [...this.#states.values()].filter(
       (s) => s.synced && s.keyStatus === "ok",
     );
-    for (const state of settled) this.#evaluate(state);
+    const floors = await access.marks.read(access.userId);
+    if (this.#isStopped()) return;
+    for (const state of settled) {
+      checkRootMark(state, floors.vaults[state.id]);
+      this.#evaluate(state);
+    }
     this.#emit();
     await Promise.all(settled.map((s) => this.#attest(s)));
   }
@@ -3517,7 +3527,11 @@ export class SyncEngine {
     for (const [id, attestation] of attested)
       vaults[id] = {
         rev: 0,
-        obj: {},
+        // The manifest floor holds for the delivered root too, also for a
+        // vault that is not synced again now.
+        obj: attestation.manifest
+          ? { [manifestIds(id).root]: attestation.manifest.seq }
+          : {},
         kv: attestation.keyVersion,
         ...(attestation.manifest ? { mf: attestation.manifest.seq } : {}),
         // Not a confirmation: only the field, so no transition is assumed.

@@ -10,7 +10,15 @@ import { stateCodeOf } from "../../src/crypto/state-code";
 import { inMemorySyncMarks } from "../../src/sync/marks";
 import { FakeServer } from "../account/fake-server";
 import { vault } from "./devices";
-import { another, Clock, DAY, first, withhold } from "./freshness-devices";
+import {
+  another,
+  Clock,
+  DAY,
+  entry,
+  first,
+  snapshotVault,
+  withhold,
+} from "./freshness-devices";
 
 type Device = Awaited<ReturnType<typeof another>>;
 
@@ -299,6 +307,32 @@ describe("a confirmation by another device", () => {
     b.account.lock();
     const again = await another(a.server, a.clock, marks);
     expect(vault(again.engine, a.vaultId).roles.status).toBe("rollback");
+  });
+
+  it("takes the manifest floor for the root too, so an older state after it shows", async () => {
+    const a = await first();
+    withhold(a.server);
+    const before = snapshotVault(a.server, a.vaultId);
+    await entry(a.engine, a.vaultId);
+    // The new device has seen nothing of the vault yet.
+    let failing = true;
+    a.server.loseResponses = (path) =>
+      failing && path === `/v1/vaults/${a.vaultId}/changes`;
+    const b = await another(a.server, a.clock);
+    await b.account.requestConfirmation();
+    failing = false;
+    await a.account.confirmRequest(await requestOf(a));
+    // Then the server plays back the state before the entry, consistent
+    // with its manifest, under the current revision.
+    const record = a.server.vaults.get(a.vaultId);
+    if (!record) throw new Error("no vault");
+    a.server.vaults.set(a.vaultId, { ...before, revision: record.revision });
+    await b.account.checkConfirmation();
+    expect(vault(b.engine, a.vaultId)).toMatchObject({
+      rollback: true,
+      writable: false,
+    });
+    expect(b.engine.unconfirmableVaults).toBe(1);
   });
 
   it("settles a roles point the chain satisfies", async () => {

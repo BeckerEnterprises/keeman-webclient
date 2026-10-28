@@ -25,6 +25,7 @@ import type { FreshnessStatus } from "./freshness";
 import { Mutex } from "./lock";
 import type { ComparisonMatch } from "../model/user-data";
 import type { VaultRoles } from "./roles";
+import { manifestIds } from "../model/manifest";
 import {
   currentRoot,
   rootFloor,
@@ -402,6 +403,7 @@ export async function pullVault(
   // Synced with the key of this version: it becomes the floor.
   const kv = state.summary.vault_key_version;
   state.keyFloor = Math.max(state.keyFloor, kv);
+  checkRootMark(state, marks);
   // The whole delivered state against the manifest, never single pages.
   state.manifest = verifyManifest(state, marks);
   const root = currentRoot(state);
@@ -422,6 +424,23 @@ export async function pullVault(
       },
     },
   });
+}
+
+/**
+ * The current manifest root against its mark: a floor from an attestation,
+ * an invitation or a confirmation also rises above a root that a delta, or
+ * no sync at all, did not deliver again.
+ */
+export function checkRootMark(
+  state: VaultState,
+  marks: VaultMarks | undefined,
+): void {
+  const root = currentRoot(state);
+  if (
+    root &&
+    isOlder(marks?.obj[manifestIds(state.id).root], root.entry.seq, false)
+  )
+    root.entry.rollback = true;
 }
 
 /** "Understood": the delivered values become the new marks. */

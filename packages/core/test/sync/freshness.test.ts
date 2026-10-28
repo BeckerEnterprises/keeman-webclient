@@ -586,6 +586,31 @@ describe("marks from before confirmation times", () => {
   });
 });
 
+describe("the manifest floor of an attestation", () => {
+  it("catches the root a device holds without syncing it again", async () => {
+    const a = await first();
+    const a2 = await another(a.server, a.clock);
+    expect(vault(a2.engine, a.vaultId).writable).toBe(true);
+    const seen = a.server.vaults.get(a.vaultId)?.revision ?? 0;
+    await entry(a.engine, a.vaultId);
+    // Uploads are spaced by a minute.
+    a.clock.advance(61_000);
+    await a.engine.refresh();
+    await settle();
+    // The server keeps the new revision from the second device, but its
+    // own attestation names the newer root.
+    a.server.tamperVaults = (list) => {
+      for (const summary of list)
+        if (summary.vault_id === a.vaultId) summary.revision = seen;
+    };
+    await a2.engine.refresh();
+    expect(vault(a2.engine, a.vaultId)).toMatchObject({
+      rollback: true,
+      writable: false,
+    });
+  });
+});
+
 describe("resetting corrupt user_data", () => {
   it("writes above the floor and confirms it", async () => {
     const a = await first();

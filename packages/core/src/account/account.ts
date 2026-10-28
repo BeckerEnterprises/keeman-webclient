@@ -88,6 +88,7 @@ import {
   type UserDataState,
 } from "../model/user-data";
 import { seqOf } from "../model/json";
+import { manifestIds } from "../model/manifest";
 import {
   contactsOf,
   comparisonsOf,
@@ -1792,11 +1793,13 @@ export class Account {
       { roles: RolePoint | null; codes: readonly StateCode[] }
     >();
     for (const v of content.vaults) {
-      // The roles point is a reference point of the chain; the device's
-      // own floor rises only once a checked chain has it.
+      // The manifest floor holds for the delivered root too: a confirmed
+      // device would otherwise take an older, consistent state. The roles
+      // point is a reference point of the chain; the device's own floor
+      // rises only once a checked chain has it.
       vaults[v.vaultId] = {
         rev: v.rev,
-        obj: {},
+        obj: v.mf !== null ? { [manifestIds(v.vaultId).root]: v.mf } : {},
         ...(v.kv !== null ? { kv: v.kv } : {}),
         ...(v.mf !== null ? { mf: v.mf } : {}),
         ft: time(v.at),
