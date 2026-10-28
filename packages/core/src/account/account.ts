@@ -1792,12 +1792,13 @@ export class Account {
       { roles: RolePoint | null; codes: readonly StateCode[] }
     >();
     for (const v of content.vaults) {
+      // The roles point is a reference point of the chain; the device's
+      // own floor rises only once a checked chain has it.
       vaults[v.vaultId] = {
         rev: v.rev,
         obj: {},
         ...(v.kv !== null ? { kv: v.kv } : {}),
         ...(v.mf !== null ? { mf: v.mf } : {}),
-        ...(v.rl ? { rl: [v.rl.version, v.rl.hash] } : {}),
         ft: time(v.at),
       };
       if (v.rl || v.cp.length > 0)

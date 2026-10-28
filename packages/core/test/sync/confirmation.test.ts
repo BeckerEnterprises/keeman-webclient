@@ -276,6 +276,31 @@ describe("a confirmation by another device", () => {
     expect(roles.compared?.code.code).toBe(stateCodeOf(forked));
   });
 
+  it("keeps a roles point above the head as a point, not as its own floor", async () => {
+    const a = await first();
+    withhold(a.server);
+    const userId = a.account.userId ?? "";
+    const head = vault(a.engine, a.vaultId).roles.code?.version ?? 1;
+    const ahead = toBase64Url(tv("a head this device never checked", 32));
+    await a.marks.replaceRoles(userId, a.vaultId, [head + 1, ahead]);
+    await a.engine.refresh();
+    expect(vault(a.engine, a.vaultId).roles.status).toBe("rollback");
+
+    const marks = inMemorySyncMarks();
+    const b = await another(a.server, a.clock, marks);
+    await b.account.requestConfirmation();
+    await a.account.confirmRequest(await requestOf(a));
+    await b.account.checkConfirmation();
+    expect(vault(b.engine, a.vaultId).roles.status).toBe("rollback");
+    // The device's floor rises only through a checked chain.
+    const taken = await marks.read(b.account.userId ?? "");
+    expect(taken.vaults[a.vaultId]?.rl?.[0]).toBe(head);
+    // As a comparison point the warning outlasts the lock.
+    b.account.lock();
+    const again = await another(a.server, a.clock, marks);
+    expect(vault(again.engine, a.vaultId).roles.status).toBe("rollback");
+  });
+
   it("settles a roles point the chain satisfies", async () => {
     const a = await first();
     withhold(a.server);

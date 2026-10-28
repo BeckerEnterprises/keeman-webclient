@@ -181,6 +181,27 @@ describe("roles keeper", () => {
     );
   });
 
+  it("needs every lower point delivered, not only the highest one", async () => {
+    const { bob, vaultId, chain, points } = await setup();
+    const [first, second] = points;
+    if (!first || !second) throw new Error("chain");
+    // The account's anchor is version 1; an attestation names version 2.
+    // The server delivers the chain from version 2 on only, so whatever
+    // forked below that point would stay hidden.
+    const k = keeper(bob, new Map([[vaultId, { ...first, owners: [] }]]), [
+      second,
+    ]);
+    const saved = chain.splice(0, 1);
+    expect((await k.roles.update(vaultId, 2, undefined)).status).toBe("fork");
+    expect(k.roles.point(vaultId)).toBeUndefined();
+    // Delivered in full, both points hold.
+    chain.unshift(...saved);
+    const full = keeper(bob, new Map([[vaultId, { ...first, owners: [] }]]), [
+      second,
+    ]);
+    expect((await full.roles.update(vaultId, 2, undefined)).status).toBe("ok");
+  });
+
   it("keeps the points of own attestations when the chain is reloaded", async () => {
     const { bob, vaultId, points } = await setup();
     const [first, second] = points;

@@ -136,6 +136,16 @@ function ownerIds(statement: VerifiedRoles | undefined): string[] {
   return statement?.statement.owners.map((o) => o.userId) ?? [];
 }
 
+/** Whether a checked chain has the statement of a point. */
+function holds(
+  statements: readonly VerifiedRoles[],
+  point: RolePoint,
+): boolean {
+  return statements.some(
+    (s) => s.statement.version === point.version && s.hash === point.hash,
+  );
+}
+
 /** Whether a delivered chain goes up to the head the server named. */
 function reaches(
   statements: readonly DeliveredRoles[],
@@ -293,12 +303,11 @@ export class RolesKeeper {
     points: readonly RolePoint[],
     compared: readonly StateCode[],
   ): VaultRoles {
-    const contradicted = points.some((point) =>
-      previous.statements.some(
-        (s) => s.statement.version === point.version && s.hash !== point.hash,
-      ),
-    );
     const top = previous.head?.statement.version ?? 0;
+    // Points above the last head are checked at the next load.
+    const contradicted = points.some(
+      (point) => point.version <= top && !holds(previous.statements, point),
+    );
     const next = this.#compared(
       contradicted
         ? {
@@ -389,13 +398,10 @@ export class RolesKeeper {
       );
     if (result.status !== "ok")
       return { ...base, status: result.status, deliveredOwners };
-    if (
-      result.statements.some((s) =>
-        lowers.some(
-          (l) => s.statement.version === l.version && s.hash !== l.hash,
-        ),
-      )
-    )
+    // Every lower point must be delivered as that very statement: a chain
+    // that starts above it could hide a contradiction below the point the
+    // check starts from.
+    if (!lowers.every((l) => holds(result.statements, l)))
       return { ...base, status: "fork", deliveredOwners };
     return this.#compared(
       {
