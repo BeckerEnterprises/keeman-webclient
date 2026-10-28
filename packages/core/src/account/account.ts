@@ -1340,6 +1340,11 @@ export class Account {
   startSync(options: SyncEngineOptions = {}): SyncEngine {
     const userId = this.#requireUnlocked();
     if (this.#engine) return this.#engine;
+    // Bound to this unlock like the keys: a task of this engine that
+    // outlives a lock, and another account signing in in the same tab,
+    // neither reads nor writes that account's user_data.
+    const epoch = this.#epoch;
+    const mine = () => this.#epoch === epoch;
     const engine = new SyncEngine(
       {
         api: this.#api,
@@ -1348,20 +1353,30 @@ export class Account {
         keys: this.#keys.scope(),
         userId,
         marks: this.#marks,
-        vaultOrder: () => this.vaultOrder,
-        setVaultOrder: (ids) => this.setVaultOrder(ids),
+        vaultOrder: () => (mine() ? this.vaultOrder : []),
+        setVaultOrder: (ids) => {
+          this.#current(epoch);
+          return this.setVaultOrder(ids);
+        },
         reauth: async (password) => {
+          this.#current(epoch);
           const check = await this.#checkPassword(password);
+          this.#current(epoch);
           return this.#api.reauth(check.authKey);
         },
-        reloadUserData: (revision) => this.reloadUserData(revision),
-        contacts: () => this.#trustedContacts(),
+        reloadUserData: (revision) => {
+          this.#current(epoch);
+          return this.reloadUserData(revision);
+        },
+        contacts: () => (mine() ? this.#trustedContacts() : []),
         roleAnchor: (vaultId) => {
+          if (!mine()) return undefined;
           const slot = this.#slot();
           if (slot?.state.status !== "ok" || slot.rollback) return undefined;
           return roleAnchorOf(slot.state.raw, vaultId);
         },
         saveRoleAnchors: async (anchors) => {
+          this.#current(epoch);
           if (!this.contactsWritable) return;
           try {
             await this.#updateUserData({ roles: anchors });
@@ -1373,17 +1388,20 @@ export class Account {
         // Read also from unconfirmed or rolled back user_data: they only
         // restrict.
         comparisons: (vaultId) => {
+          if (!mine()) return undefined;
           const slot = this.#slot();
           if (slot?.state.status !== "ok") return undefined;
           return comparisonsOf(slot.state.raw, vaultId);
         },
         userDataSeq: () => {
+          if (!mine()) return undefined;
           const slot = this.#slot();
           return slot?.state.status === "ok"
             ? seqOf(slot.state.raw)
             : undefined;
         },
         saveComparisons: async (change) => {
+          this.#current(epoch);
           if (!this.contactsWritable) return false;
           try {
             await this.#updateUserData({ compared: change });
@@ -1398,9 +1416,13 @@ export class Account {
         freshnessPeriodDays: () => this.freshnessPeriodDays,
         // Unconfirmed user_data never turns strict mode off: an older one
         // without the setting must not make attestations count.
-        strictConfirmation: () => this.strictMode || !this.#userDataConfirmed(),
-        userDataConfirmed: () => this.#userDataConfirmed(),
-        attestUserData: () => this.#attestUserData(),
+        strictConfirmation: () =>
+          !mine() || this.strictMode || !this.#userDataConfirmed(),
+        userDataConfirmed: () => mine() && this.#userDataConfirmed(),
+        attestUserData: () => {
+          this.#current(epoch);
+          return this.#attestUserData();
+        },
       },
       options,
     );

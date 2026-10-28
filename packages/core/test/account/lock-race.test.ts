@@ -4,6 +4,7 @@ import { AccountError } from "../../src/account/errors";
 import { ApiClient } from "../../src/api/client";
 import { inMemorySyncMarks, type SyncMarks } from "../../src/sync/marks";
 import { FakeServer, fastWorker } from "./fake-server";
+import { owner, person, share } from "../sharing/people";
 
 // A lock (by hand, by the timer or from another tab) while an unlock,
 // login, second factor, recovery or registration waits for an answer
@@ -238,6 +239,58 @@ describe("a lock overtakes a write", () => {
     await expectLocked(write);
     expect(tab.email).toBe("bob@example.com");
     expect(tab.settings.autoLockMinutes).toBe(15);
+  });
+
+  it("and another account signs in: the old engine writes nothing into its user_data", async () => {
+    const server = new FakeServer();
+    const alice = await owner(server);
+    const bob = await person(server, "bob@example.com");
+    await person(server, "carol@example.com");
+    await share(alice, bob, alice.vaultId);
+    // Bob becomes owner; his device is locked, so his anchor stays behind.
+    bob.account.lock();
+    await alice.engine.setMemberRole(
+      alice.vaultId,
+      bob.account.userId ?? "",
+      "owner",
+    );
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let reached!: () => void;
+    const holding = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    let hold = true;
+    const gated: typeof globalThis.fetch = async (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (
+        hold &&
+        (init?.method ?? "GET") === "GET" &&
+        url.includes(`/v1/vaults/${alice.vaultId}/roles`)
+      ) {
+        hold = false;
+        reached();
+        await held;
+      }
+      return server.fetch(input, init);
+    };
+    // A tab as Bob loads the chain, which would raise his anchor; the
+    // server holds the answer until the tab signs in as Carol.
+    const tab = newAccount(server, undefined, gated);
+    await tab.login("bob@example.com", PASSWORD);
+    tab.startSync();
+    await holding;
+    const carol = server.userByEmail("carol@example.com");
+    const before = carol?.user_data.revision;
+    tab.lock();
+    await tab.login("carol@example.com", PASSWORD);
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(server.userByEmail("carol@example.com")?.user_data.revision).toBe(
+      before,
+    );
   });
 
   it("preparing a recovery ends it", async () => {
