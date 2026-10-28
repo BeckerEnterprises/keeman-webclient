@@ -17,7 +17,13 @@ import {
 import { deriveSigningKeyPair } from "../../src/crypto/signing";
 import { FakeServer } from "../account/fake-server";
 import { newMember } from "../account/fake-sharing";
-import { ManualTimers, PASSWORD, shownHead, vault } from "../sync/devices";
+import {
+  ManualTimers,
+  newAccount,
+  PASSWORD,
+  shownHead,
+  vault,
+} from "../sync/devices";
 import { tv } from "../helpers";
 import {
   acceptShown,
@@ -531,6 +537,47 @@ describe("signed roles", () => {
 });
 
 describe("transition of older accounts and vaults", () => {
+  it("starts no chain for an unconfirmed vault when an owner steps down", async () => {
+    const { server, alice, carol, vaultId } = await team({ roles: false });
+    await alice.engine.setMemberRole(vaultId, id(carol), "owner");
+    server.rolesEnabled = true;
+    // Carol adds her signing key, Alice compares her fingerprint again:
+    // a chain could be started with both of them.
+    // Her confirmed device would start the chain; the server lets that
+    // fail, so only an attempt of the new device would show.
+    server.failures.set(
+      `/v1/vaults/${vaultId}/roles`,
+      Array.from({ length: 10 }, () => ({
+        status: 503,
+        code: "internal_error",
+      })),
+    );
+    for (const someone of [alice, carol]) {
+      someone.account.lock();
+      await someone.account.unlock(PASSWORD);
+      someone.engine = someone.account.startSync();
+    }
+    await trust(alice, carol);
+    await alice.engine.refresh();
+    // A new device of Alice's: her user_data is confirmed, the vault not.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    server.tamperVaults = (list) => {
+      for (const summary of list) summary.freshness = null;
+    };
+    const device = newAccount(server);
+    await device.account.login(alice.email, PASSWORD);
+    const engine = device.account.startSync();
+    await engine.refresh();
+    expect(vault(engine, vaultId).freshness).toBe("stale");
+    const appended = posts(server, "/roles");
+    await engine.setMemberRole(vaultId, id(alice), "member");
+    expect(posts(server, "/roles")).toBe(appended);
+    expect(server.vaults.get(vaultId)?.roles).toEqual([]);
+    expect(server.vaults.get(vaultId)?.members.get(id(alice))?.role).toBe(
+      "member",
+    );
+  });
+
   it("adds signing keys, starts the chain and takes it over from a remembered owner", async () => {
     const { server, alice, bob, carol, vaultId } = await team({
       roles: false,
