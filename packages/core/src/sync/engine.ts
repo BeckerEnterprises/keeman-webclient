@@ -60,6 +60,7 @@ import {
 } from "../model/icon";
 import { clone, same, setOwn } from "../model/json";
 import { isManifestId, manifestIds } from "../model/manifest";
+import type { ConfirmationVault } from "../crypto/confirmation";
 import type { VaultFreshness } from "../crypto/freshness";
 import { keyAtEnd, keysAtEnd } from "../model/sort-key";
 import { ancestors, subtree } from "../model/tree";
@@ -249,6 +250,8 @@ export interface SyncEngineOptions {
   onSessionEnded?: () => void;
   /** `user_data` changed on another device and was reloaded. */
   onUserDataChanged?: () => void;
+  /** A confirmation by another device changed, or the socket reconnected. */
+  onConfirmationsChanged?: () => void;
   /** Page size of `changes`. */
   pageLimit?: number;
   timers?: Timers;
@@ -281,6 +284,10 @@ export interface AccountAccess {
   now(): number;
   /** The effective confirmation period in days. */
   freshnessPeriodDays(): number;
+  /** Attestations are no reference time: strict mode, or user_data unconfirmed. */
+  strictConfirmation(): boolean;
+  /** user_data is readable and confirmed, without a rollback. */
+  userDataConfirmed(): boolean;
   /** Signs and uploads the attestation of user_data where it is confirmed. */
   attestUserData(): Promise<void>;
 }
@@ -464,6 +471,7 @@ export class SyncEngine {
         },
         onReady: () => {
           void this.refresh();
+          this.#options.onConfirmationsChanged?.();
         },
         onEvent: (event) => {
           this.#onEvent(event);
@@ -1373,7 +1381,11 @@ export class SyncEngine {
       input.sender !== undefined &&
       input.statement?.owners.some((o) => o.userId === input.sender) === true;
     const confirms =
-      !input.known && owner && at !== undefined && at >= now - this.#periodMs();
+      !input.known &&
+      owner &&
+      this.#access.userDataConfirmed() &&
+      at !== undefined &&
+      at >= now - this.#periodMs();
     await this.#context.marks.raise(this.#access.userId, {
       vaults: {
         [vaultId]: {
@@ -3224,6 +3236,9 @@ export class SyncEngine {
       case "vaults_changed":
         void this.refresh();
         break;
+      case "confirmations_changed":
+        this.#options.onConfirmationsChanged?.();
+        break;
       case "user_data_changed":
         void this.#access
           .reloadUserData(event.revision)
@@ -3291,7 +3306,7 @@ export class SyncEngine {
     const now = this.#access.now();
     const basis = confirmationBasis(
       state.confirmedAt,
-      this.#freshness.attestation(state.id),
+      this.#referenceAttestation(state.id),
       this.#delivered(state, false),
       now,
     );
@@ -3306,7 +3321,7 @@ export class SyncEngine {
       ? now
       : confirmationBasis(
           state.confirmedAt,
-          this.#freshness.attestation(state.id),
+          this.#referenceAttestation(state.id),
           this.#delivered(state, true),
           now,
         );
@@ -3334,6 +3349,53 @@ export class SyncEngine {
       state.rollbackDeletes.size > 0 ||
       [...state.objects.values()].some((o) => o.rollback)
     );
+  }
+
+  /** The own attestation as reference time; none in strict mode. */
+  #referenceAttestation(vaultId: string) {
+    return this.#access.strictConfirmation()
+      ? undefined
+      : this.#freshness.attestation(vaultId);
+  }
+
+  /**
+   * After user_data changed its state (confirmed, stale, rolled back):
+   * whether attestations count changes, so every synced vault is checked
+   * again.
+   */
+  userDataStateChanged(): void {
+    if (this.#stopped) return;
+    for (const state of this.#states.values())
+      if (state.synced && state.keyStatus === "ok") this.#evaluate(state);
+    this.#emit();
+  }
+
+  /**
+   * The vault part of a confirmation for another device: the floors always,
+   * a confirmation time only for vaults this device would sign.
+   */
+  confirmationVaults(marks: UserMarks): ConfirmationVault[] {
+    return [...this.#states.values()].flatMap((state): ConfirmationVault[] => {
+      const m = marks.vaults[state.id];
+      if (!m) return [];
+      return [
+        {
+          vaultId: state.id,
+          rev: m.rev,
+          kv: m.kv ?? null,
+          mf: m.mf ?? null,
+          rl: m.rl ? { version: m.rl[0], hash: m.rl[1] } : null,
+          cp: this.#comparisons.points(state.id, marks),
+          at:
+            this.#signable(state) && m.ft ? new Date(m.ft).toISOString() : null,
+        },
+      ];
+    });
+  }
+
+  /** Vaults this device would not pass a confirmation time on for. */
+  get unconfirmableVaults(): number {
+    return [...this.#states.values()].filter((s) => !this.#signable(s)).length;
   }
 
   /** Only a confirmed vault without any warning is signed. */
@@ -3443,14 +3505,28 @@ export class SyncEngine {
   }
 
   /**
-   * After a pairing raised the marks: roles points to check the chains
-   * against, and a full sync of every vault against the new floors.
+   * After a confirmation raised the marks: its roles points to check the
+   * chains against, kept as comparison points as well so that a fork they
+   * reveal outlasts a lock (a satisfied one settles at once), its
+   * comparison points, and a full sync of every vault against the new
+   * floors.
    */
-  async afterPairing(
-    rolePoints: ReadonlyMap<string, RolePoint>,
+  async afterConfirmation(
+    points: ReadonlyMap<
+      string,
+      { roles: RolePoint | null; codes: readonly StateCode[] }
+    >,
   ): Promise<void> {
-    for (const [id, point] of rolePoints)
-      this.#freshness.rememberPaired(id, point);
+    for (const [id, { roles, codes }] of points) {
+      if (roles) {
+        this.#freshness.rememberConfirmed(id, roles);
+        this.#comparisons.add(id, {
+          version: roles.version,
+          code: stateCodeOf(roles.hash),
+        });
+      }
+      for (const code of codes) this.#comparisons.add(id, code);
+    }
     for (const state of this.#states.values()) {
       state.synced = false;
       state.freshness = undefined;

@@ -20,7 +20,8 @@ export type SocketFactory = (url: string) => SocketLike;
 export type ServerEvent =
   | { type: "vault_changed"; vaultId: string; revision: number }
   | { type: "vaults_changed" }
-  | { type: "user_data_changed"; revision: number };
+  | { type: "user_data_changed"; revision: number }
+  | { type: "confirmations_changed" };
 
 export type ConnectionState = "offline" | "connecting" | "online";
 
@@ -85,6 +86,8 @@ export function parseServerMessage(
       return m.type;
     case "vaults_changed":
       return { type: "vaults_changed" };
+    case "confirmations_changed":
+      return { type: "confirmations_changed" };
     case "vault_changed":
       return isUuid(m.vault_id) && positiveInteger(m.revision)
         ? { type: "vault_changed", vaultId: m.vault_id, revision: m.revision }

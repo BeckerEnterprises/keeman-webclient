@@ -289,8 +289,6 @@ function buildAad(template: string, p: Case): string {
       return aad.object(p.vault_id, p.object_id, p.type, p.key_version);
     case "attachment":
       return aad.attachment(p.attachment_id);
-    case "pairing":
-      return aad.pairing(p.user_id);
     default:
       throw new Error(`unknown template ${template}`);
   }

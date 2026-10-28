@@ -15,7 +15,9 @@ import {
   toBase64Url,
   utf8Encode,
 } from "../../src/crypto/bytes";
+import { decodeConfirmation } from "../../src/crypto/confirmation";
 import { readFreshness } from "../../src/crypto/freshness";
+import { SIGNATURE_CONTEXT, verifySignature } from "../../src/crypto/signing";
 import { sodium } from "../../src/crypto/sodium";
 import { isManifestId, manifestIds } from "../../src/model/manifest";
 import { decodeTotpSecret } from "../../src/totp/uri";
@@ -228,6 +230,16 @@ interface SessionRecord {
   revoked: boolean;
 }
 
+export interface FakeConfirmation {
+  id: string;
+  userId: string;
+  sessionId: string;
+  nonce: string;
+  created: number;
+  expiresAt: number;
+  answer: { statement: string; signature: string } | undefined;
+}
+
 export interface RequestLog {
   method: string;
   path: string;
@@ -332,10 +344,20 @@ export class FakeServer {
   manifestEnabled = true;
   /** `features.roles`: signing keys and roles chains; off like an older server. */
   rolesEnabled = true;
-  /** `features.freshness`: attestations and pairings; off like an older server. */
+  /** `features.freshness`: attestations; off like an older server. */
   freshnessEnabled = true;
-  /** Pairings by account. */
-  readonly pairings = new Map<string, { payload: string; expiresAt: number }>();
+  /** `features.confirmation`: confirmations by another device. */
+  confirmationEnabled = true;
+  /** Confirmation requests by ID, one per session. */
+  readonly confirmations = new Map<string, FakeConfirmation>();
+  /** How long the server keeps a request open (a lying one: longer). */
+  confirmationTtlMs = 300_000;
+  /** Change a `GET /v1/me/confirmations/{id}` answer before it is sent. */
+  tamperConfirmation: (status: Record<string, unknown>) => void = () =>
+    undefined;
+  /** Change the list of confirmation requests before it is sent. */
+  tamperConfirmations: (list: Record<string, unknown>[]) => void = () =>
+    undefined;
   /** URLs sent to `POST /v1/favicon`. */
   readonly faviconRequests: string[] = [];
   /** The favicon proxy's answer; by default a valid icon. */
@@ -837,6 +859,7 @@ export class FakeServer {
           ...(this.manifestEnabled ? { manifest: true } : {}),
           ...(this.rolesEnabled ? { roles: true } : {}),
           ...(this.freshnessEnabled ? { freshness: true } : {}),
+          ...(this.confirmationEnabled ? { confirmation: true } : {}),
         },
         limits: {
           attachment_max_bytes: this.attachmentMaxBytes,
@@ -1058,8 +1081,8 @@ export class FakeServer {
   }
 
   /**
-   * Attestations and pairings like the server: the signature is checked
-   * against the caller's signing key, the content is not.
+   * Attestations like the server: the signature is checked against the
+   * caller's signing key, the content is not.
    */
   #freshness(
     method: string,
@@ -1068,10 +1091,7 @@ export class FakeServer {
     user: UserRecord,
   ): Response | undefined {
     const vaultMatch = /^\/v1\/vaults\/([^/]+)\/freshness$/.exec(path);
-    const mine =
-      path === "/v1/me/freshness" ||
-      path === "/v1/me/pairing" ||
-      vaultMatch !== null;
+    const mine = path === "/v1/me/freshness" || vaultMatch !== null;
     if (!mine) return undefined;
     if (!this.freshnessEnabled) return problem(404, "not_found");
     const checked = (type: string, vaultId?: string): Response | undefined => {
@@ -1106,32 +1126,145 @@ export class FakeServer {
       member.freshness = data.freshness as typeof member.freshness;
       return reply(204);
     }
-    if (path === "/v1/me/freshness") {
-      if (method !== "PUT") return problem(405, "method_not_allowed");
-      const rejected = checked("user_data_freshness");
-      if (rejected) return rejected;
-      user.freshness = data.freshness as typeof user.freshness;
+    if (method !== "PUT") return problem(405, "method_not_allowed");
+    const rejected = checked("user_data_freshness");
+    if (rejected) return rejected;
+    user.freshness = data.freshness as typeof user.freshness;
+    return reply(204);
+  }
+
+  /** Open requests: not expired, from a session that is still active. */
+  #openConfirmation(id: string): FakeConfirmation | undefined {
+    const request = this.confirmations.get(id);
+    if (!request) return undefined;
+    const session = this.sessions.get(request.sessionId);
+    return request.expiresAt > this.now() && session && !session.revoked
+      ? request
+      : undefined;
+  }
+
+  /**
+   * Confirmations by another device like the server: one request per
+   * session; an answer is checked down to account, nonce and signature,
+   * its content is not read.
+   */
+  #confirmation(
+    method: string,
+    path: string,
+    data: Record<string, unknown>,
+    user: UserRecord,
+    session: SessionRecord,
+  ): Response | undefined {
+    const one = /^\/v1\/me\/confirmations\/([^/]+)$/.exec(path);
+    if (path !== "/v1/me/confirmations" && !one) return undefined;
+    if (!this.confirmationEnabled) return problem(404, "not_found");
+    const left = (r: FakeConfirmation) =>
+      Math.max(0, Math.floor((r.expiresAt - this.now()) / 1000));
+    if (!one) {
+      if (method === "POST") {
+        if (user.signing_public_key === null)
+          return problem(409, "signing_key_missing");
+        if (
+          typeof data.nonce !== "string" ||
+          !/^[A-Za-z0-9_-]{43}$/.test(data.nonce)
+        )
+          return problem(400, "validation_failed");
+        for (const [id, r] of this.confirmations)
+          if (r.sessionId === session.id) this.confirmations.delete(id);
+        const request: FakeConfirmation = {
+          id: newId(),
+          userId: user.user_id,
+          sessionId: session.id,
+          nonce: data.nonce,
+          created: this.now(),
+          expiresAt: this.now() + this.confirmationTtlMs,
+          answer: undefined,
+        };
+        this.confirmations.set(request.id, request);
+        return reply(201, {
+          request_id: request.id,
+          expires_at: new Date(request.expiresAt).toISOString(),
+          expires_in: left(request),
+        });
+      }
+      if (method === "GET") {
+        const requests = [...this.confirmations.values()]
+          .filter(
+            (r) => r.userId === user.user_id && this.#openConfirmation(r.id),
+          )
+          .sort((a, b) => a.created - b.created)
+          .map((r) => ({
+            request_id: r.id,
+            session_id: r.sessionId,
+            device_name: this.sessions.get(r.sessionId)?.device ?? "",
+            client_type: "web",
+            created: new Date(r.created).toISOString(),
+            expires_at: new Date(r.expiresAt).toISOString(),
+            expires_in: left(r),
+            nonce: r.nonce,
+            own: r.sessionId === session.id,
+            answered: r.answer !== undefined,
+          }));
+        this.tamperConfirmations(requests);
+        return reply(200, { requests });
+      }
+      return problem(405, "method_not_allowed");
+    }
+    const id = one[1] ?? "";
+    const request = this.#openConfirmation(id);
+    const mine = request?.userId === user.user_id ? request : undefined;
+    if (method === "DELETE") {
+      if (this.confirmations.get(id)?.userId === user.user_id)
+        this.confirmations.delete(id);
       return reply(204);
     }
-    const stored = this.pairings.get(user.user_id);
-    if (method === "PUT") {
-      const expiresAt = this.now() + 600_000;
-      this.pairings.set(user.user_id, {
-        payload: data.payload as string,
-        expiresAt,
-      });
-      return reply(200, { expires_at: new Date(expiresAt).toISOString() });
-    }
     if (method === "GET") {
-      if (!stored || stored.expiresAt <= this.now())
+      if (!mine || mine.sessionId !== session.id)
         return problem(404, "not_found");
-      return reply(200, {
-        payload: stored.payload,
-        expires_at: new Date(stored.expiresAt).toISOString(),
-      });
+      const status: Record<string, unknown> = {
+        request_id: mine.id,
+        expires_at: new Date(mine.expiresAt).toISOString(),
+        expires_in: left(mine),
+        answer: mine.answer ?? null,
+      };
+      this.tamperConfirmation(status);
+      return reply(200, status);
     }
-    if (method === "DELETE") {
-      this.pairings.delete(user.user_id);
+    if (method === "PUT") {
+      if (!mine) return problem(404, "not_found");
+      if (mine.sessionId === session.id) return problem(403, "forbidden");
+      if (user.signing_public_key === null)
+        return problem(409, "signing_key_missing");
+      const answer = data.answer as Record<string, unknown> | undefined;
+      try {
+        if (
+          typeof answer?.statement !== "string" ||
+          typeof answer.signature !== "string"
+        )
+          throw new Error("shape");
+        const bytes = fromBase64Url(answer.statement);
+        const statement = decodeConfirmation(bytes);
+        verifySignature(
+          fromBase64Url(user.signing_public_key, 32),
+          SIGNATURE_CONTEXT.confirmation,
+          bytes,
+          fromBase64Url(answer.signature, 64),
+        );
+        if (statement.userId !== user.user_id || statement.nonce !== mine.nonce)
+          throw new Error("subject");
+      } catch {
+        return problem(400, "validation_failed");
+      }
+      const signed = {
+        statement: answer.statement,
+        signature: answer.signature,
+      };
+      if (mine.answer)
+        return mine.answer.statement === signed.statement &&
+          mine.answer.signature === signed.signature
+          ? reply(204)
+          : problem(409, "conflict");
+      mine.answer = signed;
       return reply(204);
     }
     return problem(405, "method_not_allowed");
@@ -1278,6 +1411,14 @@ export class FakeServer {
     }
     const freshnessResponse = this.#freshness(method, path, data, user);
     if (freshnessResponse) return freshnessResponse;
+    const confirmationResponse = this.#confirmation(
+      method,
+      path,
+      data,
+      user,
+      session,
+    );
+    if (confirmationResponse) return confirmationResponse;
     if (method === "GET" && path === "/v1/vaults") {
       const list = [...this.vaults.values()]
         .filter((v) => v.members.has(user.user_id))

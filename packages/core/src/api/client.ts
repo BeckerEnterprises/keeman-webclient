@@ -6,11 +6,13 @@ import {
   BackupCodesResponseSchema,
   BatchResultSchema,
   ChangesPageSchema,
+  ConfirmationCreatedSchema,
+  ConfirmationListSchema,
+  ConfirmationStatusSchema,
+  type ConfirmationListItem,
   MemberListSchema,
   MeSchema,
   OpenRotationSchema,
-  PairingCreatedSchema,
-  PairingSchema,
   PasskeyListSchema,
   PreloginSchema,
   FaviconSchema,
@@ -615,34 +617,71 @@ export class ApiClient {
     });
   }
 
-  /** Stores the account's pairing envelope; replaces an older one. */
-  async putPairing(payload: string): Promise<{ expiresAt: string }> {
-    const data = await this.#request({
-      method: "PUT",
-      path: "/v1/me/pairing",
-      body: JSON.stringify({ payload }),
-      auth: true,
-      idempotent: true,
-    });
-    return { expiresAt: parse(PairingCreatedSchema, data).expires_at };
+  /**
+   * Asks the other devices of the account for a confirmation; replaces an
+   * open request of this session. A repeat with the same nonce is harmless.
+   */
+  async requestConfirmation(
+    nonce: string,
+  ): Promise<{ requestId: string; expiresIn: number }> {
+    const data = parse(
+      ConfirmationCreatedSchema,
+      await this.#request({
+        method: "POST",
+        path: "/v1/me/confirmations",
+        body: JSON.stringify({ nonce }),
+        auth: true,
+        idempotent: true,
+      }),
+    );
+    return { requestId: data.request_id, expiresIn: data.expires_in };
   }
 
-  async pairing(): Promise<{ payload: string; expiresAt: string }> {
-    const data = parse(
-      PairingSchema,
+  /** Open requests of the account, without answers. */
+  async confirmations(): Promise<ConfirmationListItem[]> {
+    return parse(
+      ConfirmationListSchema,
       await this.#request({
         method: "GET",
-        path: "/v1/me/pairing",
+        path: "/v1/me/confirmations",
+        auth: true,
+      }),
+    ).requests;
+  }
+
+  /** The own request with its answer, if any. */
+  async confirmation(
+    requestId: string,
+  ): Promise<{ requestId: string; answer: unknown }> {
+    const data = parse(
+      ConfirmationStatusSchema,
+      await this.#request({
+        method: "GET",
+        path: `/v1/me/confirmations/${encodeURIComponent(requestId)}`,
         auth: true,
       }),
     );
-    return { payload: data.payload, expiresAt: data.expires_at };
+    return { requestId: data.request_id, answer: data.answer ?? null };
   }
 
-  async deletePairing(): Promise<void> {
+  /** Answers a request of another session; the same bytes may repeat. */
+  async answerConfirmation(
+    requestId: string,
+    answer: Schemas["SignedConfirmation"],
+  ): Promise<void> {
+    await this.#request({
+      method: "PUT",
+      path: `/v1/me/confirmations/${encodeURIComponent(requestId)}`,
+      body: JSON.stringify({ answer }),
+      auth: true,
+      idempotent: true,
+    });
+  }
+
+  async deleteConfirmation(requestId: string): Promise<void> {
     await this.#request({
       method: "DELETE",
-      path: "/v1/me/pairing",
+      path: `/v1/me/confirmations/${encodeURIComponent(requestId)}`,
       auth: true,
       idempotent: true,
     });

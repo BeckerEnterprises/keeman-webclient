@@ -1,16 +1,11 @@
 /**
  * Freshness on new and long-unused devices: own attestations as floors and
- * reference times, the period, stale vaults, pairing and what the server
- * cannot fake.
+ * reference times, the period, stale vaults, strict mode and what the
+ * server cannot fake.
  */
 import { describe, expect, it } from "vitest";
-import { Account } from "../../src/account/account";
-import { inMemoryKdfMemory } from "../../src/account/kdf-memory";
-import { ApiClient } from "../../src/api/client";
 import { signFreshness, type VaultFreshness } from "../../src/crypto/freshness";
 import { deriveSigningKeyPair } from "../../src/crypto/signing";
-import { emptyDraft } from "../../src/model/entry";
-import type { Timers } from "../../src/sync/events";
 import {
   attestedAt,
   confirmationBasis,
@@ -19,123 +14,24 @@ import {
   ownUserDataAttestation,
   ownVaultAttestation,
 } from "../../src/sync/freshness";
-import { inMemorySyncMarks, type SyncMarks } from "../../src/sync/marks";
-import {
-  FakeServer,
-  fastWorker,
-  type VaultRecord,
-} from "../account/fake-server";
+import { inMemorySyncMarks } from "../../src/sync/marks";
+import { FakeServer, type VaultRecord } from "../account/fake-server";
 import { tv } from "../../src/crypto/internal/test-values";
-import { EMAIL, ManualTimers, NAMES, PASSWORD, rootOf, vault } from "./devices";
+import { ManualTimers, NAMES, PASSWORD, vault } from "./devices";
 import { acceptShown } from "../sharing/people";
 
-const DAY = 86_400_000;
-
-class Clock {
-  t = Date.parse("2026-10-27T08:00:00.000Z");
-  readonly now = () => this.t;
-  advance(ms: number): void {
-    this.t += ms;
-  }
-}
-
-function device(
-  server: FakeServer,
-  clock: Clock,
-  marks: SyncMarks = inMemorySyncMarks(),
-) {
-  const api = new ApiClient({
-    baseUrl: "http://localhost:18787",
-    clientId: "test/1.0.0",
-    fetch: server.fetch,
-    sleep: () => Promise.resolve(),
-  });
-  const account = new Account({
-    api,
-    spawnWorker: fastWorker,
-    device: { name: "Test · Node", client_type: "web" },
-    kdfMemory: inMemoryKdfMemory(),
-    syncMarks: marks,
-    now: clock.now,
-  });
-  return { account, marks };
-}
-
-let invites = 0;
-
-async function register(
-  server: FakeServer,
-  clock: Clock,
-  email: string,
-  timers?: Timers,
-) {
-  const code = `FRESH-${String(++invites)}`;
-  server.invites.add(code);
-  const d = device(server, clock);
-  const pending = await d.account.startRegistration({
-    email,
-    password: PASSWORD,
-    inviteCode: code,
-    language: "de",
-  });
-  await pending.submit();
-  const engine = d.account.startSync(timers ? { timers } : {});
-  await engine.refresh();
-  return { server, clock, email, ...d, engine };
-}
-
-async function first(
-  server = new FakeServer(),
-  clock = new Clock(),
-  timers?: Timers,
-) {
-  const someone = await register(server, clock, EMAIL, timers);
-  const vaultId = await someone.engine.createVault(NAMES);
-  return { ...someone, vaultId };
-}
-
-async function another(
-  server: FakeServer,
-  clock: Clock,
-  marks?: SyncMarks,
-  timers?: Timers,
-) {
-  const d = device(server, clock, marks);
-  await d.account.login(EMAIL, PASSWORD);
-  const engine = d.account.startSync(timers ? { timers } : {});
-  await engine.refresh();
-  return { ...d, engine };
-}
-
-function puts(server: FakeServer, suffix: string): number {
-  return server.log.filter((r) => r.method === "PUT" && r.path.endsWith(suffix))
-    .length;
-}
-
-function withhold(server: FakeServer): void {
-  server.tamperVaults = (list) => {
-    for (const item of list) item.freshness = null;
-  };
-  server.tamperMe = (me) => {
-    me.freshness = null;
-  };
-}
-
-function entry(
-  engine: Awaited<ReturnType<typeof first>>["engine"],
-  id: string,
-) {
-  return engine.createEntry(id, rootOf(engine, id), {
-    ...emptyDraft(),
-    title: "Neu",
-  });
-}
-
-function snapshotVault(server: FakeServer, id: string): VaultRecord {
-  const record = server.vaults.get(id);
-  if (!record) throw new Error("no vault");
-  return structuredClone(record);
-}
+import {
+  another,
+  Clock,
+  DAY,
+  entry,
+  first,
+  puts,
+  register,
+  settle,
+  snapshotVault,
+  withhold,
+} from "./freshness-devices";
 
 describe("freshness rules", () => {
   const attestation: VaultFreshness = {
@@ -318,15 +214,13 @@ describe("a new device", () => {
     a.account.lock();
     a.clock.advance(8 * DAY);
     const b = await another(a.server, a.clock);
-    const confirmed = a.clock.t - 8 * DAY;
     expect(vault(b.engine, a.vaultId)).toMatchObject({
       freshness: "stale",
       writable: false,
     });
-    expect(vault(b.engine, a.vaultId).confirmedSince).toBeLessThanOrEqual(
-      confirmed + 1000,
-    );
     expect(b.account.userDataStale).toBe(true);
+    // With user_data unconfirmed, attestations are no reference time at all.
+    expect(vault(b.engine, a.vaultId).confirmedSince).toBeUndefined();
   });
 
   it("ignores attestations by another key, of another vault or from the future", async () => {
@@ -439,7 +333,7 @@ describe("own attestations as floors", () => {
 });
 
 describe("the state before a rotation", () => {
-  it("is detected on a paired device at once and beyond the period without pairing", async () => {
+  it("is detected at once after a confirmation by another device, and beyond the period without", async () => {
     const a = await first();
     await entry(a.engine, a.vaultId);
     const userId = a.account.userId ?? "";
@@ -464,9 +358,9 @@ describe("the state before a rotation", () => {
     const anchored = await another(a.server, a.clock);
     expect(vault(anchored.engine, a.vaultId).roles.status).toBe("rollback");
 
-    // Vault and user_data played back, within the period: an unpaired
-    // device takes the old state, as the attestations from before the
-    // rotation are still fresh. This is the limit of the period.
+    // Vault and user_data played back, within the period: a device
+    // without a confirmation takes the old state, as the attestations from
+    // before the rotation are still fresh. This is the limit of the period.
     playBack(before, beforeUser);
     const early = await another(a.server, a.clock);
     expect(vault(early.engine, a.vaultId)).toMatchObject({
@@ -474,19 +368,24 @@ describe("the state before a rotation", () => {
       freshness: "fresh",
     });
 
-    // Paired with the device that saw the rotation: rollbacks.
+    // Confirmed by the device that saw the rotation: rollbacks.
+    const confirmed = await another(a.server, a.clock);
+    await confirmed.account.requestConfirmation();
     playBack(after, afterUser);
-    const { code } = await a.account.createPairing();
+    const [request] = await a.account.confirmationRequests();
+    await a.account.confirmRequest(request?.requestId ?? "");
     playBack(before, beforeUser);
-    const paired = await another(a.server, a.clock);
-    expect(await paired.account.pair(code)).toEqual({ vaults: 1 });
-    expect(vault(paired.engine, a.vaultId)).toMatchObject({
+    expect(await confirmed.account.checkConfirmation()).toMatchObject({
+      status: "confirmed",
+    });
+    expect(vault(confirmed.engine, a.vaultId)).toMatchObject({
       keyRollback: true,
       writable: false,
     });
-    expect(paired.account.userDataRollback).toBe(true);
+    expect(confirmed.account.userDataRollback).toBe(true);
 
-    // Unpaired, after the period: the old attestations no longer count.
+    // Without a confirmation, after the period: the old attestations no
+    // longer count.
     a.account.lock();
     a.clock.advance(8 * DAY);
     const late = await another(a.server, a.clock);
@@ -507,9 +406,12 @@ describe("a long-unused device", () => {
     expect(vault(b.engine, a.vaultId).freshness).toBe("fresh");
     b.account.lock();
     // The other device stays in use; this one is not used for 8 days.
+    // In use, it renews its attestations, those of user_data too.
     for (let day = 0; day < 4; day++) {
       a.clock.advance(2 * DAY);
       await a.engine.refresh();
+      await a.account.reloadUserData();
+      await settle();
     }
     expect(vault(a.engine, a.vaultId).freshness).toBe("fresh");
     const again = await another(a.server, a.clock, marks);
@@ -665,71 +567,6 @@ describe("uploads", () => {
     expect(vault(a.engine, a.vaultId).freshness).toBe("fresh");
     const b = await another(server, a.clock);
     expect(vault(b.engine, a.vaultId).freshness).toBe("stale");
-    await expect(a.account.createPairing()).rejects.toMatchObject({
-      code: "pairing_unsupported",
-    });
-  });
-});
-
-describe("pairing", () => {
-  it("hands the marks and confirmations to a new device", async () => {
-    const a = await first();
-    const { code, expiresAt } = await a.account.createPairing();
-    expect(code).toMatch(/^([A-Z2-7]{4} ){5}[A-Z2-7]{4}$/);
-    expect(Date.parse(expiresAt)).toBeGreaterThan(Date.now());
-    withhold(a.server);
-    const b = await another(a.server, a.clock);
-    expect(vault(b.engine, a.vaultId).freshness).toBe("stale");
-    expect(b.account.isNewDevice).toBe(true);
-    await expect(b.account.pair("ABCD")).rejects.toMatchObject({
-      code: "pairing_invalid",
-    });
-    const typo = code.startsWith("A")
-      ? `B${code.slice(1)}`
-      : `A${code.slice(1)}`;
-    await expect(b.account.pair(typo)).rejects.toMatchObject({
-      code: "pairing_wrong",
-    });
-    expect(await b.account.pair(code.toLowerCase())).toEqual({ vaults: 1 });
-    expect(vault(b.engine, a.vaultId)).toMatchObject({
-      freshness: "fresh",
-      writable: true,
-    });
-    expect(b.account.userDataStale).toBe(false);
-    expect(b.account.isNewDevice).toBe(false);
-    expect(a.server.pairings.size).toBe(0);
-    await expect(b.account.pair(code)).rejects.toMatchObject({
-      code: "pairing_missing",
-    });
-  });
-
-  it("of another account does not open", async () => {
-    const a = await first();
-    await a.account.createPairing();
-    const user = a.server.users.get(a.account.userId ?? "");
-    if (!user) throw new Error("no user");
-    const b = await another(a.server, a.clock);
-    // The server hands this account a pairing sealed for another one.
-    const fake = await first(new FakeServer(), a.clock);
-    const { code } = await fake.account.createPairing();
-    const foreign = [...fake.server.pairings.values()][0];
-    if (!foreign) throw new Error("no foreign pairing");
-    a.server.pairings.set(user.user_id, foreign);
-    await expect(b.account.pair(code)).rejects.toMatchObject({
-      code: "pairing_wrong",
-    });
-  });
-
-  it("ends with locked when a lock overtakes it", async () => {
-    const a = await first();
-    const { code } = await a.account.createPairing();
-    const b = await another(a.server, a.clock);
-    a.server.onRequest = (method, path) => {
-      if (method === "GET" && path === "/v1/me/pairing") b.account.lock();
-    };
-    await expect(b.account.pair(code)).rejects.toMatchObject({
-      code: "locked",
-    });
   });
 });
 
@@ -752,6 +589,87 @@ describe("owner actions on a stale vault", () => {
     ).rejects.toMatchObject({ code: "stale" });
     await b.engine.acknowledgeFreshness(a.vaultId);
     await expect(b.engine.prepareRotation(a.vaultId)).resolves.toBeDefined();
+  });
+});
+
+describe("strict mode", () => {
+  it("keeps a new device stale despite fresh attestations, until another device confirms it", async () => {
+    const a = await first();
+    await a.account.updateSettings({ requireConfirmation: true });
+    await settle();
+    expect(a.account.strictMode).toBe(true);
+    const b = await another(a.server, a.clock);
+    expect(b.account.strictMode).toBe(true);
+    expect(b.account.userDataStale).toBe(true);
+    expect(vault(b.engine, a.vaultId)).toMatchObject({
+      freshness: "stale",
+      writable: false,
+    });
+    await b.account.requestConfirmation();
+    const [request] = await a.account.confirmationRequests();
+    await a.account.confirmRequest(request?.requestId ?? "");
+    expect(await b.account.checkConfirmation()).toMatchObject({
+      status: "confirmed",
+      confirmed: 1,
+    });
+    expect(b.account.userDataStale).toBe(false);
+    expect(vault(b.engine, a.vaultId).freshness).toBe("fresh");
+  });
+
+  it("applies the same without confirmations on the server, and understood still confirms", async () => {
+    const server = new FakeServer();
+    server.confirmationEnabled = false;
+    const a = await first(server);
+    await a.account.updateSettings({ requireConfirmation: true });
+    await settle();
+    const b = await another(server, a.clock);
+    expect(vault(b.engine, a.vaultId).freshness).toBe("stale");
+    await b.account.acknowledgeUserDataFreshness();
+    await b.engine.acknowledgeFreshness();
+    expect(vault(b.engine, a.vaultId).freshness).toBe("fresh");
+  });
+
+  it("holds while user_data is unconfirmed, even without the setting", async () => {
+    const a = await first();
+    // Only the attestation of user_data is withheld.
+    a.server.tamperMe = (me) => {
+      me.freshness = null;
+    };
+    const b = await another(a.server, a.clock);
+    expect(b.account.strictMode).toBe(false);
+    expect(b.account.userDataStale).toBe(true);
+    expect(vault(b.engine, a.vaultId).freshness).toBe("stale");
+    // Once user_data is confirmed, the vault's attestation counts again.
+    await b.account.acknowledgeUserDataFreshness();
+    expect(vault(b.engine, a.vaultId).freshness).toBe("fresh");
+  });
+
+  it("stays on a device that confirmed it until that device confirms user_data without it", async () => {
+    const a = await first();
+    await a.account.updateSettings({ requireConfirmation: true });
+    await settle();
+    const marks = inMemorySyncMarks();
+    const b = await another(a.server, a.clock, marks);
+    await b.account.acknowledgeUserDataFreshness();
+    expect((await marks.read(b.account.userId ?? "")).fs).toBe(true);
+    b.account.lock();
+    // Switched off later, by a device that stays in use.
+    await a.account.updateSettings({ requireConfirmation: false });
+    for (let day = 0; day < 4; day++) {
+      a.clock.advance(2 * DAY);
+      await a.engine.refresh();
+      await a.account.reloadUserData();
+      await settle();
+    }
+    const late = await another(a.server, a.clock, marks);
+    // The fresh attestations of the other device do not count here yet.
+    expect(late.account.strictMode).toBe(true);
+    expect(late.account.userDataStale).toBe(true);
+    expect(vault(late.engine, a.vaultId).freshness).toBe("stale");
+    await late.account.acknowledgeUserDataFreshness();
+    expect(late.account.strictMode).toBe(false);
+    expect((await marks.read(late.account.userId ?? "")).fs).toBe(false);
+    expect(vault(late.engine, a.vaultId).freshness).toBe("fresh");
   });
 });
 

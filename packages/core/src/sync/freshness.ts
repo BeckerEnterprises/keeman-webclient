@@ -176,8 +176,8 @@ export class FreshnessKeeper {
   readonly #lastUpload = new Map<string, number>();
   readonly #timers = new Map<string, unknown>();
   readonly #builders = new Map<string, () => VaultFreshness | undefined>();
-  /** Roles points this unlock learned from a pairing, by vault. */
-  readonly #paired = new Map<string, RolePoint>();
+  /** Roles points this unlock learned from a confirmation, by vault. */
+  readonly #confirmed = new Map<string, RolePoint>();
   /** Attestations the user overruled ("understood"), by their time. */
   readonly #overruled = new Map<string, number>();
   #stopped = false;
@@ -219,13 +219,13 @@ export class FreshnessKeeper {
     const points: RolePoint[] = [];
     const roles = this.#listed.get(vaultId)?.roles;
     if (roles) points.push(roles);
-    const paired = this.#paired.get(vaultId);
-    if (paired) points.push(paired);
+    const confirmed = this.#confirmed.get(vaultId);
+    if (confirmed) points.push(confirmed);
     return points;
   }
 
-  rememberPaired(vaultId: string, point: RolePoint): void {
-    this.#paired.set(vaultId, point);
+  rememberConfirmed(vaultId: string, point: RolePoint): void {
+    this.#confirmed.set(vaultId, point);
   }
 
   /**
@@ -238,7 +238,7 @@ export class FreshnessKeeper {
     this.#listed.delete(vaultId);
     this.#stored.delete(vaultId);
     this.#lastUpload.delete(vaultId);
-    this.#paired.delete(vaultId);
+    this.#confirmed.delete(vaultId);
   }
 
   /**

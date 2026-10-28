@@ -83,7 +83,7 @@ export interface RolesPort {
   saveAnchors(anchors: Record<string, RoleAnchor | null>): Promise<void>;
   contacts(): readonly Contact[];
   /**
-   * Further checked statements of a vault (own attestations, a pairing):
+   * Further checked statements of a vault (own attestations, a confirmation by another device):
    * the highest of all points is the anchor, and the chain must agree with
    * every other one.
    */

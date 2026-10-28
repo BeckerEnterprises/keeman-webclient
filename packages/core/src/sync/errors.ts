@@ -61,14 +61,18 @@ export type SyncErrorCode =
   | "manifest_mismatch"
   /** No device of the account confirmed the vault within the period; pair or confirm first. */
   | "stale"
-  /** The pairing code has invalid characters or length. */
-  | "pairing_invalid"
-  /** The server holds no pairing for the account (expired or withheld). */
-  | "pairing_missing"
-  /** The code does not open the pairing: a typo, or another account's. */
-  | "pairing_wrong"
-  /** The server stores no pairings. */
-  | "pairing_unsupported"
+  /** The server offers no confirmation by another device. */
+  | "confirmation_unsupported"
+  /** The answer does not verify: forged, for another request or account. */
+  | "confirmation_invalid"
+  /** The request is no longer open (expired, declined or withheld). */
+  | "confirmation_missing"
+  /** Another device answered the request first. */
+  | "confirmation_answered"
+  /** The own request ran out without an answer. */
+  | "confirmation_expired"
+  /** This device knows more than fits into one answer. */
+  | "confirmation_too_large"
   /** The state code has invalid characters, length or form. */
   | "state_code_invalid"
   /** A member's state code contradicts the chain; acknowledge first. */

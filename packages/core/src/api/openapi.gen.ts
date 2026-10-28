@@ -378,7 +378,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/me/pairing": {
+    "/v1/me/confirmations": {
         parameters: {
             query?: never;
             header: {
@@ -387,10 +387,30 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["getPairing"];
-        put: operations["putPairing"];
+        get: operations["listConfirmations"];
+        put?: never;
+        post: operations["requestConfirmation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/confirmations/{request_id}": {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Keeman-Client": components["parameters"]["KeemanClient"];
+            };
+            path: {
+                request_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get: operations["getConfirmation"];
+        put: operations["answerConfirmation"];
         post?: never;
-        delete: operations["deletePairing"];
+        delete: operations["deleteConfirmation"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1090,17 +1110,42 @@ export interface components {
         FreshnessRequest: {
             freshness: components["schemas"]["SignedFreshness"];
         };
-        PairingRequest: {
-            payload: components["schemas"]["PairingEnvelope"];
+        ConfirmationRequest: {
+            nonce: string;
         };
-        PairingCreated: {
+        ConfirmationCreated: {
+            request_id: components["schemas"]["Uuid"];
             expires_at: components["schemas"]["Timestamp"];
+            expires_in: number;
         };
-        Pairing: {
-            payload: components["schemas"]["PairingEnvelope"];
+        ConfirmationList: {
+            requests: components["schemas"]["ConfirmationListItem"][];
+        };
+        ConfirmationListItem: {
+            request_id: components["schemas"]["Uuid"];
+            session_id: components["schemas"]["Uuid"];
+            device_name: string;
+            client_type: components["schemas"]["ClientType"];
+            created: components["schemas"]["Timestamp"];
             expires_at: components["schemas"]["Timestamp"];
+            expires_in: number;
+            nonce: string;
+            own: boolean;
+            answered: boolean;
         };
-        PairingEnvelope: string;
+        ConfirmationStatus: {
+            request_id: components["schemas"]["Uuid"];
+            expires_at: components["schemas"]["Timestamp"];
+            expires_in: number;
+            answer: components["schemas"]["SignedConfirmation"] | null;
+        };
+        SignedConfirmation: {
+            statement: string;
+            signature: string;
+        };
+        ConfirmationAnswerRequest: {
+            answer: components["schemas"]["SignedConfirmation"];
+        };
         AppendRolesRequest: {
             roles: components["schemas"]["SignedRoles"];
         };
@@ -1137,6 +1182,7 @@ export interface components {
                 manifest?: boolean;
                 roles?: boolean;
                 freshness?: boolean;
+                confirmation?: boolean;
             };
             limits: {
                 attachment_max_bytes: number;
@@ -1534,7 +1580,7 @@ export interface components {
             deleted: boolean;
         };
         WsClientMessage: components["schemas"]["WsAuth"];
-        WsServerMessage: components["schemas"]["WsReady"] | components["schemas"]["WsVaultChanged"] | components["schemas"]["WsVaultsChanged"] | components["schemas"]["WsUserDataChanged"] | components["schemas"]["WsSessionRevoked"];
+        WsServerMessage: components["schemas"]["WsReady"] | components["schemas"]["WsVaultChanged"] | components["schemas"]["WsVaultsChanged"] | components["schemas"]["WsUserDataChanged"] | components["schemas"]["WsSessionRevoked"] | components["schemas"]["WsConfirmationsChanged"];
         WsAuth: {
             type: "auth";
             access_token: components["schemas"]["Token"];
@@ -1556,6 +1602,9 @@ export interface components {
         };
         WsSessionRevoked: {
             type: "session_revoked";
+        };
+        WsConfirmationsChanged: {
+            type: "confirmations_changed";
         };
     };
     responses: {
@@ -2447,7 +2496,7 @@ export interface operations {
             default: components["responses"]["Problem"];
         };
     };
-    getPairing: {
+    listConfirmations: {
         parameters: {
             query?: never;
             header: {
@@ -2463,15 +2512,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Pairing"];
+                    "application/json": components["schemas"]["ConfirmationList"];
                 };
             };
             401: components["responses"]["Unauthorized"];
-            404: components["responses"]["NotFound"];
             default: components["responses"]["Problem"];
         };
     };
-    putPairing: {
+    requestConfirmation: {
         parameters: {
             query?: never;
             header: {
@@ -2482,32 +2530,106 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["PairingRequest"];
+                "application/json": components["schemas"]["ConfirmationRequest"];
             };
         };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfirmationCreated"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            429: components["responses"]["TooManyRequests"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    getConfirmation: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Keeman-Client": components["parameters"]["KeemanClient"];
+            };
+            path: {
+                request_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PairingCreated"];
+                    "application/json": components["schemas"]["ConfirmationStatus"];
                 };
             };
-            400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
-            413: components["responses"]["PayloadTooLarge"];
-            429: components["responses"]["TooManyRequests"];
+            404: components["responses"]["NotFound"];
             default: components["responses"]["Problem"];
         };
     };
-    deletePairing: {
+    answerConfirmation: {
         parameters: {
             query?: never;
             header: {
                 "X-Keeman-Client": components["parameters"]["KeemanClient"];
             };
-            path?: never;
+            path: {
+                request_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmationAnswerRequest"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            413: components["responses"]["PayloadTooLarge"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    deleteConfirmation: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Keeman-Client": components["parameters"]["KeemanClient"];
+            };
+            path: {
+                request_id: components["schemas"]["Uuid"];
+            };
             cookie?: never;
         };
         requestBody?: never;

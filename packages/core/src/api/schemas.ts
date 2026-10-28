@@ -29,6 +29,8 @@ export const ServerConfigSchema = v.object({
     roles: v.optional(v.boolean()),
     /** Absent on servers that store no freshness attestations. */
     freshness: v.optional(v.boolean()),
+    /** Absent on servers without confirmations by another device. */
+    confirmation: v.optional(v.boolean()),
   }),
   limits: v.object({ attachment_max_bytes: Count }),
 });
@@ -157,12 +159,42 @@ export const MeSchema = v.object({
 });
 export type Me = v.InferOutput<typeof MeSchema>;
 
-export const PairingSchema = v.object({
-  payload: v.pipe(v.string(), v.regex(/^[A-Za-z0-9_-]+$/)),
+const ExpiresIn = v.pipe(v.number(), v.integer(), v.minValue(0));
+
+export const ConfirmationCreatedSchema = v.object({
+  request_id: Uuid,
   expires_at: v.string(),
+  expires_in: ExpiresIn,
 });
 
-export const PairingCreatedSchema = v.object({ expires_at: v.string() });
+/** Open requests of the account; names and nonces are server claims. */
+export const ConfirmationListSchema = v.object({
+  requests: v.array(
+    v.object({
+      request_id: Uuid,
+      session_id: Uuid,
+      device_name: v.string(),
+      client_type: v.string(),
+      created: v.string(),
+      expires_at: v.string(),
+      expires_in: ExpiresIn,
+      nonce: v.string(),
+      own: v.boolean(),
+      answered: v.boolean(),
+    }),
+  ),
+});
+export type ConfirmationListItem = v.InferOutput<
+  typeof ConfirmationListSchema
+>["requests"][number];
+
+/** The own request; the answer is checked by the caller, never trusted. */
+export const ConfirmationStatusSchema = v.object({
+  request_id: Uuid,
+  expires_at: v.string(),
+  expires_in: ExpiresIn,
+  answer: v.optional(v.unknown()),
+});
 
 export const ReauthSchema = v.object({ reauth_token: Token });
 

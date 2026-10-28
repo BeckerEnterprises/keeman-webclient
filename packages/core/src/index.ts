@@ -28,6 +28,8 @@ export type {
 export {
   Account,
   type AccountOptions,
+  type ConfirmationCheck,
+  type ConfirmationRequest,
   type LoginResult,
   type PasskeyRegistration,
   type PendingRegistration,

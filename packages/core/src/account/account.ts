@@ -56,14 +56,14 @@ import { decryptUserData, encryptUserData } from "../crypto/objects";
 import { systemRandomness } from "../crypto/random";
 import { signFreshness, type UserDataFreshness } from "../crypto/freshness";
 import {
-  formatPairingCode,
-  generatePairingSecret,
-  openPairing,
-  parsePairingCode,
-  sealPairing,
-  type PairingContent,
-} from "../crypto/pairing";
+  CONFIRMATION_NONCE_BYTES,
+  readConfirmation,
+  signConfirmation,
+  type ConfirmationContent,
+  type SignedConfirmation,
+} from "../crypto/confirmation";
 import type { RolePoint } from "../crypto/roles";
+import type { StateCode } from "../crypto/state-code";
 import { signingPublicKeyOf } from "../crypto/signing";
 import {
   attestedAt,
@@ -139,10 +139,48 @@ export interface UnlockReport {
   userDataRollback: boolean;
   /** No device of the account confirmed the delivered user_data in time. */
   userDataStale: boolean;
-  /** This device had no marks for the account yet (offer pairing). */
+  /** This device had no marks for the account yet (offer a confirmation). */
   newDevice: boolean;
   /** Unused backup codes left after a login with a backup code. */
   backupCodesRemaining?: number;
+}
+
+/** How long a request for a confirmation by another device stays open. */
+const CONFIRMATION_SECONDS = 300;
+
+/** A request of another session of the account; names are server claims. */
+export interface ConfirmationRequest {
+  requestId: string;
+  sessionId: string;
+  deviceName: string;
+  clientType: string;
+  created: string;
+  /** On this device's clock (Unix ms). */
+  expiresAt: number;
+}
+
+/** What looking for the answer to the own request found. */
+export type ConfirmationCheck =
+  | { status: "none" }
+  | { status: "waiting" }
+  /** A tab of the same session asked anew; this one stops quietly. */
+  | { status: "replaced" }
+  | {
+      status: "confirmed";
+      /** Vaults of this device, and how many are confirmed now. */
+      vaults: number;
+      confirmed: number;
+      /** Vaults the other device knows that the server does not list here. */
+      missing: number;
+    };
+
+function isNonce(value: string): boolean {
+  try {
+    fromBase64Url(value, CONFIRMATION_NONCE_BYTES);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** A login either unlocks at once or needs the second factor. */
@@ -241,6 +279,12 @@ export class Account {
   #freshnessFeature: Promise<boolean> | undefined;
   /** The period this device last confirmed (`fd` of the marks). */
   #periodFloor: number | undefined;
+  /** Strict mode at this device's last confirmation (`fs` of the marks). */
+  #strictFloor: boolean | undefined;
+  /** Whether the server offers confirmations by another device, asked once. */
+  #confirmationFeature: Promise<boolean> | undefined;
+  /** The own open request; its nonce never leaves memory. */
+  #request: { requestId: string; nonce: string; deadline: number } | undefined;
   /** No marks for the account on this device at the unlock. */
   #newDevice = false;
   /** The last uploaded attestation of user_data. */
@@ -745,6 +789,7 @@ export class Account {
     const attestation = slot.attestation;
     const marks = await this.#marks.read(userId);
     this.#periodFloor = marks.fd;
+    this.#strictFloor = marks.fs;
     const floor: [number, number] = [
       marks.ud?.[0] ?? 0,
       Math.max(marks.ud?.[1] ?? 0, attestation?.seq ?? 0),
@@ -760,8 +805,9 @@ export class Account {
     const now = this.#now();
     // Marks from before confirmation times: the first check confirms.
     const transition = marks.ud !== undefined && marks.uf === undefined;
+    // In strict mode an attestation is a floor, never a reference time.
     const attested =
-      attestation && seq >= attestation.seq
+      attestation && seq >= attestation.seq && !this.strictMode
         ? (attestedAt(attestation.time, now) ?? 0)
         : 0;
     const basis = transition ? now : Math.max(marks.uf ?? 0, attested);
@@ -803,6 +849,7 @@ export class Account {
       readOnly: (slot.state.raw.schema as number) > USER_DATA_SCHEMA,
     };
     this.#engine?.contactsChanged();
+    this.#engine?.userDataStateChanged();
     await this.#attestUserData();
   }
 
@@ -824,6 +871,7 @@ export class Account {
       confirmedSince: undefined,
     };
     const { rollback, stale } = await this.#applyUserDataMarks();
+    this.#engine?.userDataStateChanged();
     if (!rollback && !stale) void this.#attestUserData().catch(() => undefined);
   }
 
@@ -849,7 +897,10 @@ export class Account {
     this.#rolesFeature = undefined;
     this.#rolesKnown = undefined;
     this.#freshnessFeature = undefined;
+    this.#confirmationFeature = undefined;
     this.#periodFloor = undefined;
+    this.#strictFloor = undefined;
+    this.#request = undefined;
     this.#newDevice = false;
     this.#userDataAttested = undefined;
     this.#userDataOverruled = undefined;
@@ -1272,6 +1323,10 @@ export class Account {
         },
         now: () => this.#now(),
         freshnessPeriodDays: () => this.freshnessPeriodDays,
+        // Unconfirmed user_data never turns strict mode off: an older one
+        // without the setting must not make attestations count.
+        strictConfirmation: () => this.strictMode || !this.#userDataConfirmed(),
+        userDataConfirmed: () => this.#userDataConfirmed(),
         attestUserData: () => this.#attestUserData(),
       },
       options,
@@ -1345,9 +1400,17 @@ export class Account {
   async #confirmUserData(userId: string, slot: UserDataSlot): Promise<void> {
     if (slot.state.status !== "ok") return;
     const now = this.#now();
-    const days = effectiveSettings(slot.state.raw).freshnessDays;
-    await this.#marks.raise(userId, { uf: now, fd: days, vaults: {} });
+    const settings = effectiveSettings(slot.state.raw);
+    const days = settings.freshnessDays;
+    const strict = settings.requireConfirmation;
+    await this.#marks.raise(userId, {
+      uf: now,
+      fd: days,
+      fs: strict,
+      vaults: {},
+    });
     this.#periodFloor = days;
+    this.#strictFloor = strict;
     slot.confirmedSince = now;
     this.#markStale(slot, false);
   }
@@ -1361,6 +1424,7 @@ export class Account {
     await this.#confirmUserData(userId, slot);
     this.#current(epoch);
     this.#engine?.contactsChanged();
+    this.#engine?.userDataStateChanged();
     await this.#attestUserData();
   }
 
@@ -1409,117 +1473,252 @@ export class Account {
     await this.#confirmUserData(userId, slot);
   }
 
+  // ------------------------------------------------------------ confirmation
+
+  #confirmationSupported(): Promise<boolean> {
+    this.#confirmationFeature ??= this.#api.config().then(
+      (config) => config.features.confirmation === true,
+      () => {
+        this.#confirmationFeature = undefined;
+        return false;
+      },
+    );
+    return this.#confirmationFeature;
+  }
+
+  /** Whether the server offers confirmations by another device. */
+  confirmationSupported(): Promise<boolean> {
+    return this.#confirmationSupported();
+  }
+
+  /** Strict mode on this device: delivered, or kept from its confirmation. */
+  get strictMode(): boolean {
+    return this.settings.requireConfirmation || this.#strictFloor === true;
+  }
+
+  #userDataConfirmed(): boolean {
+    const slot = this.#slot();
+    return slot?.state.status === "ok" && !slot.stale && !slot.rollback;
+  }
+
   /**
-   * Makes a pairing for another device of this account: the vaults are
-   * synced first, then their marks travel sealed with a one-time code.
+   * Asks the other unlocked devices of the account to confirm this one. The
+   * nonce stays in memory; a new request replaces the previous one.
    */
-  async createPairing(): Promise<{ code: string; expiresAt: string }> {
+  async requestConfirmation(): Promise<{ expiresAt: number }> {
+    const epoch = this.#epoch;
+    this.#requireUnlocked();
+    if (!(await this.#confirmationSupported()))
+      throw new SyncError("confirmation_unsupported");
+    this.#current(epoch);
+    const nonce = toBase64Url(
+      systemRandomness.bytes("confirmation_nonce", CONFIRMATION_NONCE_BYTES),
+    );
+    const started = this.#now();
+    const { requestId, expiresIn } = await this.#api.requestConfirmation(nonce);
+    this.#current(epoch);
+    // Our own deadline: a server cannot keep the request open longer.
+    const deadline = started + Math.min(expiresIn, CONFIRMATION_SECONDS) * 1000;
+    this.#request = { requestId, nonce, deadline };
+    return { expiresAt: deadline };
+  }
+
+  /** The deadline of the own open request, if there is one. */
+  get confirmationDeadline(): number | undefined {
+    return this.#request?.deadline;
+  }
+
+  /**
+   * Looks for the answer to the own request. Only the own nonce and the own
+   * derived signing key count; the server's list is a hint. `replaced`: a
+   * tab of this session asked anew, which this one leaves alone.
+   */
+  async checkConfirmation(): Promise<ConfirmationCheck> {
     const epoch = this.#epoch;
     const userId = this.#requireUnlocked();
-    if (!(await this.#freshnessSupported()))
-      throw new SyncError("pairing_unsupported");
+    const request = this.#request;
+    if (!request) return { status: "none" };
+    if (this.#now() > request.deadline) {
+      this.#request = undefined;
+      throw new SyncError("confirmation_expired");
+    }
+    let answer: unknown;
+    try {
+      ({ answer } = await this.#api.confirmation(request.requestId));
+    } catch (error) {
+      if (!(error instanceof ApiError && error.status === 404)) throw error;
+      this.#current(epoch);
+      const own = (await this.#api.confirmations()).find((r) => r.own);
+      this.#current(epoch);
+      if (this.#request === request) this.#request = undefined;
+      if (own && own.request_id !== request.requestId)
+        return { status: "replaced" };
+      throw new SyncError("confirmation_missing");
+    }
+    this.#current(epoch);
+    if (this.#request !== request) return { status: "replaced" };
+    if (answer === null) return { status: "waiting" };
+    this.#request = undefined;
+    let read: { content: ConfirmationContent };
+    try {
+      read = readConfirmation(answer, this.#keys.signingPublicKey(), {
+        userId,
+        nonce: request.nonce,
+      });
+    } catch (error) {
+      if (!(error instanceof CryptoError)) throw error;
+      await this.#api
+        .deleteConfirmation(request.requestId)
+        .catch(() => undefined);
+      throw new SyncError("confirmation_invalid");
+    }
+    this.#current(epoch);
+    const points = await this.#applyConfirmation(userId, read.content);
+    this.#current(epoch);
+    this.#newDevice = false;
+    await this.#api
+      .deleteConfirmation(request.requestId)
+      .catch(() => undefined);
+    this.#current(epoch);
+    await this.reloadUserData();
+    await this.#engine?.afterConfirmation(points);
+    this.#current(epoch);
+    const vaults = this.#engine?.snapshot.vaults ?? [];
+    const known = new Set(vaults.map((v) => v.id));
+    return {
+      status: "confirmed",
+      vaults: vaults.length,
+      confirmed: vaults.filter((v) => v.freshness === "fresh").length,
+      missing: read.content.vaults.filter((v) => !known.has(v.vaultId)).length,
+    };
+  }
+
+  /** Withdraws the own request. */
+  async cancelConfirmation(): Promise<void> {
+    const request = this.#request;
+    this.#request = undefined;
+    if (request)
+      await this.#api
+        .deleteConfirmation(request.requestId)
+        .catch(() => undefined);
+  }
+
+  /** Open requests of the other sessions; names are the server's claims. */
+  async confirmationRequests(): Promise<ConfirmationRequest[]> {
+    const epoch = this.#epoch;
+    this.#requireUnlocked();
+    if (!(await this.#confirmationSupported())) return [];
+    this.#current(epoch);
+    const list = await this.#api.confirmations();
+    this.#current(epoch);
+    const now = this.#now();
+    return list
+      .filter((r) => !r.own && !r.answered)
+      .map((r) => ({
+        requestId: r.request_id,
+        sessionId: r.session_id,
+        deviceName: r.device_name,
+        clientType: r.client_type,
+        created: r.created,
+        expiresAt: now + Math.min(r.expires_in, CONFIRMATION_SECONDS) * 1000,
+      }));
+  }
+
+  /** Vaults for which this device would pass on no confirmation time. */
+  get unconfirmableVaults(): number {
+    return this.#engine?.unconfirmableVaults ?? 0;
+  }
+
+  /**
+   * Confirms another device's request after the user clicked: syncs, then
+   * signs this device's marks bound to the request's nonce.
+   */
+  async confirmRequest(requestId: string): Promise<void> {
+    const epoch = this.#epoch;
+    const userId = this.#requireUnlocked();
+    if (!(await this.#confirmationSupported()))
+      throw new SyncError("confirmation_unsupported");
+    this.#current(epoch);
+    const request = (await this.#api.confirmations()).find(
+      (r) => r.request_id === requestId && !r.own,
+    );
+    this.#current(epoch);
+    if (!request || !isNonce(request.nonce))
+      throw new SyncError("confirmation_missing");
+    const deadline = this.#now() + request.expires_in * 1000;
     await this.#engine?.refresh();
     this.#current(epoch);
+    if (this.#now() > deadline) throw new SyncError("confirmation_missing");
     const marks = await this.#marks.read(userId);
     this.#current(epoch);
-    const time = (ms: number | undefined) =>
-      ms ? new Date(ms).toISOString() : null;
-    const ids =
-      this.#engine?.snapshot.vaults.map((v) => v.id) ??
-      Object.keys(marks.vaults);
     const ud = marks.ud;
-    const content: PairingContent = {
-      fd: marks.fd ?? null,
+    const content: ConfirmationContent = {
       userData:
         ud && ud[0] >= 1 && ud[1] >= 1
-          ? { rev: ud[0], seq: ud[1], at: time(marks.uf) }
+          ? {
+              rev: ud[0],
+              seq: ud[1],
+              at:
+                this.#userDataConfirmed() && marks.uf
+                  ? new Date(marks.uf).toISOString()
+                  : null,
+            }
           : null,
-      vaults: ids.flatMap((vaultId) => {
-        const m = marks.vaults[vaultId];
-        return m
-          ? [
-              {
-                vaultId,
-                rev: m.rev,
-                kv: m.kv ?? null,
-                mf: m.mf ?? null,
-                rl: m.rl ? { version: m.rl[0], hash: m.rl[1] } : null,
-                at: time(m.ft),
-              },
-            ]
-          : [];
-      }),
+      vaults: this.#engine?.confirmationVaults(marks) ?? [],
     };
-    const secret = generatePairingSecret(systemRandomness);
+    let answer: SignedConfirmation;
     try {
-      const payload = sealPairing(systemRandomness, secret, userId, content);
-      const { expiresAt } = await this.#api.putPairing(payload);
-      this.#current(epoch);
-      return { code: formatPairingCode(secret), expiresAt };
-    } finally {
-      wipe(secret);
+      answer = this.#keys.useSigningKey((secretKey) =>
+        signConfirmation(
+          {
+            userId,
+            nonce: request.nonce,
+            time: new Date(this.#now()).toISOString(),
+            content,
+          },
+          secretKey,
+        ),
+      );
+    } catch (error) {
+      if (error instanceof CryptoError && error.code === "validation")
+        throw new SyncError("confirmation_too_large");
+      throw error;
     }
+    try {
+      await this.#api.answerConfirmation(requestId, answer);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404)
+        throw new SyncError("confirmation_missing");
+      if (error instanceof ApiError && error.code === "conflict")
+        throw new SyncError("confirmation_answered");
+      throw error;
+    }
+    this.#current(epoch);
   }
 
-  /**
-   * Takes over the marks of another device of this account; afterwards
-   * every vault and user_data are checked again against them.
-   */
-  async pair(code: string): Promise<{ vaults: number }> {
+  /** "That wasn't me": the request goes away. */
+  async declineRequest(requestId: string): Promise<void> {
     const epoch = this.#epoch;
-    const userId = this.#requireUnlocked();
-    let secret: Uint8Array;
-    try {
-      secret = parsePairingCode(code);
-    } catch {
-      throw new SyncError("pairing_invalid");
-    }
-    try {
-      if (!(await this.#freshnessSupported()))
-        throw new SyncError("pairing_unsupported");
-      let payload: string;
-      try {
-        payload = (await this.#api.pairing()).payload;
-      } catch (error) {
-        if (error instanceof ApiError && error.status === 404)
-          throw new SyncError("pairing_missing");
-        throw error;
-      }
-      this.#current(epoch);
-      let content: PairingContent;
-      try {
-        content = openPairing(secret, userId, payload);
-      } catch (error) {
-        if (error instanceof CryptoError) throw new SyncError("pairing_wrong");
-        throw error;
-      }
-      const points = await this.#applyPairing(userId, content);
-      this.#current(epoch);
-      this.#newDevice = false;
-      try {
-        await this.#api.deletePairing();
-      } catch {
-        // It expires anyway.
-      }
-      this.#current(epoch);
-      await this.reloadUserData();
-      await this.#engine?.afterPairing(points);
-      return { vaults: content.vaults.length };
-    } finally {
-      wipe(secret);
-    }
+    this.#requireUnlocked();
+    await this.#api.deleteConfirmation(requestId);
+    this.#current(epoch);
   }
 
-  /** The pairing's marks as floors; its confirmation times on this clock. */
-  async #applyPairing(
+  /** The confirmation's marks as floors; its confirmation times on this clock. */
+  async #applyConfirmation(
     userId: string,
-    content: PairingContent,
-  ): Promise<Map<string, RolePoint>> {
+    content: ConfirmationContent,
+  ): Promise<
+    Map<string, { roles: RolePoint | null; codes: readonly StateCode[] }>
+  > {
     const now = this.#now();
     const time = (at: string | null) =>
       at === null ? 0 : (attestedAt(at, now) ?? 0);
     const vaults: UserMarks["vaults"] = {};
-    const points = new Map<string, RolePoint>();
+    const points = new Map<
+      string,
+      { roles: RolePoint | null; codes: readonly StateCode[] }
+    >();
     for (const v of content.vaults) {
       vaults[v.vaultId] = {
         rev: v.rev,
@@ -1529,15 +1728,14 @@ export class Account {
         ...(v.rl ? { rl: [v.rl.version, v.rl.hash] } : {}),
         ft: time(v.at),
       };
-      if (v.rl) points.set(v.vaultId, v.rl);
+      if (v.rl || v.cp.length > 0)
+        points.set(v.vaultId, { roles: v.rl, codes: v.cp });
     }
     const ud = content.userData;
     const uf = ud ? time(ud.at) : 0;
     await this.#marks.raise(userId, {
       ...(ud ? { ud: [ud.rev, ud.seq] } : {}),
-      ...(uf > 0
-        ? { uf, ...(content.fd !== null ? { fd: content.fd } : {}) }
-        : {}),
+      ...(uf > 0 ? { uf } : {}),
       vaults,
     });
     return points;
