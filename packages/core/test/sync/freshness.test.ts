@@ -586,6 +586,23 @@ describe("marks from before confirmation times", () => {
   });
 });
 
+describe("an attestation after an own write", () => {
+  it("names the new root, also when the sync after the write fails", async () => {
+    const a = await first();
+    // Uploads are spaced by a minute.
+    a.clock.advance(61_000);
+    a.server.loseResponses = (path) =>
+      path === `/v1/vaults/${a.vaultId}/changes`;
+    await entry(a.engine, a.vaultId);
+    await settle();
+    a.server.loseResponses = () => false;
+    a.account.lock();
+    // Another device takes that attestation as confirmation.
+    const b = await another(a.server, a.clock);
+    expect(vault(b.engine, a.vaultId).freshness).toBe("fresh");
+  });
+});
+
 describe("the manifest floor of an attestation", () => {
   it("catches the root a device holds without syncing it again", async () => {
     const a = await first();

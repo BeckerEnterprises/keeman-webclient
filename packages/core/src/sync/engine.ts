@@ -3544,7 +3544,9 @@ export class SyncEngine {
 
   #statement(state: VaultState): VaultFreshness {
     const root = currentRoot(state);
-    const rootHash = state.manifest.rootHash;
+    // What was delivered, including the own batches: after a write whose
+    // sync failed, the checked hash would still be the old root's.
+    const rootHash = state.served.get(manifestIds(state.id).root)?.hash;
     const head = state.roles?.status === "ok" ? state.roles.head : undefined;
     return {
       type: "vault_freshness",
