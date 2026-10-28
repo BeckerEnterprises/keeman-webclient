@@ -507,15 +507,22 @@ describe("rotation details", () => {
     server.onRequest = () => undefined;
   });
 
-  it("keeps an invitation sent meanwhile or asks again", async () => {
+  it("asks again for an invitation the review did not show", async () => {
     const { server, alice, vaultId } = await team();
     const erin = await person(server, "erin@example.com");
     const candidate = await alice.engine.lookupUser(erin.email);
     await alice.account.verifyContact(candidate);
     const review = await alice.engine.prepareRotation(vaultId);
-    // An invitation arrives after the review; Erin is verified: kept.
+    // An invitation arrives after the review. Erin is verified, but the
+    // owner did not see her: nothing goes out without a new review.
     await alice.engine.invite(vaultId, candidate);
-    await alice.engine.runRotation(review, { remove: [], dropCorrupt: false });
+    const commits = posts(server, "/commit");
+    await expect(
+      alice.engine.runRotation(review, { remove: [], dropCorrupt: false }),
+    ).rejects.toMatchObject({ code: "rotation_conflict" });
+    expect(posts(server, "/commit")).toBe(commits);
+    // Shown in the new review, she keeps her invitation.
+    await rotate(alice, vaultId);
     const invited = server.vaults
       .get(vaultId)
       ?.members.get(erin.account.userId ?? "");

@@ -330,8 +330,10 @@ function parts(objects: StoredObject[]): StoredObject[][] {
 }
 
 /**
- * The recipients that keep access, each verified now; a new unverified one
- * or one the review did not show means the owner must decide again.
+ * The recipients that keep access, each verified now; one the review did
+ * not show means the owner must decide again, even a verified one: the
+ * server could slip in an invitation for a removed member who is still a
+ * verified contact.
  */
 function keptRecipients(
   ctx: SharingContext,
@@ -347,10 +349,10 @@ function keptRecipients(
   for (const recipient of recipientsOf(ctx, members)) {
     const { candidate } = recipient;
     if (remove.has(candidate.userId)) continue;
+    if (!reviewed.has(candidate.userId))
+      throw new SyncError("rotation_conflict");
     if (statusNow(candidate, contacts) !== "verified")
-      throw new SyncError(
-        reviewed.has(candidate.userId) ? "unverified" : "rotation_conflict",
-      );
+      throw new SyncError("unverified");
     (recipient.state === "active" ? kept.members : kept.invites).push(
       candidate,
     );
