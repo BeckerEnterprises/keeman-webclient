@@ -120,6 +120,8 @@ export interface SharingContext {
   rotationUploads: { objects: number; bytes: number }[];
   /** `features.roles`; without it the server names no signing keys. */
   rolesEnabled: () => boolean;
+  /** Statements per page of the roles chain. */
+  rolesPageSize: () => number;
 }
 
 const TIMESTAMP = "2026-10-23T08:00:00.000Z";
@@ -190,7 +192,7 @@ export function sharing(
   }
 
   const match =
-    /^\/v1\/vaults\/([0-9a-f-]{36})\/(members|members\/me|members\/([0-9a-f-]{36})|accept|decline|key|roles|roles\?since=\d+|rotations|rotations\/([0-9a-f-]{36})\/(objects|commit))$/.exec(
+    /^\/v1\/vaults\/([0-9a-f-]{36})\/(members|members\/me|members\/([0-9a-f-]{36})|accept|decline|key|roles|roles\?since=\d+(?:&limit=\d+)?|rotations|rotations\/([0-9a-f-]{36})\/(objects|commit))$/.exec(
       path,
     );
   if (!match) return undefined;
@@ -221,14 +223,17 @@ export function sharing(
       .map(([id]) => id);
   if (area.startsWith("roles") && method === "GET") {
     const since = Number(/since=(\d+)/.exec(path)?.[1] ?? "0");
+    const limit = Number(/limit=(\d+)/.exec(path)?.[1] ?? ctx.rolesPageSize());
+    const after = vault.roles.filter((r) => r.version > since);
+    const page = after.slice(0, Math.min(limit, ctx.rolesPageSize()));
     return reply(200, {
-      statements: vault.roles
-        .filter((r) => r.version > since)
-        .map((r) => ({
-          version: r.version,
-          statement: r.statement,
-          signature: r.signature,
-        })),
+      statements: page.map((r) => ({
+        version: r.version,
+        statement: r.statement,
+        signature: r.signature,
+      })),
+      next_since:
+        page.length < after.length ? (page.at(-1)?.version ?? null) : null,
     });
   }
   if (area === "members/me" && method === "DELETE") {

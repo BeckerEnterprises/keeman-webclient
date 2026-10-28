@@ -969,13 +969,25 @@ export class ApiClient {
   }
 
   /** The roles chain after version `since`. */
+  /** The chain after `since`, all pages of it. */
   async roles(vaultId: string, since = 0): Promise<RoleChain["statements"]> {
-    const data = await this.#request({
-      method: "GET",
-      path: `${vaultPath(vaultId)}/roles?since=${String(since)}`,
-      auth: true,
-    });
-    return parse(RoleChainSchema, data).statements;
+    const statements: RoleChain["statements"] = [];
+    let from = since;
+    for (;;) {
+      const data = await this.#request({
+        method: "GET",
+        path: `${vaultPath(vaultId)}/roles?since=${String(from)}`,
+        auth: true,
+      });
+      const page = parse(RoleChainSchema, data);
+      statements.push(...page.statements);
+      const next = page.next_since ?? null;
+      if (next === null) return statements;
+      // Each page must continue where the last one ended.
+      if (next !== page.statements.at(-1)?.version || next <= from)
+        throw new NetworkError("response");
+      from = next;
+    }
   }
 
   /**

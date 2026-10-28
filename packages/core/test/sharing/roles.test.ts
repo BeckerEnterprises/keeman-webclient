@@ -297,6 +297,20 @@ describe("signed roles", () => {
     expect(posts(server, "/accept")).toBe(2);
   });
 
+  it("loads the chain page by page", async () => {
+    const { server, alice, bob, carol, vaultId } = await team();
+    await alice.engine.setMemberRole(vaultId, id(carol), "owner");
+    server.rolesPageSize = 1;
+    bob.account.lock();
+    await bob.account.unlock(PASSWORD);
+    bob.engine = bob.account.startSync();
+    await bob.engine.refresh();
+    expect(vault(bob.engine, vaultId).roles).toMatchObject({
+      status: "ok",
+      code: { version: 2 },
+    });
+  });
+
   it("checks a named chain also when the configuration does not load", async () => {
     const { server, bob, vaultId } = await team();
     bob.account.lock();

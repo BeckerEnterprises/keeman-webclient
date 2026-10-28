@@ -344,6 +344,8 @@ export class FakeServer {
   manifestEnabled = true;
   /** `features.roles`: signing keys and roles chains; off like an older server. */
   rolesEnabled = true;
+  /** Statements per page of `GET …/roles`. */
+  rolesPageSize = 1000;
   /** `features.freshness`: attestations; off like an older server. */
   freshnessEnabled = true;
   /** `features.confirmation`: confirmations by another device. */
@@ -1572,6 +1574,7 @@ export class FakeServer {
         },
         rotationUploads: this.rotationUploads,
         rolesEnabled: () => this.rolesEnabled,
+        rolesPageSize: () => this.rolesPageSize,
       },
       method,
       path,

@@ -298,6 +298,8 @@ export const RoleChainSchema = v.object({
       signature: base64url(86),
     }),
   ),
+  /** Where the next page starts; missing from servers without pages. */
+  next_since: v.optional(v.nullable(PositiveInteger)),
 });
 export type RoleChain = v.InferOutput<typeof RoleChainSchema>;
 

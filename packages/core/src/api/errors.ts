@@ -22,6 +22,7 @@ const PROBLEM_CODES: ReadonlySet<string> = new Set<ProblemCode>([
   "conflict",
   "refresh_superseded",
   "rotation_invalid",
+  "rotation_in_progress",
   "stale_key_version",
   "key_version_mismatch",
   "email_taken",
