@@ -51,6 +51,7 @@ const API_CODES = new Set([
   "key_version_mismatch",
   "use_rotate",
   "rotation_invalid",
+  "rotation_in_progress",
   "rotation_incomplete",
   "invalid_second_factor",
   "challenge_invalid",

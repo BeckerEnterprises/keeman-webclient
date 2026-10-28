@@ -307,6 +307,9 @@ export class WriteOperation {
     if (isTransient(error)) return new RetryableWrite(pending);
     if (error instanceof ApiError) {
       if (error.code === "stale_key_version") return new SyncError("stale_key");
+      // An owner is renewing the key and removes this account: no retry.
+      if (error.code === "rotation_in_progress")
+        return new SyncError("rotation_in_progress");
       if (error.code === "not_found") return new SyncError("not_found");
       if (error.code === "forbidden") return new SyncError("read_only");
     }

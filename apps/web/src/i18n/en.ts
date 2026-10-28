@@ -1348,6 +1348,8 @@ const en: typeof de = {
     use_rotate:
       "Active members are removed with “Remove”, which renews the key.",
     rotation_invalid: "The key renewal expired. Please try again.",
+    rotation_in_progress:
+      "An owner is renewing the key of this database and removes your account. Changes are no longer possible.",
     rotation_incomplete: "The members changed. Please review again.",
     sync_unverified:
       "This account is not a verified contact. Compare the fingerprints first.",
@@ -1401,6 +1403,8 @@ const en: typeof de = {
       "The key could not be opened or checked and was not accepted. This may be an error or an attack on the server.",
     sync_rotation_conflict:
       "The database or its members changed during the renewal. Please review again.",
+    sync_rotation_in_progress:
+      "An owner is renewing the key of this database and removes your account. The change was not saved.",
     sync_corrupt_objects:
       "Corrupt objects prevent this step. A key renewal can discard them.",
     sync_invalid_icon: "The image is not a valid icon.",

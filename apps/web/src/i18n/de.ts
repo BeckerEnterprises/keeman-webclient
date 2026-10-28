@@ -1393,6 +1393,8 @@ export default {
       "Aktive Mitglieder werden über „Entfernen“ mit einer Schlüsselerneuerung entfernt.",
     rotation_invalid:
       "Die Schlüsselerneuerung ist abgelaufen. Bitte erneut versuchen.",
+    rotation_in_progress:
+      "Ein Eigentümer erneuert gerade den Schlüssel dieser Datenbank und entfernt dabei dein Konto. Änderungen sind deshalb nicht mehr möglich.",
     rotation_incomplete:
       "Die Mitglieder haben sich geändert. Bitte erneut prüfen.",
     sync_unverified:
@@ -1447,6 +1449,8 @@ export default {
       "Der Schlüssel ließ sich nicht öffnen oder prüfen und wurde nicht angenommen. Das kann ein Fehler oder ein Angriff auf den Server sein.",
     sync_rotation_conflict:
       "Die Datenbank oder ihre Mitglieder haben sich während der Erneuerung geändert. Bitte erneut prüfen.",
+    sync_rotation_in_progress:
+      "Ein Eigentümer erneuert gerade den Schlüssel dieser Datenbank und entfernt dabei dein Konto. Die Änderung wurde nicht gespeichert.",
     sync_corrupt_objects:
       "Beschädigte Objekte verhindern diesen Schritt. Bei einer Schlüsselerneuerung kannst du sie verwerfen.",
     sync_invalid_icon: "Das Bild ist kein gültiges Icon.",

@@ -49,6 +49,8 @@ export type SyncErrorCode =
   | "key_box_invalid"
   /** The vault or its members changed during a rotation; review again. */
   | "rotation_conflict"
+  /** An owner is renewing the vault's key and removes this account meanwhile. */
+  | "rotation_in_progress"
   /** Corrupt objects block the rotation until the owner drops them, and the icon cleanup. */
   | "corrupt_objects"
   /** Not a 64 × 64 PNG of at most 32 KiB. */

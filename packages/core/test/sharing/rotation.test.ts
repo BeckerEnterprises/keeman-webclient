@@ -93,6 +93,15 @@ describe("removing a member", () => {
       ({ done }) => progress.push(done),
     );
     expect(progress.at(-1)).toBe(review.objects);
+    // Opening names the account to remove, so that it cannot hold off the
+    // commit by writing; the commit removes no one else.
+    const body = (suffix: string) =>
+      JSON.parse(
+        server.log.find((r) => r.method === "POST" && r.path.endsWith(suffix))
+          ?.body ?? "{}",
+      ) as { remove_user_ids?: string[] };
+    expect(body("/rotations").remove_user_ids).toEqual([carol.account.userId]);
+    expect(body("/commit").remove_user_ids).toEqual([carol.account.userId]);
     const record = server.vaults.get(vaultId);
     expect(record?.key_version).toBe(2);
     expect(record?.members.has(carol.account.userId ?? "")).toBe(false);

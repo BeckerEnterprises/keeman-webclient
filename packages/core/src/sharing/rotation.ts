@@ -401,9 +401,12 @@ async function attempt(
       ctx.api.openRotation(
         vaultId,
         systemRandomness.id("idempotency_key"),
+        // The accounts to remove can no longer write while it is open,
+        // so a member cannot hold off its removal by writing all along.
         JSON.stringify({
           base_revision: collected.baseRevision,
           new_key_version: newKeyVersion,
+          ...(remove.size > 0 ? { remove_user_ids: [...remove] } : {}),
         }),
       ),
     );
