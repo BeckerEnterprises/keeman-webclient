@@ -65,6 +65,44 @@ describe("vault manifest: detection", () => {
     expect(a.server.batchSizes).toHaveLength(sent);
   });
 
+  it("understood covers only the rollbacks the warning showed", async () => {
+    const a = await firstDevice();
+    const id = await group(a.engine, a.vaultId, "Alt");
+    const old = { ...stored(a.server, a.vaultId, id) };
+    await a.engine.renameGroup(a.vaultId, id, "Neu");
+    const { id: hidden } = await a.engine.createEntry(
+      a.vaultId,
+      rootOf(a.engine, a.vaultId),
+      draft("Versteckt"),
+    );
+    a.server.tamperChanges = (page) => {
+      page.objects = page.objects.filter((o) => o.id !== hidden);
+    };
+    const b = await secondDevice(a.server);
+    expect(vault(b.engine, a.vaultId)).toMatchObject({
+      manifest: "mismatch",
+      rollback: false,
+    });
+    // The full sync that "understood" starts also plays back the group.
+    a.server.tamperChanges = (page) => {
+      page.objects = page.objects
+        .filter((o) => o.id !== hidden)
+        .map((o) =>
+          o.id === id ? { ...old, revision: page.vault_revision } : o,
+        );
+    };
+    const sent = a.server.batchSizes.length;
+    await expect(b.engine.acknowledgeManifest(a.vaultId)).rejects.toMatchObject(
+      { code: "rollback_open" },
+    );
+    // Shown as its own warning; nothing was taken over or rebuilt.
+    expect(vault(b.engine, a.vaultId)).toMatchObject({
+      rollback: true,
+      writable: false,
+    });
+    expect(a.server.batchSizes).toHaveLength(sent);
+  });
+
   it("a deleted object played back is not in the manifest", async () => {
     const a = await firstDevice();
     const id = await group(a.engine, a.vaultId, "Weg");

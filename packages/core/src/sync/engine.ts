@@ -1678,11 +1678,16 @@ export class SyncEngine {
    */
   async acknowledgeManifest(vaultId: string): Promise<void> {
     const state = this.#state(vaultId);
-    await this.#overrule(state);
+    const shown = this.#openRollbacks(state);
     try {
       await state.lock.run(async () => {
         state.synced = false;
         await pullVault(this.#context, state);
+        // Only what the warning showed is understood: a rollback that only
+        // this sync brings is a warning of its own.
+        if ([...this.#openRollbacks(state)].some((k) => !shown.has(k)))
+          throw new SyncError("rollback_open");
+        await this.#overrule(state);
         await acknowledgeRollback(this.#context, state);
         this.#evaluate(state);
         if (state.manifest.status === "mismatch")
@@ -3446,6 +3451,18 @@ export class SyncEngine {
         vaults: { [state.id]: { rev: 0, obj: {}, ft: now } },
       })
       .catch(() => undefined);
+  }
+
+  /** The open rollbacks of a vault, each named with what it is about. */
+  #openRollbacks(state: VaultState): Set<string> {
+    const open = new Set<string>();
+    if (state.rollback) open.add("vault");
+    for (const [id, seq] of state.rollbackDeletes)
+      open.add(`deleted:${id}:${String(seq)}`);
+    for (const object of state.objects.values())
+      if (object.rollback)
+        open.add(`object:${object.id}:${String(object.seq)}`);
+    return open;
   }
 
   #rollbackOpen(state: VaultState): boolean {
