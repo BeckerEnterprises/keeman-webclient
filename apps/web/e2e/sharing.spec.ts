@@ -531,6 +531,55 @@ test.describe("sharing", () => {
     expect(view(bobDevice.engine, alice.vaultId).entries.size).toBe(22);
   });
 
+  test("a re-invitation that contradicts what the account knew is accepted only anyway", async ({
+    page,
+  }) => {
+    const alice = await createAccountWithVault("again-a");
+    const bob = await createAccount("again-b");
+    const bobDevice = await nodeDevice(bob);
+    await shareNode(alice.device, bobDevice, bob.email, alice.vaultId);
+    await loginViaUi(page, bob);
+    await openVault(page, "Persönlich");
+    await bobDevice.engine.leaveVault(alice.vaultId);
+    // This browser knew another first statement of the list than the
+    // chain has: what a fork below the old anchor looks like.
+    await page.evaluate((vaultId) => {
+      const key = "keeman.syncSeen";
+      const marks = JSON.parse(localStorage.getItem(key) ?? "{}") as {
+        users: Record<string, { vaults: Record<string, { rl?: unknown }> }>;
+      };
+      for (const user of Object.values(marks.users)) {
+        const vault = user.vaults[vaultId];
+        if (vault) vault.rl = [1, "A".repeat(43)];
+      }
+      localStorage.setItem(key, JSON.stringify(marks));
+    }, alice.vaultId);
+    const accepts: string[] = [];
+    page.on("request", (request) => {
+      if (request.method() === "POST" && request.url().endsWith("/accept"))
+        accepts.push(request.url());
+    });
+    await alice.device.engine.invite(
+      alice.vaultId,
+      await alice.device.engine.lookupUser(bob.email),
+    );
+    const banner = page.getByTestId("banner-invitation");
+    await banner.getByTestId("invitation-accept").click();
+    const dialog = page.getByTestId("invitation-dialog");
+    await expect(
+      dialog.getByTestId("invitation-dialog-former-conflict"),
+    ).toBeVisible();
+    await expect(dialog.getByTestId("invitation-dialog-accept")).toHaveCount(0);
+    await dialog.getByTestId("invitation-dialog-accept-anyway").click();
+    // The question focuses "cancel"; only "accept anyway" accepts.
+    await expect(page.getByTestId("confirm-no")).toBeFocused();
+    expect(accepts).toEqual([]);
+    await page.getByTestId("confirm-yes").click();
+    await expect(dialog).toHaveCount(0);
+    await expect(banner).toHaveCount(0);
+    expect(accepts).toHaveLength(1);
+  });
+
   test("declining, withdrawing, roles and leaving", async ({ page }) => {
     const alice = await createAccountWithVault("roles-a");
     const bob = await createAccount("roles-b");
