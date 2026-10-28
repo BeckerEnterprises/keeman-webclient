@@ -1203,6 +1203,19 @@ export class Account {
       throw new AccountError("user_data_read_only");
     const marks = await this.#marks.read(userId);
     this.#current(epoch);
+    // The device's comparison points count as not yet written, so they go
+    // into the new user_data instead of being dropped as removed there.
+    // Before the write: a sync that runs once the new user_data is in place
+    // would otherwise drop them first. Harmless if the write fails: nothing
+    // is written to user_data while it is corrupt.
+    for (const [vaultId, vault] of Object.entries(marks.vaults))
+      if (vault.cp?.some((point) => point[2] > 0))
+        await this.#marks.replaceComparisons(
+          userId,
+          vaultId,
+          vault.cp.map(([version, code]) => [version, code, 0]),
+        );
+    this.#current(epoch);
     // Above every floor, else each device would report a rollback; the
     // floors of the period and of strict mode stay.
     const seq = userDataFloor(marks, slot.attestation)[1] + 1;
@@ -1236,17 +1249,6 @@ export class Account {
     await this.#marks.raise(userId, { ud: [revision, seq], vaults: {} });
     // Written on this device: current, like after any own write.
     await this.#confirmUserData(userId, next);
-    // The device's comparison points count as not yet written, so they go
-    // into the new user_data instead of being dropped as removed there.
-    const after = await this.#marks.read(userId);
-    this.#current(epoch);
-    for (const [vaultId, vault] of Object.entries(after.vaults))
-      if (vault.cp?.some((point) => point[2] > 0))
-        await this.#marks.replaceComparisons(
-          userId,
-          vaultId,
-          vault.cp.map(([version, code]) => [version, code, 0]),
-        );
     this.#current(epoch);
     this.#engine?.contactsChanged();
     this.#engine?.userDataStateChanged();

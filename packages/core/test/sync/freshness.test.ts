@@ -687,6 +687,52 @@ describe("resetting corrupt user_data", () => {
     });
   });
 
+  it("keeps them also when a sync runs right after the new user_data", async () => {
+    const a = await first();
+    const user = a.server.userByEmail(EMAIL);
+    if (!user) throw new Error("no user");
+    const head = vault(a.engine, a.vaultId).roles.code?.version ?? 1;
+    const code = "K3QF6XMA2PLRTB6WQH4N7ZDEXA";
+    await a.engine.confirmStateContradiction(a.vaultId, {
+      version: head + 1,
+      code,
+    });
+    await settle();
+    a.account.lock();
+    // A second device whose marks run a sync the moment the new
+    // user_data is in place, as a well-timed event of the server would.
+    const inner = inMemorySyncMarks();
+    let armed = false;
+    const hook: { sync?: () => Promise<void> } = {};
+    const marks: typeof inner = {
+      ...inner,
+      raise: async (userId, patch) => {
+        const done = await inner.raise(userId, patch);
+        if (armed && patch.ud) {
+          armed = false;
+          await hook.sync?.();
+        }
+        return done;
+      },
+    };
+    const b = await another(a.server, a.clock, marks);
+    hook.sync = () => b.engine.refresh();
+    user.user_data = {
+      revision: user.user_data.revision + 1,
+      data: user.user_data.data.slice(0, -8) + "AAAAAAAA",
+    };
+    await b.account.reloadUserData();
+    armed = true;
+    await b.account.resetUserData("de");
+    await settle();
+    b.account.lock();
+    const c = await another(a.server, a.clock);
+    expect(vault(c.engine, a.vaultId).roles).toMatchObject({
+      status: "rollback",
+      compared: { kind: "missing", code: { code } },
+    });
+  });
+
   it("writes above the floor and confirms it", async () => {
     const a = await first();
     const user = a.server.userByEmail(EMAIL);
