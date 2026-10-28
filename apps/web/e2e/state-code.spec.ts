@@ -130,6 +130,7 @@ test.describe("state code", () => {
     });
     await expect(dialog.getByTestId("state-compare-match")).toBeVisible();
     await dialog.getByTestId("state-compare-close").click();
+    await expect(dialog).toHaveCount(0);
     await expect(page.getByTestId("state-code-last")).toBeVisible();
 
     // Alice makes Carol owner; the server keeps that from Bob.
@@ -149,6 +150,7 @@ test.describe("state code", () => {
     await dialog.getByTestId("state-compare-confirm").click();
     await expect(contradiction).toHaveCount(0);
     await dialog.getByTestId("state-compare-close").click();
+    await expect(dialog).toHaveCount(0);
     const warning = page.getByTestId("vault-roles-warning");
     await expect(warning.getByTestId("vault-roles-compared")).toContainText(
       aliceCode,
@@ -296,6 +298,7 @@ test.describe("state code", () => {
       0,
     );
     await dialog.getByTestId("state-compare-close").click();
+    await expect(dialog).toHaveCount(0);
     await expect(page.getByTestId("vault-roles-warning")).toHaveCount(0);
 
     // Matches as entered: read-only until understood.
@@ -303,7 +306,12 @@ test.describe("state code", () => {
     await dialog.getByTestId("state-compare-input").fill(code);
     await dialog.getByTestId("state-compare-submit").click();
     await dialog.getByTestId("state-compare-confirm").click();
+    // The result goes away once stored; only then the dialog is settled.
+    await expect(dialog.getByTestId("state-compare-contradiction")).toHaveCount(
+      0,
+    );
     await dialog.getByTestId("state-compare-close").click();
+    await expect(dialog).toHaveCount(0);
     const warning = page.getByTestId("vault-roles-warning");
     await expect(warning).toContainText("anderen Stand-Code");
     await openMain(page);
