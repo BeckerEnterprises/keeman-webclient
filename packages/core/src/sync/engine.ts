@@ -375,6 +375,7 @@ export class SyncEngine {
       anchor: (vaultId) => access.roleAnchor(vaultId),
       saveAnchors: (anchors) => access.saveRoleAnchors(anchors),
       contacts: () => access.contacts(),
+      points: (vaultId) => this.#freshness.rolePoints(vaultId),
     });
     this.#freshness = new FreshnessKeeper({
       api: access.api,
@@ -2627,7 +2628,6 @@ export class SyncEngine {
         state.id,
         version,
         marks.vaults[state.id]?.ow,
-        this.#freshness.rolePoints(state.id),
       );
     } catch (error) {
       if (error instanceof CryptoError && error.code === "locked") throw error;

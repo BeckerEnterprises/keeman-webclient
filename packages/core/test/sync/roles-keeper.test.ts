@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { toBase64Url } from "../../src/crypto/bytes";
 import type { Keys } from "../../src/crypto/keystore";
-import { readSignedRoles } from "../../src/crypto/roles";
+import { readSignedRoles, type RolePoint } from "../../src/crypto/roles";
 import type { RoleAnchor } from "../../src/model/user-data";
 import { inMemorySyncMarks } from "../../src/sync/marks";
 import { RolesKeeper } from "../../src/sync/roles";
@@ -34,7 +34,11 @@ async function setup() {
   return { alice, bob, carol, vaultId: alice.vaultId, chain, points };
 }
 
-function keeper(someone: Person, anchors: Map<string, RoleAnchor> = new Map()) {
+function keeper(
+  someone: Person,
+  anchors: Map<string, RoleAnchor> = new Map(),
+  points: RolePoint[] = [],
+) {
   const marks = inMemorySyncMarks();
   const saved: Record<string, RoleAnchor | null>[] = [];
   const roles = new RolesKeeper({
@@ -51,8 +55,9 @@ function keeper(someone: Person, anchors: Map<string, RoleAnchor> = new Map()) {
       return Promise.resolve();
     },
     contacts: () => [],
+    points: () => points,
   });
-  return { roles, marks, saved, anchors };
+  return { roles, marks, saved, anchors, points };
 }
 
 describe("roles keeper", () => {
@@ -116,9 +121,6 @@ describe("roles keeper", () => {
     await expect(other.roles.confirm(vaultId)).rejects.toMatchObject({
       code: "not_found",
     });
-    await expect(other.roles.acknowledge(vaultId)).rejects.toMatchObject({
-      code: "not_found",
-    });
     expect(other.roles.point(vaultId)).toBeUndefined();
     expect(
       other.roles.check(vaultId, 1, {
@@ -128,6 +130,56 @@ describe("roles keeper", () => {
     ).toBe("unchecked");
     k.roles.forget(vaultId);
     expect(k.roles.get(vaultId)).toBeUndefined();
+  });
+
+  it("keeps the points of own attestations when the chain is reloaded", async () => {
+    const { bob, vaultId, points } = await setup();
+    const [first, second] = points;
+    if (!first || !second) throw new Error("chain");
+    // An own attestation names another statement at version 2.
+    const k = keeper(bob, new Map([[vaultId, { ...first, owners: [] }]]), [
+      { version: 2, hash: first.hash },
+    ]);
+    expect((await k.roles.update(vaultId, 2, undefined)).status).toBe("fork");
+    expect((await k.roles.reload(vaultId)).status).toBe("fork");
+  });
+
+  it("checks new points against the last result when loading fails", async () => {
+    const { bob, vaultId, points } = await setup();
+    const [first, second] = points;
+    if (!first || !second) throw new Error("chain");
+    const k = keeper(bob, new Map([[vaultId, { ...first, owners: [] }]]));
+    expect((await k.roles.update(vaultId, 2, undefined)).status).toBe("ok");
+    const failing = () =>
+      bob.server.failures.set(`/v1/vaults/${vaultId}/roles`, [
+        { status: 503, code: "internal_error" },
+        { status: 503, code: "internal_error" },
+        { status: 503, code: "internal_error" },
+      ] as never);
+    // A point above the last head cannot be judged yet.
+    k.points.push({ version: 3, hash: first.hash });
+    failing();
+    expect((await k.roles.update(vaultId, 3, undefined)).status).toBe("ok");
+    // One that contradicts a statement already checked can.
+    k.points.push({ version: 2, hash: first.hash });
+    failing();
+    const result = await k.roles.update(vaultId, 3, undefined);
+    expect(result.status).toBe("fork");
+    expect(k.roles.get(vaultId)).toBe(result);
+  });
+
+  it("acknowledges a chain it never checked as an empty one", async () => {
+    const { bob, vaultId, points } = await setup();
+    const second = points[1];
+    if (!second) throw new Error("chain");
+    const k = keeper(bob, new Map([[vaultId, { ...second, owners: [] }]]));
+    await k.marks.raise(bob.account.userId ?? "", {
+      vaults: { [vaultId]: { rev: 0, obj: {}, rl: [2, second.hash] } },
+    });
+    await k.roles.acknowledge(vaultId);
+    expect(k.anchors.has(vaultId)).toBe(false);
+    const marks = await k.marks.read(bob.account.userId ?? "");
+    expect(marks.vaults[vaultId]?.rl).toBeUndefined();
   });
 
   it("asks before taking over a list whose signer it does not know", async () => {

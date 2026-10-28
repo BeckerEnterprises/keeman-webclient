@@ -70,6 +70,12 @@ export interface RolesPort {
   /** Stores anchors in user_data (`null` removes one); best effort. */
   saveAnchors(anchors: Record<string, RoleAnchor | null>): Promise<void>;
   contacts(): readonly Contact[];
+  /**
+   * Further checked statements of a vault (own attestations, a pairing):
+   * the highest of all points is the anchor, and the chain must agree with
+   * every other one.
+   */
+  points?(vaultId: string): readonly RolePoint[];
 }
 
 function pointOf(head: VerifiedRoles): RolePoint {
@@ -142,25 +148,23 @@ export class RolesKeeper {
 
   /**
    * Loads the chain if the head changed and checks it. `owners` are the
-   * owners this device remembers (for the transition of older vaults);
-   * `points` are further checked statements (own attestations, a pairing):
-   * the highest of all points is the anchor, and the chain must agree with
-   * every other one.
+   * owners this device remembers (for the transition of older vaults).
    */
   async update(
     vaultId: string,
     version: number | null,
     owners: readonly string[] | undefined,
-    points: readonly RolePoint[] = [],
   ): Promise<VaultRoles> {
     const previous = this.#vaults.get(vaultId);
+    const points = this.#port.points?.(vaultId) ?? [];
     let delivered: DeliveredRoles[];
     try {
       delivered = await this.#load(vaultId, version);
     } catch (error) {
       if (error instanceof CryptoError && error.code === "locked") throw error;
-      // Keep the last result; nothing is accepted on a stale one.
-      if (previous) return previous;
+      // Keep the last result; nothing is accepted on a stale one. Points up
+      // to its head can still be checked against it.
+      if (previous) return this.#stillAgrees(vaultId, previous, points);
       throw error;
     }
     const marks = await this.#port.marks.read(this.#port.userId);
@@ -205,6 +209,28 @@ export class RolesKeeper {
       verifyOwners: previous?.verifyOwners ?? false,
     });
     return this.#vaults.get(vaultId) ?? result;
+  }
+
+  /** The last result, unless a point up to its head contradicts it. */
+  #stillAgrees(
+    vaultId: string,
+    previous: VaultRoles,
+    points: readonly RolePoint[],
+  ): VaultRoles {
+    const contradicted = points.some((point) =>
+      previous.statements.some(
+        (s) => s.statement.version === point.version && s.hash !== point.hash,
+      ),
+    );
+    if (!contradicted) return previous;
+    const forked: VaultRoles = {
+      ...previous,
+      status: "fork",
+      statements: [],
+      head: undefined,
+    };
+    this.#vaults.set(vaultId, forked);
+    return forked;
   }
 
   #check(
@@ -328,8 +354,8 @@ export class RolesKeeper {
    * also lowering the floor; it must be valid from its first statement.
    */
   async acknowledge(vaultId: string): Promise<void> {
-    const roles = this.#vaults.get(vaultId);
-    if (!roles) throw new SyncError("not_found");
+    // A chain this device never checked (a server without chains) counts
+    // as empty.
     const delivered = this.#delivered.get(vaultId)?.statements ?? [];
     const result = checkRoleChain({ vaultId, statements: delivered });
     if (result.status === "empty") {
