@@ -212,6 +212,17 @@ const FINAL_REGISTRATION_CODES = new Set([
   "conflict",
 ]);
 
+/** The floor of user_data: the marks, raised by an own attestation. */
+function userDataFloor(
+  marks: UserMarks,
+  attestation: { seq: number } | undefined,
+): [number, number] {
+  return [
+    marks.ud?.[0] ?? 0,
+    Math.max(marks.ud?.[1] ?? 0, attestation?.seq ?? 0),
+  ];
+}
+
 function isTransient(error: unknown): boolean {
   return (
     error instanceof NetworkError ||
@@ -764,7 +775,10 @@ export class Account {
       this.#newDevice =
         before.ud === undefined && Object.keys(before.vaults).length === 0;
     }
-    const { rollback, stale } = await this.#applyUserDataMarks();
+    const { rollback, stale } = await this.#applyUserDataMarks(
+      epoch,
+      this.#userData,
+    );
     this.#current(epoch);
     const checked = { ...report, newDevice: this.#newDevice };
     if (rollback)
@@ -776,38 +790,52 @@ export class Account {
   }
 
   /**
-   * Checks user_data against the marks and the own attestation (a floor
-   * whatever its age): rolled back, or else confirmed within the period
-   * or stale. Raises the marks.
+   * Checks a delivered user_data against the marks and the own attestation
+   * (a floor whatever its age): rolled back, or else confirmed within the
+   * period or stale. Raises the marks. The slot is evaluated before anyone
+   * sees it: until then its contacts must not count as verified.
    */
-  async #applyUserDataMarks(): Promise<{ rollback: boolean; stale: boolean }> {
-    const slot = this.#userData;
+  async #applyUserDataMarks(
+    epoch: number,
+    slot: UserDataSlot | undefined,
+  ): Promise<{ rollback: boolean; stale: boolean }> {
     const userId = this.#userId;
-    if (!slot || userId === undefined || slot.state.status !== "ok")
-      return { rollback: false, stale: false };
-    const seq = seqOf(slot.state.raw);
-    const attestation = slot.attestation;
+    if (!slot || userId === undefined) return { rollback: false, stale: false };
     const marks = await this.#marks.read(userId);
+    this.#current(epoch);
+    // The floors of the period and of strict mode hold whatever this
+    // user_data says, also when it is corrupt.
     this.#periodFloor = marks.fd;
     this.#strictFloor = marks.fs;
-    const floor: [number, number] = [
-      marks.ud?.[0] ?? 0,
-      Math.max(marks.ud?.[1] ?? 0, attestation?.seq ?? 0),
-    ];
+    if (slot.state.status !== "ok") return { rollback: false, stale: false };
+    const seq = seqOf(slot.state.raw);
+    const attestation = slot.attestation;
     if (attestation)
       await this.#marks.raise(userId, { ud: [0, attestation.seq], vaults: {} });
-    if (isUserDataOlder(floor, slot.revision, seq)) {
+    this.#current(epoch);
+    if (
+      isUserDataOlder(userDataFloor(marks, attestation), slot.revision, seq)
+    ) {
       slot.rollback = true;
       slot.state = { ...slot.state, readOnly: true };
+      // Not confirmed: the next unlock must not take this for marks from
+      // before confirmation times.
+      if (marks.uf === undefined)
+        await this.#marks.raise(userId, { uf: 0, vaults: {} });
       return { rollback: true, stale: false };
     }
     await this.#marks.raise(userId, { ud: [slot.revision, seq], vaults: {} });
+    this.#current(epoch);
     const now = this.#now();
-    // Marks from before confirmation times: the first check confirms.
-    const transition = marks.ud !== undefined && marks.uf === undefined;
+    // Marks from before confirmation times: the first check confirms. Only
+    // a revision counts as such a mark, not the floor of an attestation.
+    const transition = (marks.ud?.[0] ?? 0) > 0 && marks.uf === undefined;
     // In strict mode an attestation is a floor, never a reference time.
+    const strict =
+      effectiveSettings(slot.state.raw).requireConfirmation ||
+      marks.fs === true;
     const attested =
-      attestation && seq >= attestation.seq && !this.strictMode
+      attestation && seq >= attestation.seq && !strict
         ? (attestedAt(attestation.time, now) ?? 0)
         : 0;
     const basis = transition ? now : Math.max(marks.uf ?? 0, attested);
@@ -862,15 +890,9 @@ export class Account {
     const me = await this.#api.me();
     this.#current(epoch);
     if (me.user_id !== userId) throw new AccountError("integrity");
-    this.#userData = {
-      revision: me.user_data.revision,
-      state: inspectUserData(this.#decryptUserData(userId, me)),
-      rollback: false,
-      stale: false,
-      attestation: this.#userDataAttestation(me, userId),
-      confirmedSince: undefined,
-    };
-    const { rollback, stale } = await this.#applyUserDataMarks();
+    const next = this.#delivered(me, userId);
+    const { rollback, stale } = await this.#applyUserDataMarks(epoch, next);
+    this.#userData = next;
     this.#engine?.userDataStateChanged();
     if (!rollback && !stale) void this.#attestUserData().catch(() => undefined);
   }
@@ -1168,21 +1190,33 @@ export class Account {
   async resetUserData(language: Language): Promise<void> {
     const epoch = this.#epoch;
     const userId = this.#requireUnlocked();
-    if (this.#userData?.state.status !== "corrupt")
+    const slot = this.#userData;
+    if (slot?.state.status !== "corrupt")
       throw new AccountError("user_data_read_only");
+    const marks = await this.#marks.read(userId);
+    this.#current(epoch);
+    // Above every floor, else each device would report a rollback; the
+    // floors of the period and of strict mode stay.
+    const seq = userDataFloor(marks, slot.attestation)[1] + 1;
     const content = {
       schema: USER_DATA_SCHEMA,
-      seq: 1,
+      seq,
       contacts: [],
-      settings: { language },
+      settings: {
+        language,
+        ...(marks.fd !== undefined && marks.fd < SETTING_DEFAULTS.freshnessDays
+          ? { freshnessDays: marks.fd }
+          : {}),
+        ...(marks.fs === true ? { requireConfirmation: true } : {}),
+      },
     };
     const data = this.#keys.useUserKey((userKey) =>
       encryptUserData(systemRandomness, userKey, userId, content),
     );
-    const revision = await this.#api.putUserData(this.#userData.revision, data);
+    const revision = await this.#api.putUserData(slot.revision, data);
     // A lock or another account meanwhile: nothing decrypted goes back in.
     this.#current(epoch);
-    this.#userData = {
+    const next: UserDataSlot = {
       revision,
       state: inspectUserData(content),
       rollback: false,
@@ -1190,7 +1224,13 @@ export class Account {
       attestation: undefined,
       confirmedSince: undefined,
     };
-    await this.#marks.raise(userId, { ud: [revision, 1], vaults: {} });
+    this.#userData = next;
+    await this.#marks.raise(userId, { ud: [revision, seq], vaults: {} });
+    // Written on this device: current, like after any own write.
+    await this.#confirmUserData(userId, next);
+    this.#engine?.contactsChanged();
+    this.#engine?.userDataStateChanged();
+    void this.#attestUserData().catch(() => undefined);
   }
 
   async #updateUserData(change: UserDataChange): Promise<void> {
@@ -1234,13 +1274,45 @@ export class Account {
       }
       const me = await this.#api.me();
       this.#current(epoch);
-      const server = inspectUserData(this.#decryptUserData(userId, me));
+      if (me.user_id !== userId) throw new AccountError("integrity");
+      const delivered = this.#delivered(me, userId);
+      const server = delivered.state;
       if (server.status !== "ok") throw new AccountError("user_data_corrupt");
+      // Checked like any delivered user_data before anything is merged: an
+      // older copy would bring back removed contacts, lower anchors, drop
+      // comparison points and old settings, and this device would confirm
+      // the result itself. Below the copy this write started from it is
+      // older whatever the marks say.
+      if (delivered.revision <= revision || seqOf(server.raw) < seqOf(base)) {
+        delivered.rollback = true;
+        delivered.state = { ...server, readOnly: true };
+      }
+      const { rollback, stale } = delivered.rollback
+        ? { rollback: true, stale: false }
+        : await this.#applyUserDataMarks(epoch, delivered);
+      if (rollback || stale) {
+        this.#userData = delivered;
+        this.#engine?.contactsChanged();
+        this.#engine?.userDataStateChanged();
+        throw new AccountError("user_data_read_only");
+      }
       if (server.readOnly) throw new AccountError("user_data_read_only");
       local = mergeUserData(base, local, server.raw);
       base = server.raw;
       revision = me.user_data.revision;
     }
+  }
+
+  /** A user_data as the server delivered it, not yet evaluated. */
+  #delivered(me: Me, userId: string): UserDataSlot {
+    return {
+      revision: me.user_data.revision,
+      state: inspectUserData(this.#decryptUserData(userId, me)),
+      rollback: false,
+      stale: false,
+      attestation: this.#userDataAttestation(me, userId),
+      confirmedSince: undefined,
+    };
   }
 
   #decryptUserData(userId: string, me: Me): JsonObject | undefined {
@@ -1732,10 +1804,10 @@ export class Account {
         points.set(v.vaultId, { roles: v.rl, codes: v.cp });
     }
     const ud = content.userData;
-    const uf = ud ? time(ud.at) : 0;
+    // With the floor always a confirmation time (0 = never), so that it is
+    // not taken for marks from before confirmation times.
     await this.#marks.raise(userId, {
-      ...(ud ? { ud: [ud.rev, ud.seq] } : {}),
-      ...(uf > 0 ? { uf } : {}),
+      ...(ud ? { ud: [ud.rev, ud.seq], uf: time(ud.at) } : {}),
       vaults,
     });
     return points;

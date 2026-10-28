@@ -482,6 +482,33 @@ describe("settings", () => {
     expect(server.requests("/v1/me/user-data")).toHaveLength(3);
   });
 
+  it("merges nothing into an older user_data the server hands back after 409", async () => {
+    const { server, account } = await registered();
+    const user = must(server.userByEmail(EMAIL));
+    // An older copy without strict mode, still genuine ciphertext.
+    const old = { ...user.user_data };
+    await account.updateSettings({ requireConfirmation: true });
+    await account.reloadUserData();
+    expect(account.strictMode).toBe(true);
+    // The server makes the next write conflict and then delivers the old
+    // copy under a newer revision.
+    server.failures.set("/v1/me/user-data", [
+      { status: 409, code: "conflict", extra: { current_revision: 99 } },
+    ] as never);
+    user.user_data = { ...old, revision: 99 };
+    await expectAccountError(
+      account.updateSettings({ autoLockMinutes: 5 }),
+      "user_data_read_only",
+    );
+    // Shown as a rollback, nothing written, strict mode still on.
+    expect(account.userDataRollback).toBe(true);
+    expect(user.user_data).toEqual({ ...old, revision: 99 });
+    expect(
+      server.requests("/v1/me/user-data").filter((r) => r.method === "PUT"),
+    ).toHaveLength(2);
+    expect(account.strictMode).toBe(true);
+  });
+
   it("gives up after three conflicts", async () => {
     const { server, account } = await registered();
     const original = server.fetch;
