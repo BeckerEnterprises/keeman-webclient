@@ -40,9 +40,15 @@ const pendingKeys = computed(() =>
  */
 function rolesWait(
   reason: string | undefined,
-): "roles_unconfirmed" | "roles_invalid" | "stale" | undefined {
+):
+  | "roles_unconfirmed"
+  | "roles_invalid"
+  | "roles_unavailable"
+  | "stale"
+  | undefined {
   return reason === "roles_unconfirmed" ||
     reason === "roles_invalid" ||
+    reason === "roles_unavailable" ||
     reason === "stale"
     ? reason
     : undefined;
@@ -169,7 +175,9 @@ function verified(): void {
             ? "invitation.keyRolesUnconfirmed"
             : rolesWait(vault.pendingReason) === "stale"
               ? "invitation.keyStale"
-              : "invitation.keyRolesInvalid",
+              : rolesWait(vault.pendingReason) === "roles_unavailable"
+                ? "invitation.keyRolesUnavailable"
+                : "invitation.keyRolesInvalid",
           { name: vault.name ?? t("invitation.unknownName") },
         )
       }}

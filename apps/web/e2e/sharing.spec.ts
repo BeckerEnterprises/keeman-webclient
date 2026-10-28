@@ -445,13 +445,14 @@ test.describe("sharing", () => {
     await openDatabasePage(page, alice.vaultId);
     const warning = page.getByTestId("vault-roles-warning");
     await expect(warning).toContainText("ältere Eigentümerliste");
-    // Understood takes the older list; it still does not cover the key.
+    // Understood takes the older list; as the server still names a newer
+    // head than it delivers, nothing is accepted until the list loads.
     await warning.getByTestId("vault-roles-ack").click();
     await page.getByTestId("confirm-yes").click();
     await expect(warning).toHaveCount(0);
-    await expect(page.getByTestId("banner-key-invalid")).toContainText(
-      "nicht von der signierten Eigentümerliste gedeckt",
-    );
+    await expect(page.getByTestId("vault-roles-unavailable")).toBeVisible();
+    await expect(banner).toContainText("bis sich die Eigentümerliste");
+    await expect(banner.getByTestId("pending-key-check")).toHaveCount(0);
     expect(accepted).toEqual([]);
 
     // With the whole chain again, the key is covered.

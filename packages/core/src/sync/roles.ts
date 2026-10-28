@@ -163,10 +163,13 @@ function samePoint(
 export class RolesKeeper {
   readonly #port: RolesPort;
   readonly #vaults = new Map<string, VaultRoles>();
-  /** Delivered statements by vault, for the `roles_version` they belong to. */
+  /**
+   * Delivered statements by vault, for the `roles_version` they belong to;
+   * `complete` once they reach that version.
+   */
   readonly #delivered = new Map<
     string,
-    { version: number | null; statements: DeliveredRoles[] }
+    { version: number | null; statements: DeliveredRoles[]; complete: boolean }
   >();
   /** Chains this unlock tried to start, and heads it tried to repair. */
   readonly #tried = new Set<string>();
@@ -192,12 +195,15 @@ export class RolesKeeper {
   ): Promise<DeliveredRoles[]> {
     if (version === null) return [];
     const known = this.#delivered.get(vaultId);
-    if (known && known.version === version) return known.statements;
+    if (known && known.version === version && known.complete)
+      return known.statements;
     const statements = await this.#port.api.roles(vaultId, 0);
-    // A chain that ends below the named head is not kept: the next update
-    // loads it again.
-    if (reaches(statements, version))
-      this.#delivered.set(vaultId, { version, statements });
+    // A chain that ends below the named head is loaded again next time.
+    this.#delivered.set(vaultId, {
+      version,
+      statements,
+      complete: reaches(statements, version),
+    });
     return statements;
   }
 
@@ -247,8 +253,7 @@ export class RolesKeeper {
           : this.#stillAgrees(vaultId, previous, points, compared);
       return this.unavailable(vaultId, version);
     }
-    if (version !== null && !reaches(delivered, version))
-      return this.unavailable(vaultId, version);
+    const short = version !== null && !reaches(delivered, version);
     const floor = marks.vaults[vaultId]?.rl;
     const stored = this.#port.anchor(vaultId);
     const effective = effectiveAnchor(stored, floor);
@@ -274,6 +279,15 @@ export class RolesKeeper {
       fork,
       compared,
     });
+    // Short of the named head, only a warning stands; anything else would
+    // read a chain cut short as no chain or as a current one.
+    if (
+      short &&
+      roles.status !== "rollback" &&
+      roles.status !== "fork" &&
+      roles.status !== "invalid"
+    )
+      return this.unavailable(vaultId, version);
     let result = roles;
     if (roles.status === "unanchored" && roles.head) {
       const adoptable = this.#adoptable(
@@ -794,7 +808,7 @@ export class RolesKeeper {
   async reload(vaultId: string): Promise<VaultRoles> {
     const statements = await this.#port.api.roles(vaultId, 0);
     const version = statements[statements.length - 1]?.version ?? null;
-    this.#delivered.set(vaultId, { version, statements });
+    this.#delivered.set(vaultId, { version, statements, complete: true });
     const marks = await this.#port.marks.read(this.#port.userId);
     return this.update(vaultId, version, marks.vaults[vaultId]?.ow);
   }

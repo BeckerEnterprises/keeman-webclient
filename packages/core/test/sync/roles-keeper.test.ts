@@ -204,7 +204,7 @@ describe("roles keeper", () => {
   });
 
   it("never falls back to the older rules when a named chain cannot be checked", async () => {
-    const { bob, vaultId, chain } = await setup();
+    const { bob, vaultId, chain, points } = await setup();
     const fail = () =>
       bob.server.failures.set(`/v1/vaults/${vaultId}/roles`, [
         { status: 503, code: "internal_error" },
@@ -248,6 +248,21 @@ describe("roles keeper", () => {
     expect((await empty.roles.update(vaultId, 2, undefined)).status).toBe(
       "unanchored",
     );
+    // Below an anchor a chain cut short stays the rollback it is, and
+    // "understood" can take it over.
+    const [first, second] = points;
+    if (!first || !second) throw new Error("chain");
+    const anchored = keeper(
+      bob,
+      new Map([[vaultId, { ...second, owners: [] }]]),
+    );
+    const tail = chain.splice(1);
+    expect((await anchored.roles.update(vaultId, 3, undefined)).status).toBe(
+      "rollback",
+    );
+    await anchored.roles.acknowledge(vaultId, 3, { head: first });
+    expect(anchored.anchors.get(vaultId)?.version).toBe(1);
+    chain.push(...tail);
   });
 
   it("needs every lower point delivered, not only the highest one", async () => {
