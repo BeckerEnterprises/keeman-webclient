@@ -552,6 +552,23 @@ describe("roles anchors", () => {
     expect(mergeUserData(base, base, base).roles).toBeUndefined();
   });
 
+  it("keeps a local removal unless the server changed the anchor", () => {
+    const at = (version: number, hash: string) => ({
+      [VAULT]: { version, hash, owners: [ALICE] },
+    });
+    const start = applyUserDataChange(base, { roles: at(1, H1) });
+    const removed = applyUserDataChange(start, { roles: { [VAULT]: null } });
+    const other = applyUserDataChange(start, { recoveryKeyConfirmed: true });
+    expect(
+      roleAnchorOf(mergeUserData(start, removed, other), VAULT),
+    ).toBeUndefined();
+    // The server raised it meanwhile: its anchor stays.
+    const raised = applyUserDataChange(start, { roles: at(2, H2) });
+    expect(
+      roleAnchorOf(mergeUserData(start, removed, raised), VAULT),
+    ).toMatchObject({ version: 2 });
+  });
+
   it("merges contacts by fingerprint version 2 where both have it", () => {
     const contact = (fingerprint2: string) => ({
       userId: BOB,

@@ -389,7 +389,8 @@ function mergeContacts(
 /**
  * Anchors changed locally go in unless the server has a higher version; at
  * the same version with another hash the server's stays (a fork, which the
- * roles check then reports).
+ * roles check then reports). A local removal stands while the server still
+ * has the base's anchor.
  */
 function mergeRoles(
   base: JsonObject,
@@ -398,7 +399,11 @@ function mergeRoles(
 ): JsonObject {
   const merged = clone(rolesOfRaw(server));
   const before = rolesOfRaw(base);
-  for (const [vaultId, entry] of Object.entries(rolesOfRaw(local))) {
+  const mine = rolesOfRaw(local);
+  for (const [vaultId, entry] of Object.entries(before))
+    if (own(mine, vaultId) === undefined && same(own(merged, vaultId), entry))
+      Reflect.deleteProperty(merged, vaultId);
+  for (const [vaultId, entry] of Object.entries(mine)) {
     if (same(own(before, vaultId), entry)) continue;
     const mine = anchorOf(entry);
     if (!mine) continue;
