@@ -356,3 +356,76 @@ describe("roles floor", () => {
     expect((await marks.read(USER)).vaults[VAULT]).toBeUndefined();
   });
 });
+
+describe("comparison points", () => {
+  const A = "K3QF6XMA2PLRTB6WQH4N7ZDEXA";
+  const B = "LTI7RYKS2VIW4CMGXO2UE2YJZA";
+  const USER = U(1);
+
+  it("are united when merged, each with the higher seq", () => {
+    const merged = mergeMarks(
+      { vaults: { [VAULT]: { rev: 1, obj: {}, cp: [[3, A, 0]] } } },
+      {
+        vaults: {
+          [VAULT]: {
+            rev: 1,
+            obj: {},
+            cp: [
+              [3, A, 7],
+              [4, B, 0],
+            ],
+          },
+        },
+      },
+    );
+    expect(merged.vaults[VAULT]?.cp).toEqual([
+      [3, A, 7],
+      [4, B, 0],
+    ]);
+    expect(
+      mergeMarks(
+        { vaults: { [VAULT]: { rev: 1, obj: {} } } },
+        { vaults: { [VAULT]: { rev: 1, obj: {} } } },
+      ).vaults[VAULT]?.cp,
+    ).toBeUndefined();
+  });
+
+  it("change only through replaceComparisons, also in storage", async () => {
+    for (const marks of [
+      inMemorySyncMarks(),
+      storedSyncMarks(memoryStore(), lock),
+    ]) {
+      await marks.raise(USER, {
+        vaults: { [VAULT]: { rev: 5, obj: {}, cp: [[3, A, 0]] } },
+      });
+      await marks.replaceVault(USER, VAULT, { rev: 1, obj: {} });
+      expect((await marks.read(USER)).vaults[VAULT]?.cp).toEqual([[3, A, 0]]);
+      await marks.replaceComparisons(USER, VAULT, [[4, B, 2]]);
+      expect((await marks.read(USER)).vaults[VAULT]?.cp).toEqual([[4, B, 2]]);
+      await marks.replaceComparisons(USER, VAULT, []);
+      expect((await marks.read(USER)).vaults[VAULT]?.cp).toBeUndefined();
+    }
+  });
+
+  it("drop stored marks with an invalid point", async () => {
+    for (const cp of [[[0, A, 0]], [[1, A.toLowerCase(), 0]], [[1, A]]]) {
+      const store = memoryStore();
+      store.text = JSON.stringify({
+        v: 1,
+        users: { [USER]: { vaults: { [VAULT]: { rev: 1, obj: {}, cp } } } },
+      });
+      const marks = storedSyncMarks(store, lock);
+      expect((await marks.read(USER)).vaults[VAULT]).toBeUndefined();
+    }
+    const store = memoryStore();
+    store.text = JSON.stringify({
+      v: 1,
+      users: {
+        [USER]: { vaults: { [VAULT]: { rev: 1, obj: {}, cp: [[2, A, 3]] } } },
+      },
+    });
+    expect(
+      (await storedSyncMarks(store, lock).read(USER)).vaults[VAULT]?.cp,
+    ).toEqual([[2, A, 3]]);
+  });
+});

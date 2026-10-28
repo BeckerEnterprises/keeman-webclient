@@ -12,6 +12,7 @@ import {
   roleAnchorOf,
   SETTING_DEFAULTS,
   vaultOrderOf,
+  type ComparisonChange,
 } from "../../src/model/user-data";
 
 const ALICE = "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a6b";
@@ -671,12 +672,13 @@ describe("comparisons", () => {
   });
 
   it("refuses invalid points, vaults and too many points", () => {
-    for (const change of [
+    const changes: Record<string, ComparisonChange>[] = [
       { [VAULT]: { add: [point(0, A)] } },
       { [VAULT]: { add: [point(1, "A".repeat(26).slice(1))] } },
       { [VAULT]: { match: { version: 1, at: AT, partner: "x" } } },
       { nope: { add: [point(1, A)] } },
-    ])
+    ];
+    for (const change of changes)
       expect(() => applyUserDataChange(base, { compared: change })).toThrow();
     const many = Array.from({ length: COMPARISON_POINTS_MAX + 1 }, (_, i) =>
       point(i + 1, A),

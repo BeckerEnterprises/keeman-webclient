@@ -4,8 +4,9 @@
  * `seq` of the manifest, the checked head of the roles chain and the time
  * this device last confirmed the vault as current, per object the highest
  * `seq` (negative for a tombstone), per account revision and `seq` of
- * `user_data` with its confirmation. Only IDs, counters and times, nothing
- * secret.
+ * `user_data` with its confirmation, and a copy of the comparison points
+ * of each vault. Only IDs, counters, hashes, state codes and times,
+ * nothing secret.
  */
 import * as v from "valibot";
 import { UUID_PATTERN } from "../crypto/uuid";
@@ -37,9 +38,18 @@ export interface VaultMarks {
    * clock); `0` = never. Missing on marks from before this field existed.
    */
   ft?: number;
+  /**
+   * The comparison points of the vault: version, state code and the
+   * `user_data` `seq` they were last seen or written in (`0`: not yet).
+   * Only acknowledging, a satisfied point or newer `user_data` without the
+   * point removes one.
+   */
+  cp?: ComparisonMark[];
   /** Object ID → `seq`; negative: a tombstone with this `seq`. */
   obj: Record<string, number>;
 }
+
+export type ComparisonMark = [number, string, number];
 
 export interface UserMarks {
   /** Revision and `seq` of `user_data`. */
@@ -74,6 +84,12 @@ export interface SyncMarks {
     userId: string,
     vaultId: string,
     rl: [number, string] | undefined,
+  ): Promise<boolean>;
+  /** Replaces the comparison points of a vault; `[]` removes them. */
+  replaceComparisons(
+    userId: string,
+    vaultId: string,
+    cp: readonly ComparisonMark[],
   ): Promise<boolean>;
   forgetVault(userId: string, vaultId: string): Promise<boolean>;
   forgetUser(userId: string): Promise<boolean>;
@@ -123,6 +139,21 @@ function higherRoles(
   return [b[0], b[1]];
 }
 
+/** Comparison points of both, each once with the higher `seq`. */
+function unitedComparisons(
+  a: readonly ComparisonMark[] | undefined,
+  b: readonly ComparisonMark[] | undefined,
+): ComparisonMark[] | undefined {
+  if (!a && !b) return undefined;
+  const result: ComparisonMark[] = [];
+  for (const [version, code, seq] of [...(a ?? []), ...(b ?? [])]) {
+    const known = result.find((m) => m[0] === version && m[1] === code);
+    if (known) known[2] = Math.max(known[2], seq);
+    else result.push([version, code, seq]);
+  }
+  return result;
+}
+
 function maxDefined(
   a: number | undefined,
   b: number | undefined,
@@ -162,6 +193,7 @@ export function mergeMarks(a: UserMarks, b: UserMarks): UserMarks {
     const mf = Math.max(left?.mf ?? 0, right?.mf ?? 0);
     const rl = higherRoles(left?.rl, right?.rl);
     const ft = maxDefined(left?.ft, right?.ft);
+    const cp = unitedComparisons(left?.cp, right?.cp);
     result.vaults[id] = {
       rev: Math.max(left?.rev ?? 0, right?.rev ?? 0),
       ...(kv > 0 ? { kv } : {}),
@@ -169,6 +201,7 @@ export function mergeMarks(a: UserMarks, b: UserMarks): UserMarks {
       ...(mf > 0 ? { mf } : {}),
       ...(rl ? { rl } : {}),
       ...(ft !== undefined ? { ft } : {}),
+      ...(cp?.length ? { cp } : {}),
       obj,
     };
   }
@@ -181,7 +214,8 @@ function copy(marks: UserMarks): UserMarks {
 
 /**
  * `marks` replacing `current`; the manifest floor and the confirmation time
- * never go down, and the roles floor only changes through `replaceRoles`.
+ * never go down, and the roles floor and the comparison points only change
+ * through `replaceRoles` and `replaceComparisons`.
  */
 function replacing(
   current: VaultMarks | undefined,
@@ -190,11 +224,13 @@ function replacing(
   const mf = Math.max(current?.mf ?? 0, marks.mf ?? 0);
   const rl = higherRoles(current?.rl, marks.rl);
   const ft = maxDefined(current?.ft, marks.ft);
+  const cp = unitedComparisons(current?.cp, marks.cp);
   return copyVault({
     ...marks,
     ...(mf > 0 ? { mf } : {}),
     ...(rl ? { rl } : {}),
     ...(ft !== undefined ? { ft } : {}),
+    ...(cp?.length ? { cp } : {}),
   });
 }
 
@@ -206,8 +242,25 @@ function copyVault(marks: VaultMarks): VaultMarks {
     ...(marks.mf !== undefined ? { mf: marks.mf } : {}),
     ...(marks.rl !== undefined ? { rl: [marks.rl[0], marks.rl[1]] } : {}),
     ...(marks.ft !== undefined ? { ft: marks.ft } : {}),
+    ...(marks.cp !== undefined
+      ? { cp: marks.cp.map((m): ComparisonMark => [m[0], m[1], m[2]]) }
+      : {}),
     obj: { ...marks.obj },
   };
+}
+
+function withComparisons(
+  marks: UserMarks,
+  vaultId: string,
+  cp: readonly ComparisonMark[],
+): UserMarks {
+  const next = copy(marks);
+  const vault = { ...(next.vaults[vaultId] ?? { rev: 0, obj: {} }) };
+  if (cp.length > 0)
+    vault.cp = cp.map((m): ComparisonMark => [m[0], m[1], m[2]]);
+  else Reflect.deleteProperty(vault, "cp");
+  next.vaults[vaultId] = vault;
+  return next;
 }
 
 function withRoles(
@@ -266,6 +319,10 @@ export function inMemorySyncMarks(): SyncMarks {
       users.set(userId, withRoles(get(userId), vaultId, rl));
       return Promise.resolve(true);
     },
+    replaceComparisons: (userId, vaultId, cp) => {
+      users.set(userId, withComparisons(get(userId), vaultId, cp));
+      return Promise.resolve(true);
+    },
     forgetVault: (userId, vaultId) => {
       const current = get(userId);
       Reflect.deleteProperty(current.vaults, vaultId);
@@ -313,6 +370,18 @@ const StoredSchema = v.object({
             ]),
           ),
           ft: v.optional(Counter),
+          cp: v.optional(
+            v.pipe(
+              v.array(
+                v.tuple([
+                  v.pipe(Counter, v.minValue(1)),
+                  v.pipe(v.string(), v.regex(/^[A-Z2-7]{25}[AEIMQUY4]$/)),
+                  Counter,
+                ]),
+              ),
+              v.maxLength(64),
+            ),
+          ),
           obj: v.record(Id, ObjectMark),
         }),
       ),
@@ -418,6 +487,12 @@ export function storedSyncMarks(store: MarksStore, lock: MarksLock): SyncMarks {
       await memory.replaceRoles(userId, vaultId, rl);
       return update(userId, (current) =>
         withRoles(current ?? emptyMarks(), vaultId, rl),
+      );
+    },
+    async replaceComparisons(userId, vaultId, cp) {
+      await memory.replaceComparisons(userId, vaultId, cp);
+      return update(userId, (current) =>
+        withComparisons(current ?? emptyMarks(), vaultId, cp),
       );
     },
     async forgetVault(userId, vaultId) {

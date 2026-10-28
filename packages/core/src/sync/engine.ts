@@ -363,6 +363,8 @@ export class SyncEngine {
           track(await marks.rememberOwners(userId, id, owners)),
         replaceRoles: async (userId, id, rl) =>
           track(await marks.replaceRoles(userId, id, rl)),
+        replaceComparisons: async (userId, id, cp) =>
+          track(await marks.replaceComparisons(userId, id, cp)),
         forgetVault: (userId, id) => marks.forgetVault(userId, id),
         forgetUser: (userId) => marks.forgetUser(userId),
       },
