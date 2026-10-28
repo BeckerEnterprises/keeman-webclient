@@ -1470,6 +1470,7 @@ export class Account {
       me.freshness,
       userId,
       this.#keys.signingPublicKey(),
+      this.#now(),
     );
     const overruled = this.#userDataOverruled;
     return attestation &&

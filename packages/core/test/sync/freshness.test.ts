@@ -115,37 +115,49 @@ describe("freshness rules", () => {
     const other = deriveSigningKeyPair(tv("freshness-test-other", 32));
     const signed = signFreshness(attestation, own.secretKey);
     const { userId, vaultId } = attestation;
+    const at = Date.parse(attestation.time);
+    // More than a day ahead of this device's clock: no attestation at all,
+    // so not a floor either.
+    expect(
+      ownVaultAttestation(signed, userId, vaultId, own.publicKey, at - 2 * DAY),
+    ).toBeUndefined();
     const elsewhere = "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b02";
-    expect(ownVaultAttestation(signed, userId, vaultId, own.publicKey)).toEqual(
-      attestation,
-    );
     expect(
-      ownVaultAttestation(signed, userId, elsewhere, own.publicKey),
+      ownVaultAttestation(signed, userId, vaultId, own.publicKey, at),
+    ).toEqual(attestation);
+    expect(
+      ownVaultAttestation(signed, userId, elsewhere, own.publicKey, at),
     ).toBeUndefined();
     expect(
-      ownVaultAttestation(signed, elsewhere, vaultId, own.publicKey),
+      ownVaultAttestation(signed, elsewhere, vaultId, own.publicKey, at),
     ).toBeUndefined();
     expect(
-      ownVaultAttestation(signed, userId, vaultId, other.publicKey),
+      ownVaultAttestation(signed, userId, vaultId, other.publicKey, at),
     ).toBeUndefined();
     expect(
-      ownVaultAttestation({ statement: "x" }, userId, vaultId, own.publicKey),
+      ownVaultAttestation(
+        { statement: "x" },
+        userId,
+        vaultId,
+        own.publicKey,
+        at,
+      ),
     ).toBeUndefined();
     expect(
-      ownVaultAttestation(null, userId, vaultId, own.publicKey),
+      ownVaultAttestation(null, userId, vaultId, own.publicKey, at),
     ).toBeUndefined();
     expect(
-      ownUserDataAttestation(signed, userId, own.publicKey),
+      ownUserDataAttestation(signed, userId, own.publicKey, at),
     ).toBeUndefined();
     const userData = signFreshness(
       { type: "user_data_freshness", userId, time: attestation.time, seq: 4 },
       own.secretKey,
     );
     expect(
-      ownUserDataAttestation(userData, userId, own.publicKey),
+      ownUserDataAttestation(userData, userId, own.publicKey, at),
     ).toMatchObject({ seq: 4 });
     expect(
-      ownUserDataAttestation(userData, elsewhere, own.publicKey),
+      ownUserDataAttestation(userData, elsewhere, own.publicKey, at),
     ).toBeUndefined();
   });
 

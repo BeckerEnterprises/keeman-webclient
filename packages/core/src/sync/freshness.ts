@@ -39,19 +39,24 @@ export function effectivePeriodDays(
   return Math.min(setting, confirmed ?? DEFAULT_PERIOD_DAYS);
 }
 
-/** The own attestation of a vault, or `undefined` if it does not check out. */
+/**
+ * The own attestation of a vault, or `undefined` if it does not check out.
+ * One more than a day ahead of `now` counts as none, also as a floor.
+ */
 export function ownVaultAttestation(
   signed: unknown,
   userId: string,
   vaultId: string,
   signingKey: Uint8Array,
+  now: number,
 ): VaultFreshness | undefined {
   if (signed === null || signed === undefined) return undefined;
   try {
     const statement = readFreshness(signed, signingKey);
     return statement.type === "vault_freshness" &&
       statement.userId === userId &&
-      statement.vaultId === vaultId
+      statement.vaultId === vaultId &&
+      attestedAt(statement.time, now) !== undefined
       ? statement
       : undefined;
   } catch {
@@ -59,17 +64,19 @@ export function ownVaultAttestation(
   }
 }
 
-/** The own attestation of `user_data`, or `undefined`. */
+/** The own attestation of `user_data`, or `undefined`; as for a vault. */
 export function ownUserDataAttestation(
   signed: unknown,
   userId: string,
   signingKey: Uint8Array,
+  now: number,
 ): UserDataFreshness | undefined {
   if (signed === null || signed === undefined) return undefined;
   try {
     const statement = readFreshness(signed, signingKey);
     return statement.type === "user_data_freshness" &&
-      statement.userId === userId
+      statement.userId === userId &&
+      attestedAt(statement.time, now) !== undefined
       ? statement
       : undefined;
   } catch {
@@ -189,6 +196,7 @@ export class FreshnessKeeper {
   /** Reads the own attestations of the vault list; others are ignored. */
   take(summaries: readonly VaultSummary[]): Map<string, VaultFreshness> {
     const signingKey = this.#port.keys.signingPublicKey();
+    const now = this.#port.now();
     this.#listed.clear();
     for (const summary of summaries) {
       if (summary.state !== "active") continue;
@@ -197,6 +205,7 @@ export class FreshnessKeeper {
         this.#port.userId,
         summary.vault_id,
         signingKey,
+        now,
       );
       if (!attestation) continue;
       const overruled = this.#overruled.get(summary.vault_id);
