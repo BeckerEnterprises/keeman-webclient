@@ -175,6 +175,8 @@ test.describe("freshness", () => {
     await expect(
       page.getByTestId("confirmation-incoming-device"),
     ).toContainText("Browser");
+    // Not "confirm": a stray Enter must not confirm another device.
+    await expect(page.getByTestId("confirmation-later")).toBeFocused();
     await page.getByTestId("confirmation-accept").click();
     await expect(incoming.getByRole("status")).toBeVisible();
     await page.getByTestId("confirmation-incoming-close").click();

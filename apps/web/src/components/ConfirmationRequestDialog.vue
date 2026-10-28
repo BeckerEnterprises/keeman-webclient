@@ -153,10 +153,12 @@ function later(): void {
       >
         {{ t("confirmation.decline") }}
       </button>
+      <!-- Focused first: a stray Enter must not confirm another device. -->
       <button
         type="button"
         class="secondary"
         :disabled="busy"
+        autofocus
         data-test="confirmation-later"
         @click="later"
       >
