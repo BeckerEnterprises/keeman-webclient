@@ -537,14 +537,21 @@ export class RolesKeeper {
       hash: own.hash,
       signed,
     };
-    const marks = await this.#port.marks.read(this.#port.userId);
-    this.#raise(
-      vaultId,
-      head,
-      this.#port.anchor(vaultId),
-      marks.vaults[vaultId]?.rl,
-    );
-    await this.flush();
+    try {
+      const marks = await this.#port.marks.read(this.#port.userId);
+      this.#raise(
+        vaultId,
+        head,
+        this.#port.anchor(vaultId),
+        marks.vaults[vaultId]?.rl,
+      );
+      await this.flush();
+    } catch (error) {
+      // The server took the change: that does not fail now. The floor is
+      // written before user_data, and the held keys still check the
+      // commitments.
+      if ((error as { code?: unknown }).code === "locked") throw error;
+    }
   }
 
   /** Queues the head as new anchor where it is newer than the stored one. */

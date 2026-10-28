@@ -295,6 +295,21 @@ describe("roles keeper", () => {
     chain.push(...tail);
   });
 
+  it("does not fail a change the server took when the anchor cannot be stored", async () => {
+    const { bob, vaultId, chain } = await setup();
+    const k = keeper(bob);
+    const first = chain[0];
+    if (!first) throw new Error("chain");
+    k.marks.read = () => Promise.reject(new Error("storage"));
+    await expect(k.roles.adoptOwn(vaultId, first)).resolves.toBeUndefined();
+    // A lock still ends it.
+    k.marks.read = () =>
+      Promise.reject(Object.assign(new Error("locked"), { code: "locked" }));
+    await expect(k.roles.adoptOwn(vaultId, first)).rejects.toMatchObject({
+      code: "locked",
+    });
+  });
+
   it("needs every lower point delivered, not only the highest one", async () => {
     const { bob, vaultId, chain, points } = await setup();
     const [first, second] = points;
