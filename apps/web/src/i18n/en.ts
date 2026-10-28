@@ -1155,7 +1155,7 @@ const en: typeof de = {
     check: "Check a member's code",
     noChain: "This database has no signed owner list yet.",
     rejected:
-      "The invitation does not fit the signed owner list and cannot be accepted. This may be an attack on the server.",
+      "The invitation cannot be checked: it does not open with the sender's key, or it does not fit the signed owner list. Do not accept it; this may be an attack on the server.",
     contradicted:
       "A member has a different state code. Do not accept the invitation before you have sorted that out.",
     senderNotOwner:

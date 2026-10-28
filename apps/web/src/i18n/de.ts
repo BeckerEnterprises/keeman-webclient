@@ -1188,7 +1188,7 @@ export default {
     check: "Code eines Mitglieds prüfen",
     noChain: "Diese Datenbank hat noch keine signierte Eigentümerliste.",
     rejected:
-      "Die Einladung passt nicht zur signierten Eigentümerliste und lässt sich nicht annehmen. Das kann ein Angriff auf den Server sein.",
+      "Die Einladung lässt sich nicht prüfen: Sie öffnet sich nicht mit dem Schlüssel des Absenders, oder sie passt nicht zur signierten Eigentümerliste. Nimm sie nicht an; das kann ein Angriff auf den Server sein.",
     contradicted:
       "Ein Mitglied hat einen anderen Stand-Code. Nimm die Einladung nicht an, bevor ihr das geklärt habt.",
     senderNotOwner:

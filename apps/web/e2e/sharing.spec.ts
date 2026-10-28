@@ -114,6 +114,11 @@ test.describe("sharing", () => {
       aliceFingerprint,
     );
     await check.getByTestId("fingerprint-confirm").click();
+    const accepting = second.getByTestId("invitation-dialog");
+    await expect(
+      accepting.getByTestId("invitation-dialog-owner"),
+    ).toContainText(alice.email);
+    await accepting.getByTestId("invitation-dialog-accept").click();
     await expect(banner).toHaveCount(0);
     await second.getByTestId("nav-entries").click();
     await openVault(second, "Persönlich");
@@ -315,7 +320,13 @@ test.describe("sharing", () => {
     );
     // Confirming anyway does not help: the box never opens.
     await check.getByTestId("fingerprint-confirm").click();
-    await expect(second.getByTestId("error")).toContainText("nicht angenommen");
+    const accepting = second.getByTestId("invitation-dialog");
+    await expect(
+      accepting.getByTestId("invitation-dialog-problem"),
+    ).toBeVisible();
+    await expect(
+      accepting.getByTestId("invitation-dialog-accept"),
+    ).toBeDisabled();
     expect(accepts).toEqual([]);
   });
 
