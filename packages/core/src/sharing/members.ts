@@ -92,7 +92,7 @@ export async function invite(
         keyVersion: target.keyVersion,
         vaultKey,
         vaultName: target.vaultName,
-        created: new Date().toISOString(),
+        created: new Date(ctx.now?.() ?? Date.now()).toISOString(),
         roles: target.roles,
         manifest: target.manifest,
       }),

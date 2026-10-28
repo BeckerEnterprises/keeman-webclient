@@ -375,7 +375,7 @@ async function attempt(
   const vaultKey = rotationKey(systemRandomness);
   let stored = false;
   try {
-    const now = new Date().toISOString();
+    const now = new Date(ctx.now?.() ?? Date.now()).toISOString();
     const owner = { vaultId, ownerId: ctx.userId, newKeyVersion };
     const drops = collected.corrupt.map((o) =>
       dropTombstone(systemRandomness, owner, o, vaultKey, now),

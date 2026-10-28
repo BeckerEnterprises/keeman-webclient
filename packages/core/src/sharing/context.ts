@@ -9,4 +9,6 @@ export interface SharingContext {
   userId: string;
   /** Contacts that count; empty while user_data is unreadable. */
   contacts(): readonly Contact[];
+  /** The device clock (Unix milliseconds) for the time a box names. */
+  now?(): number;
 }
