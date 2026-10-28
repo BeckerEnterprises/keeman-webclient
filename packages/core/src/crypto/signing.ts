@@ -18,6 +18,7 @@ const SECRET_KEY_BYTES = 64;
 export const SIGNATURE_CONTEXT = {
   roles: "keeman:v1:roles",
   freshness: "keeman:v1:freshness",
+  confirmation: "keeman:v1:device-confirmation",
 } as const;
 
 export type SignatureContext =

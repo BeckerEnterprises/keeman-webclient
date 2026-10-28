@@ -21,6 +21,7 @@ import {
   fromHex,
   toBase64Url,
   toHex,
+  utf8Decode,
   utf8Encode,
   type JsonObject,
 } from "../../src/crypto/bytes";
@@ -98,13 +99,13 @@ import {
   type FreshnessStatement,
 } from "../../src/crypto/freshness";
 import {
-  formatPairingCode,
-  openPairing,
-  pairingKey,
-  parsePairingCode,
-  sealPairing,
-  type PairingContent,
-} from "../../src/crypto/pairing";
+  decodeConfirmation,
+  encodeConfirmationContent,
+  readConfirmation,
+  signConfirmation,
+  validateConfirmationContent,
+  type ConfirmationContent,
+} from "../../src/crypto/confirmation";
 import {
   compareStateCode,
   comparisonPointsStatus,
@@ -970,95 +971,71 @@ describe("test vectors", () => {
     }
   });
 
-  it("pairing.json", () => {
-    const { cases, byId } = load("pairing");
-    const wire = (content: PairingContent) => ({
-      schema: 1,
-      fd: content.fd,
-      user_data: content.userData && {
-        rev: content.userData.rev,
-        seq: content.userData.seq,
-        at: content.userData.at,
-      },
-      vaults: Object.fromEntries(
-        content.vaults.map((v) => [
-          v.vaultId,
-          {
-            rev: v.rev,
-            kv: v.kv,
-            mf: v.mf,
-            rl: v.rl && [v.rl.version, v.rl.hash],
-            at: v.at,
-          },
-        ]),
-      ),
-    });
+  it("confirmation.json", () => {
+    const { cases } = load("confirmation");
+    const wire = (content: ConfirmationContent) =>
+      JSON.parse(utf8Decode(encodeConfirmationContent(content))) as unknown;
     for (const c of cases) {
       const e = c.expected;
       switch (c.kind) {
-        case "code": {
-          const secret = fromHex(c.secret_hex);
-          expect(
-            [formatPairingCode(secret), toHex(pairingKey(secret))],
-            c.id,
-          ).toEqual([e.code, e.key_hex]);
-          break;
-        }
-        case "parse":
-          expectOutcome(c, () => {
-            expect(toHex(parsePairingCode(c.input)), c.id).toBe(e.secret_hex);
+        case "statement": {
+          const content = validateConfirmationContent(c.content);
+          expect(toHex(encodeConfirmationContent(content)), c.id).toBe(
+            c.content_utf8_hex,
+          );
+          const signed = signConfirmation(
+            { userId: c.user_id, nonce: c.nonce, time: c.time, content },
+            deriveSigningKeyPair(fromHex(c.signer_user_key_hex)).secretKey,
+          );
+          expect(signed, c.id).toEqual({
+            statement: e.statement,
+            signature: e.signature,
           });
-          break;
-        case "envelope": {
-          const { effective, base } = resolve(c, byId);
-          let envelope: string;
-          if (base === undefined) {
-            const opened = openPairing(
-              fromHex(c.secret_hex),
-              c.user_id,
-              e.envelope_b64,
-            );
-            envelope = sealPairing(
-              nonceRandomness(c.nonce_hex),
-              fromHex(c.secret_hex),
-              c.user_id,
-              opened,
-            );
-            expect(envelope, c.id).toBe(e.envelope_b64);
-          } else {
-            envelope = base.expected.envelope_b64;
-            if (c.mutations)
-              envelope = toBase64Url(
-                mutate(fromBase64Url(envelope), c.mutations),
-              );
-          }
-          expectOutcome(c, () => {
-            const opened = openPairing(
-              fromHex(effective.secret_hex),
-              effective.user_id,
-              envelope,
-            );
-            expect(wire(opened), c.id).toEqual(e.content);
+          const decoded = decodeConfirmation(fromBase64Url(e.statement));
+          expect(decoded, c.id).toEqual({
+            userId: e.decoded.user_id,
+            nonce: e.decoded.nonce,
+            time: e.decoded.time,
+            content: e.decoded.content,
           });
           break;
         }
+        case "decode":
+          expectOutcome(c, () => {
+            const s = decodeConfirmation(fromBase64Url(c.statement_b64));
+            expect(
+              {
+                v: 1,
+                type: "device_confirmation",
+                user_id: s.userId,
+                nonce: s.nonce,
+                time: s.time,
+                content: s.content,
+              },
+              c.id,
+            ).toEqual(e.statement);
+          });
+          break;
+        case "verify":
+          expectOutcome(c, () => {
+            const read = readConfirmation(c.answer, fromHex(c.public_key_hex), {
+              userId: c.expected_user_id,
+              nonce: c.expected_nonce,
+            });
+            expect(
+              { time: read.time, content: wire(read.content) },
+              c.id,
+            ).toEqual({
+              time: e.time,
+              content: e.content,
+            });
+          });
+          break;
         case "content":
-          expect(
-            sealJson(
-              nonceRandomness(c.nonce_hex),
-              pairingKey(fromHex(c.secret_hex)),
-              c.content,
-              aad.pairing(c.user_id),
-            ),
-            c.id,
-          ).toBe(c.envelope_b64);
           expectOutcome(c, () => {
-            const opened = openPairing(
-              fromHex(c.secret_hex),
-              c.user_id,
-              c.envelope_b64,
+            expect(wire(validateConfirmationContent(c.content)), c.id).toEqual(
+              e.content,
             );
-            expect(wire(opened), c.id).toEqual(e.content);
           });
           break;
         default:

@@ -90,16 +90,6 @@
       }
     },
     {
-      "id": "pairing",
-      "template": "pairing",
-      "params": {
-        "user_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01"
-      },
-      "expected": {
-        "aad": "keeman:v1:pairing:0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01"
-      }
-    },
-    {
       "id": "invalid-uppercase-id",
       "template": "user-key",
       "params": {
@@ -178,16 +168,6 @@
       "params": {
         "user_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a01",
         "credential_id": "AQI="
-      },
-      "expected": {
-        "error": "validation"
-      }
-    },
-    {
-      "id": "invalid-pairing-short-id",
-      "template": "pairing",
-      "params": {
-        "user_id": "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a0"
       },
       "expected": {
         "error": "validation"
