@@ -4,11 +4,13 @@ import { useRoute, useRouter } from "vue-router";
 import AppFooter from "./components/AppFooter.vue";
 import AppHeader from "./components/AppHeader.vue";
 import BannerList from "./components/BannerList.vue";
+import ConfirmationRequestDialog from "./components/ConfirmationRequestDialog.vue";
 import KdfWarningDialog from "./components/KdfWarningDialog.vue";
 import ToastHost from "./components/ui/ToastHost.vue";
 import { HOME } from "./router";
 import { useServices } from "./services";
 import { dispatchShortcut, registerShortcut } from "./shortcuts";
+import { useConfirmationStore } from "./stores/confirmation";
 import { useSessionStore } from "./stores/session";
 import StatusView from "./views/StatusView.vue";
 
@@ -60,8 +62,10 @@ function onKeydown(event: KeyboardEvent): void {
 
 /** Back online or visible again: reconnect and sync now. */
 function onWake(): void {
-  if (session.phase === "unlocked" && document.visibilityState === "visible")
+  if (session.phase === "unlocked" && document.visibilityState === "visible") {
     useServices().account.sync?.nudge();
+    void useConfirmationStore().refreshIncoming();
+  }
 }
 
 onMounted(() => {
@@ -90,6 +94,9 @@ onBeforeUnmount(() => {
     </main>
     <AppFooter />
     <KdfWarningDialog v-if="session.kdfWarning" />
+    <ConfirmationRequestDialog
+      v-if="session.phase === 'unlocked' && session.confirmation"
+    />
     <ToastHost />
   </div>
 </template>

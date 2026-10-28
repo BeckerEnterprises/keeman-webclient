@@ -1,14 +1,16 @@
 <script setup lang="ts">
 /**
  * No device of the account confirmed the delivered state of a database
- * within the period: it stays read-only until this device is paired or the
- * user confirms the state, after asking.
+ * within the period: it stays read-only until another device confirms this
+ * one or the user confirms the state, after asking.
  */
 import type { VaultView } from "@keeman/core";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
 import { toUiError, type UiError } from "../errors";
 import { formatDate } from "../format";
+import { useConfirmationStore } from "../stores/confirmation";
 import { useSessionStore } from "../stores/session";
 import { useVaultsStore } from "../stores/vaults";
 import ErrorNotice from "./ErrorNotice.vue";
@@ -21,6 +23,14 @@ const vaults = useVaultsStore();
 const busy = ref(false);
 const asking = ref(false);
 const error = ref<UiError>();
+const router = useRouter();
+const confirmation = useConfirmationStore();
+
+/** Asks the other devices of the account and shows the waiting page. */
+async function askConfirmation(): Promise<void> {
+  await confirmation.request();
+  await router.push("/account/confirm");
+}
 
 const since = computed(() =>
   props.vault.confirmedSince === undefined
@@ -57,9 +67,15 @@ async function acknowledge(): Promise<void> {
     </p>
     <p>{{ t("freshness.vaultReadOnly") }}</p>
     <div class="actions">
-      <RouterLink v-if="session.freshness" to="/account/pairing">{{
-        t("freshness.pair")
-      }}</RouterLink>
+      <button
+        v-if="session.confirmation"
+        type="button"
+        class="small"
+        data-test="vault-freshness-confirm"
+        @click="askConfirmation"
+      >
+        {{ t("freshness.confirm") }}
+      </button>
       <button
         type="button"
         class="small"

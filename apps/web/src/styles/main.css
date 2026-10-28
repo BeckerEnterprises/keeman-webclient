@@ -398,6 +398,10 @@ button.link {
   padding: 0.75rem;
 }
 
+.session-list li.session-flagged {
+  border-color: var(--error);
+}
+
 .contact-list,
 .member-list,
 .recipient-list {

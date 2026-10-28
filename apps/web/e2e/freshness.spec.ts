@@ -1,12 +1,14 @@
 /**
  * Freshness on new devices: attestations of the own account, the stale
- * warning and "understood", a clock past the period, pairing by code and
- * by QR image, and the period setting.
+ * warning and "understood", a clock past the period, the confirmation by
+ * another device (a Node device, a second browser, a changed answer),
+ * strict mode and the period setting.
  */
 import type { Page, Route } from "@playwright/test";
 import {
   createAccountWithVault,
   loginViaUi,
+  type NodeDevice,
   openAccount,
   openMain,
   openVault,
@@ -48,6 +50,29 @@ async function withholdAttestations(
   );
 }
 
+/** The banner's button asks the other devices and opens the waiting page. */
+async function askForConfirmation(page: Page): Promise<void> {
+  const banner = page.getByTestId("banner-freshness");
+  // Right after the sign-in a first click may meet the app's own
+  // navigation; the button is clicked until the waiting page shows.
+  await expect(async () => {
+    await banner.getByTestId("banner-freshness-confirm").click();
+    await expect(page.getByTestId("confirmation-waiting")).toBeVisible({
+      timeout: 2000,
+    });
+  }).toPass();
+}
+
+/** The Node device confirms the open request once it sees it. */
+async function confirmOnNode(device: NodeDevice): Promise<void> {
+  let id: string | undefined;
+  await expect(async () => {
+    id = (await device.account.confirmationRequests())[0]?.requestId;
+    expect(id).toBeDefined();
+  }).toPass();
+  await device.account.confirmRequest(id ?? "");
+}
+
 async function createGroup(page: Page, name: string): Promise<void> {
   await page.getByTestId("new-group").click();
   await page.getByTestId("group-dialog-name").fill(name);
@@ -56,7 +81,7 @@ async function createGroup(page: Page, name: string): Promise<void> {
 }
 
 test.describe("freshness", () => {
-  test("a second device after the first: no warning, an offer to pair", async ({
+  test("a second device after the first: no warning, an offer to have it confirmed", async ({
     page,
   }) => {
     const account = await createAccountWithVault("fresh");
@@ -96,15 +121,14 @@ test.describe("freshness", () => {
     await expect(page.getByTestId("new-group")).toBeDisabled();
   });
 
-  test("pairing by code takes over the marks and detects an older state", async ({
+  test("a confirmation by another device takes over the marks and detects an older state", async ({
     page,
   }) => {
-    const account = await createAccountWithVault("pairing");
+    const account = await createAccountWithVault("confirm");
     const { device } = account;
     // The account data as it was, then a change on the other device.
     const older = (await device.api.me()).user_data;
     await device.account.updateSettings({ autoLockMinutes: 9 });
-    const { code } = await device.account.createPairing();
     // The server gives this browser the older account data, which is in
     // itself consistent, and no attestations.
     await withholdAttestations(page);
@@ -122,11 +146,12 @@ test.describe("freshness", () => {
     await loginViaUi(page, account);
     await expect(page.getByTestId("banner-freshness")).toBeVisible();
     await expect(page.getByTestId("banner-user-data-rollback")).toHaveCount(0);
-    await openAccount(page, "pairing");
-    await page.getByTestId("pairing-input").fill(code.toLowerCase());
-    await page.getByTestId("pairing-submit").click();
-    await expect(page.getByTestId("pairing-done")).toBeVisible();
-    // The paired marks are newer than what the server delivers.
+    await askForConfirmation(page);
+    await confirmOnNode(device);
+    await expect(page.getByTestId("confirmation-done")).toBeVisible({
+      timeout: 20_000,
+    });
+    // The confirmed marks are newer than what the server delivers.
     await expect(page.getByTestId("banner-user-data-rollback")).toBeVisible();
     await expect(page.getByTestId("banner-freshness")).toHaveCount(0);
     await openMain(page);
@@ -134,43 +159,94 @@ test.describe("freshness", () => {
     await expect(page.getByTestId("vault-freshness")).toHaveCount(0);
   });
 
-  test("pairs a second browser by the QR code of the first", async ({
+  test('one browser confirms another by a click; "that wasn\'t me" marks the session', async ({
     page,
     otherContext,
   }) => {
-    const account = await createAccountWithVault("pairqr");
+    const account = await createAccountWithVault("confirm2");
     await loginViaUi(page, account);
-    await openAccount(page, "pairing");
-    await page.getByTestId("pairing-show").click();
-    await expect(page.getByTestId("pairing-code")).toHaveText(
-      /^([A-Z2-7]{4} ){5}[A-Z2-7]{4}$/,
-    );
-    await expect(page.getByTestId("pairing-countdown")).toBeVisible();
-    const image = await page.getByTestId("pairing-qr").screenshot();
     const other = await otherContext.newPage();
     await withholdAttestations(other);
     await loginViaUi(other, account);
-    const banner = other.getByTestId("banner-freshness");
-    await expect(banner).toBeVisible();
-    // Right after the sign-in a first click may meet the app's own
-    // navigation; the banner's link is clicked until the page opens.
-    await expect(async () => {
-      await banner.getByRole("link", { name: "Gerät koppeln" }).click();
-      await expect(other).toHaveURL(/\/account\/pairing$/, { timeout: 2000 });
-    }).toPass();
-    await other.getByTestId("pairing-qr-file").setInputFiles({
-      name: "code.png",
-      mimeType: "image/png",
-      buffer: image,
-    });
-    await expect(other.getByTestId("pairing-done")).toBeVisible();
+    await expect(other.getByTestId("banner-freshness")).toBeVisible();
+    await askForConfirmation(other);
+    const incoming = page.getByTestId("confirmation-incoming");
+    await expect(incoming).toBeVisible();
+    await expect(
+      page.getByTestId("confirmation-incoming-device"),
+    ).toContainText("Browser");
+    await page.getByTestId("confirmation-accept").click();
+    await expect(incoming.getByRole("status")).toBeVisible();
+    await page.getByTestId("confirmation-incoming-close").click();
+    await expect(incoming).toHaveCount(0);
+    await expect(other.getByTestId("confirmation-done")).toBeVisible();
     await expect(other.getByTestId("banner-freshness")).toHaveCount(0);
-    // A typo does not open the pairing.
-    await other
-      .getByTestId("pairing-input")
-      .fill("AAAA AAAA AAAA AAAA AAAA AAAA");
-    await other.getByTestId("pairing-submit").click();
-    await expect(other.getByTestId("error")).toBeVisible();
+
+    // Asked again, and refused on the first browser.
+    await other.getByTestId("confirmation-request").click();
+    await expect(other.getByTestId("confirmation-waiting")).toBeVisible();
+    await expect(incoming).toBeVisible();
+    await page.getByTestId("confirmation-decline").click();
+    await expect(page).toHaveURL(/\/account\/sessions$/);
+    await expect(page.getByTestId("sessions-declined")).toBeVisible();
+    await expect(page.getByTestId("session-requesting")).toHaveCount(1);
+    await expect(other.getByTestId("confirmation-failed")).toBeVisible();
+  });
+
+  test("in strict mode a new browser stays unconfirmed until another device confirms it", async ({
+    page,
+  }) => {
+    const account = await createAccountWithVault("strict");
+    const { device } = account;
+    await device.account.updateSettings({ requireConfirmation: true });
+    await loginViaUi(page, account);
+    // The other device's attestations are fresh, but do not count here.
+    await expect(page.getByTestId("banner-freshness")).toBeVisible();
+    await openAccount(page, "settings");
+    await expect(
+      page.getByTestId("settings-require-confirmation"),
+    ).toBeChecked();
+    await expect(page.getByTestId("settings-strict-here")).toContainText(
+      "streng",
+    );
+    await askForConfirmation(page);
+    await confirmOnNode(device);
+    await expect(page.getByTestId("confirmation-done")).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(page.getByTestId("banner-freshness")).toHaveCount(0);
+  });
+
+  test("a changed answer is not taken", async ({ page }) => {
+    const account = await createAccountWithVault("forged");
+    await withholdAttestations(page);
+    // The server changes one character of the signed statement.
+    await page.route(
+      (url) => /^\/v1\/me\/confirmations\/[^/]+$/.test(url.pathname),
+      async (route: Route) => {
+        if (route.request().method() !== "GET") return route.continue();
+        const response = await route.fetch();
+        const body = (await response.json()) as {
+          answer: { statement: string; signature: string } | null;
+        };
+        if (body.answer) {
+          const text = body.answer.statement;
+          const last = text.at(-2) === "A" ? "B" : "A";
+          body.answer.statement = `${text.slice(0, -2)}${last}${text.slice(-1)}`;
+        }
+        await route.fulfill({ response, json: body });
+      },
+    );
+    await loginViaUi(page, account);
+    await askForConfirmation(page);
+    await confirmOnNode(account.device);
+    await expect(page.getByTestId("confirmation-failed")).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(page.getByTestId("confirmation-failed")).toContainText(
+      "ließ sich nicht prüfen",
+    );
+    await expect(page.getByTestId("banner-freshness")).toBeVisible();
   });
 
   test("stores the period", async ({ page }) => {

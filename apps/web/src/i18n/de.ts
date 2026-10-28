@@ -766,7 +766,7 @@ export default {
     settings: "Einstellungen",
     about: "Über KeeMan",
     contacts: "Kontakte",
-    pairing: "Gerät koppeln",
+    confirm: "Gerät bestätigen lassen",
     delete: "Konto löschen",
   },
   password: {
@@ -923,10 +923,18 @@ export default {
     title: "Einstellungen",
     autoLock: "Automatisch sperren nach Inaktivität (Minuten)",
     freshness: "Frist für die Bestätigung des Stands (Tage)",
+    requireConfirmation: "Neue Geräte nur nach Bestätigung (strenger Modus)",
+    requireConfirmationHint:
+      "Ein Gerät, das neu ist oder länger als die Frist nicht benutzt wurde, gilt dann erst als bestätigt, wenn ein anderes Gerät deines Kontos es bestätigt oder du „Verstanden“ wählst; Nachweise anderer Geräte genügen nicht. Ausschalten wirkt auf jedem Gerät erst, nachdem es die Kontodaten selbst bestätigt hat.",
+    requireConfirmationReliable:
+      "Verlässlich schützt der Modus neue Geräte, sobald jedes deiner bisherigen Geräte die Einstellung einmal geladen hat (entsperre jedes einmal) und danach 7 Tage vergangen sind.",
+    strictHere: "Auf diesem Gerät: streng",
+    strictNotHere: "Auf diesem Gerät: nicht streng",
+    sessionsLink: "Deine Geräte (Sitzungen)",
     freshnessHint:
       "Innerhalb dieser Frist muss ein Gerät deines Kontos den Stand bestätigt haben, sonst bleibt er schreibgeschützt. Ein längerer Wert gilt auf jedem Gerät erst, nachdem es ihn einmal bestätigt hat.",
     stale:
-      "Kein Gerät deines Kontos hat deine Kontodaten rechtzeitig bestätigt. Sie sind schreibgeschützt, bis du den Stand bestätigst oder das Gerät koppelst.",
+      "Kein Gerät deines Kontos hat deine Kontodaten rechtzeitig bestätigt. Sie sind schreibgeschützt, bis du den Stand bestätigst oder ihn von einem anderen Gerät bestätigen lässt.",
     lockOnHidden: "Sperren, wenn der Tab versteckt ist",
     lockOnHiddenOff: "nie",
     lockOnHiddenNow: "sofort",
@@ -1099,25 +1107,64 @@ export default {
       "Ein Mitglied hat „{name}“ verlassen. Erneuere den Schlüssel.",
     rotationAction: "Zur Datenbank",
   },
+  confirmation: {
+    title: "Gerät bestätigen lassen",
+    intro:
+      "Ein anderes entsperrtes Gerät deines Kontos überträgt seine Höchststände auf dieses Gerät. Danach erkennt es jeden älteren Stand, den der Server liefert, auch den vor dem Entfernen eines Mitglieds.",
+    request: "Bestätigung anfordern",
+    requestAgain: "Erneut anfordern",
+    waiting:
+      "Warte auf ein anderes Gerät … Öffne KeeMan auf einem anderen Gerät deines Kontos und bestätige dort die Anfrage.",
+    expiresIn: "Gültig noch {time}",
+    cancel: "Abbrechen",
+    done: "Bestätigt: {confirmed} von {vaults} Datenbank(en).",
+    partly:
+      "Für die übrigen hat das andere Gerät keinen Stand bestätigt, weil es sie selbst nicht bestätigt hat.",
+    missing:
+      "Das andere Gerät kennt {count} Datenbank(en), die der Server diesem Gerät nicht liefert.",
+    incomingTitle: "Ein anderes Gerät möchte deinen Stand übernehmen",
+    incomingDevice: "Gerät laut Server: {name} ({type})",
+    incomingTime: "Angefragt um {time}, gültig noch {left}",
+    incomingHint:
+      "Bestätige nur, wenn du gerade selbst auf diesem Gerät um Bestätigung gebeten hast. Kennst du das Gerät nicht, hat sich jemand mit deinem Master-Passwort und deinem zweiten Faktor angemeldet.",
+    incomingUnconfirmed:
+      "Dieses Gerät ist für {count} Datenbank(en) selbst nicht bestätigt; für sie überträgt es nur Untergrenzen.",
+    accept: "Bestätigen",
+    decline: "Das war ich nicht",
+    later: "Später",
+    accepted: "Bestätigt. Das andere Gerät übernimmt jetzt deinen Stand.",
+    declined:
+      "Ein Gerät, das du nicht kennst, hat um Bestätigung gebeten. Melde die markierte Sitzung ab und ändere dein Master-Passwort.",
+    changePassword: "Master-Passwort ändern",
+    requesting: "Hat um Bestätigung gebeten",
+    client: {
+      web: "Browser",
+      desktop: "Desktop-App",
+      mobile: "Mobil-App",
+      cli: "Kommandozeile",
+    },
+  },
   freshness: {
     vaultSince:
       "Seit {date} hat kein Gerät deines Kontos den Stand dieser Datenbank bestätigt.",
     vaultNever:
       "Noch kein Gerät deines Kontos hat den Stand dieser Datenbank bestätigt.",
     vaultReadOnly:
-      "Der Server könnte einen älteren Stand liefern. Die Datenbank bleibt schreibgeschützt, bis du dieses Gerät mit einem anderen koppelst oder den Stand bestätigst.",
+      "Der Server könnte einen älteren Stand liefern. Die Datenbank bleibt schreibgeschützt, bis ein anderes Gerät deines Kontos dieses bestätigt oder du den Stand bestätigst.",
     bannerSince:
       "Dieses Gerät kann nicht bestätigen, dass der Server den aktuellen Stand liefert: Seit {date} hat kein Gerät deines Kontos ihn bestätigt.",
     bannerNever:
       "Dieses Gerät kann nicht bestätigen, dass der Server den aktuellen Stand liefert: Bisher hat kein Gerät deines Kontos ihn bestätigt.",
     bannerReadOnly:
-      "Betroffene Datenbanken und Kontodaten bleiben schreibgeschützt, bis du dieses Gerät mit einem anderen koppelst oder den Stand bestätigst.",
-    pair: "Gerät koppeln",
+      "Betroffene Datenbanken und Kontodaten bleiben schreibgeschützt, bis ein anderes Gerät deines Kontos dieses bestätigt oder du den Stand bestätigst.",
+    confirm: "Von einem anderen Gerät bestätigen lassen …",
     ackTitle: "Stand als aktuell übernehmen",
     ackText:
-      "Übernimmt den gelieferten Stand als aktuell. Vergleiche vorher mit einem anderen Gerät oder kopple dieses Gerät; sonst könnte ein älterer Stand des Servers als aktuell gelten.",
+      "Übernimmt den gelieferten Stand als aktuell. Lass ihn vorher von einem anderen Gerät bestätigen; sonst könnte ein älterer Stand des Servers als aktuell gelten.",
+    ackTextStrict:
+      "Im strengen Modus übernimmt das auch die Einstellungen der gelieferten Kontodaten, also auch einen ausgeschalteten strengen Modus.",
     newDevice:
-      "Neues Gerät: Kopple es mit einem anderen Gerät deines Kontos, dann erkennt es ältere Stände des Servers sofort.",
+      "Neues Gerät: Lass es von einem anderen Gerät deines Kontos bestätigen, dann erkennt es ältere Stände des Servers sofort.",
     later: "Später",
     tree: "Stand nicht bestätigt",
   },
@@ -1197,24 +1244,6 @@ export default {
       "Die Eigentümerliste hat sich inzwischen geändert. Prüfe den neuen Stand.",
     accept: "Annehmen",
     decline: "Ablehnen",
-  },
-  pairing: {
-    title: "Gerät koppeln",
-    intro:
-      "Beim Koppeln übernimmt ein Gerät die Höchststände eines anderen Geräts deines Kontos. Danach erkennt es jeden älteren Stand, den der Server liefert, auch den vor dem Entfernen eines Mitglieds.",
-    showTitle: "Code für ein anderes Gerät",
-    showHint:
-      "Zeigt einen Code, den du auf dem anderen Gerät eingibst. Er gilt 10 Minuten; ein neuer ersetzt den alten.",
-    show: "Code anzeigen",
-    showAgain: "Neuen Code anzeigen",
-    expiresIn: "Gültig noch {time}",
-    expired: "Der Code ist abgelaufen.",
-    enterTitle: "Code eines anderen Geräts eingeben",
-    enterHint:
-      "Gib den Code ein, den das andere Gerät zeigt, oder lies ihn als QR-Code aus einem Bild.",
-    code: "Kopplungscode",
-    submit: "Koppeln",
-    done: "Gekoppelt. Höchststände von {count} Datenbank(en) übernommen.",
   },
   banner: {
     clockSkew:
@@ -1361,14 +1390,18 @@ export default {
     sync_unverified:
       "Dieses Konto ist kein verifizierter Kontakt. Vergleiche zuerst die Fingerprints.",
     sync_stale:
-      "Kein Gerät deines Kontos hat den Stand dieser Datenbank rechtzeitig bestätigt. Kopple das Gerät oder bestätige den Stand zuerst.",
-    sync_pairing_invalid: "Der Code besteht aus 24 Zeichen (A bis Z, 2 bis 7).",
-    sync_pairing_missing:
-      "Keine Kopplung gefunden. Lass das andere Gerät einen neuen Code anzeigen.",
-    sync_pairing_wrong:
-      "Der Code passt nicht. Prüfe ihn auf Tippfehler oder lass einen neuen anzeigen.",
-    sync_pairing_unsupported:
-      "Dieser Server unterstützt das Koppeln von Geräten nicht.",
+      "Kein Gerät deines Kontos hat den Stand dieser Datenbank rechtzeitig bestätigt. Lass das Gerät von einem anderen bestätigen oder bestätige den Stand zuerst.",
+    sync_confirmation_unsupported:
+      "Dieser Server unterstützt die Bestätigung durch ein anderes Gerät nicht.",
+    sync_confirmation_invalid:
+      "Die Antwort ließ sich nicht prüfen. Das Gerät bleibt unbestätigt; fordere die Bestätigung neu an.",
+    sync_confirmation_missing:
+      "Die Anfrage ist nicht mehr offen: abgelehnt oder abgelaufen.",
+    sync_confirmation_answered: "Ein anderes Gerät hat schon bestätigt.",
+    sync_confirmation_expired:
+      "Die Anfrage ist abgelaufen, ohne dass ein Gerät bestätigt hat.",
+    sync_confirmation_too_large:
+      "Dieses Gerät kennt zu viele Datenbanken für eine Bestätigung.",
     sync_state_code_invalid:
       "Das ist kein gültiger Stand-Code: die Version, etwa v7, und 26 Zeichen aus A bis Z und 2 bis 7.",
     sync_state_mismatch:

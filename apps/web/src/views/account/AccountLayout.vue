@@ -12,14 +12,14 @@ const all = [
   "two-factor",
   "sessions",
   "contacts",
-  "pairing",
+  "confirm",
   "settings",
   "about",
   "delete",
 ] as const;
-// Pairing needs a server that stores it.
+// Confirmations need a server that stores them.
 const sections = computed(() =>
-  all.filter((section) => section !== "pairing" || session.freshness),
+  all.filter((section) => section !== "confirm" || session.confirmation),
 );
 const labels: Record<(typeof all)[number], string> = {
   password: "account.password",
@@ -28,7 +28,7 @@ const labels: Record<(typeof all)[number], string> = {
   "two-factor": "account.twoFactor",
   sessions: "account.sessions",
   contacts: "account.contacts",
-  pairing: "account.pairing",
+  confirm: "account.confirm",
   settings: "account.settings",
   about: "account.about",
   delete: "account.delete",

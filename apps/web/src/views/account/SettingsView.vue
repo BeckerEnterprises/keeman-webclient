@@ -18,6 +18,7 @@ const { t } = useI18n();
 const session = useSessionStore();
 const autoLock = ref(session.settings.autoLockMinutes);
 const freshnessDays = ref(session.settings.freshnessDays);
+const requireConfirmation = ref(session.settings.requireConfirmation);
 const hiddenMode = ref<"off" | "now" | "after">(
   session.settings.lockOnHiddenMinutes === null
     ? "off"
@@ -76,6 +77,7 @@ const valid = computed(
 const initial = {
   autoLockMinutes: session.settings.autoLockMinutes,
   freshnessDays: session.settings.freshnessDays,
+  requireConfirmation: session.settings.requireConfirmation,
   lockOnHiddenMinutes: session.settings.lockOnHiddenMinutes,
   language: session.settings.language,
   clipboardClearSeconds: session.settings.clipboardClearSeconds,
@@ -99,6 +101,8 @@ async function save(): Promise<void> {
     change.autoLockMinutes = autoLock.value;
   if (freshnessDays.value !== initial.freshnessDays)
     change.freshnessDays = freshnessDays.value;
+  if (requireConfirmation.value !== initial.requireConfirmation)
+    change.requireConfirmation = requireConfirmation.value;
   if (lockOnHidden !== initial.lockOnHiddenMinutes)
     change.lockOnHiddenMinutes = lockOnHidden;
   if (chosenLanguage !== initial.language) change.language = chosenLanguage;
@@ -120,6 +124,7 @@ async function save(): Promise<void> {
     if (Object.keys(change).length > 0) await session.updateSettings(change);
     initial.autoLockMinutes = autoLock.value;
     initial.freshnessDays = freshnessDays.value;
+    initial.requireConfirmation = requireConfirmation.value;
     initial.lockOnHiddenMinutes = lockOnHidden;
     initial.language = chosenLanguage;
     initial.clipboardClearSeconds = clipboard;
@@ -200,6 +205,32 @@ async function reset(): Promise<void> {
           <p id="settings-freshness-hint" class="muted small-text">
             {{ t("settings.freshnessHint") }}
           </p>
+        </div>
+        <div class="field">
+          <label class="choice">
+            <input
+              v-model="requireConfirmation"
+              type="checkbox"
+              aria-describedby="settings-strict-hint"
+              data-test="settings-require-confirmation"
+            />
+            {{ t("settings.requireConfirmation") }}
+          </label>
+          <div id="settings-strict-hint" class="muted small-text">
+            <p>{{ t("settings.requireConfirmationHint") }}</p>
+            <p>{{ t("settings.requireConfirmationReliable") }}</p>
+            <p data-test="settings-strict-here">
+              {{
+                session.strictMode
+                  ? t("settings.strictHere")
+                  : t("settings.strictNotHere")
+              }}
+              ·
+              <RouterLink to="/account/sessions">{{
+                t("settings.sessionsLink")
+              }}</RouterLink>
+            </p>
+          </div>
         </div>
         <fieldset>
           <legend>{{ t("settings.lockOnHidden") }}</legend>

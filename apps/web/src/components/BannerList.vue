@@ -2,8 +2,10 @@
 import { CLOCK_SKEW_HINT_MS } from "@keeman/core";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
 import { toUiError, type UiError } from "../errors";
 import { formatDate } from "../format";
+import { useConfirmationStore } from "../stores/confirmation";
 import { useSessionStore } from "../stores/session";
 import { useVaultsStore } from "../stores/vaults";
 import ErrorNotice from "./ErrorNotice.vue";
@@ -13,6 +15,8 @@ import SharingBanners from "./sharing/SharingBanners.vue";
 const { t } = useI18n();
 const session = useSessionStore();
 const vaults = useVaultsStore();
+const router = useRouter();
+const confirmation = useConfirmationStore();
 /** TOTP codes follow the server time; a large difference is pointed out. */
 const clockSkewed = computed(
   () => Math.abs(vaults.snapshot?.clockOffset ?? 0) > CLOCK_SKEW_HINT_MS,
@@ -37,6 +41,18 @@ const stale = computed(() => {
   };
 });
 const confirming = ref(false);
+const ackText = computed(() =>
+  session.strictMode
+    ? `${t("freshness.ackText")} ${t("freshness.ackTextStrict")}`
+    : t("freshness.ackText"),
+);
+
+/** Asks the other devices of the account and shows the waiting page. */
+async function askConfirmation(): Promise<void> {
+  await confirmation.request();
+  await router.push("/account/confirm");
+}
+
 const confirmBusy = ref(false);
 const confirmError = ref<UiError>();
 
@@ -175,9 +191,15 @@ function reload(): void {
         </p>
         <p>{{ t("freshness.bannerReadOnly") }}</p>
         <div class="actions">
-          <RouterLink v-if="session.freshness" to="/account/pairing">{{
-            t("freshness.pair")
-          }}</RouterLink>
+          <button
+            v-if="session.confirmation"
+            type="button"
+            class="small"
+            data-test="banner-freshness-confirm"
+            @click="askConfirmation"
+          >
+            {{ t("freshness.confirm") }}
+          </button>
           <button
             type="button"
             class="small"
@@ -191,12 +213,19 @@ function reload(): void {
       </div>
       <ErrorNotice :error="confirmError" />
       <p
-        v-if="!stale && session.banners.newDevice && session.freshness"
+        v-if="!stale && session.banners.newDevice && session.confirmation"
         class="notice notice-info"
         data-test="banner-new-device"
       >
         {{ t("freshness.newDevice") }}
-        <RouterLink to="/account/pairing">{{ t("freshness.pair") }}</RouterLink>
+        <button
+          type="button"
+          class="small"
+          data-test="banner-new-device-confirm"
+          @click="askConfirmation"
+        >
+          {{ t("freshness.confirm") }}
+        </button>
         <button
           type="button"
           class="small secondary"
@@ -217,7 +246,7 @@ function reload(): void {
     <ConfirmDialog
       v-if="confirming"
       :title="t('freshness.ackTitle')"
-      :text="t('freshness.ackText')"
+      :text="ackText"
       :confirm="t('common.understood')"
       danger
       :busy="confirmBusy"

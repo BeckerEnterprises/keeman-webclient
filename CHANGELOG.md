@@ -6,12 +6,15 @@ All notable changes to this project are documented here. The format follows [Kee
 
 Upgrading: needs a server that reports `features.manifest`; with an older server databases stay "unverified". Tabs opened before the update stop syncing a database once it has a manifest and cannot save there; reloading the page fixes this.
 
-Freshness attestations and pairing need a server that reports `features.freshness`; with an older server nothing is uploaded, pairing is not offered, and a new device shows its databases as unconfirmed until "Understood". Devices that synced before this version count their state as confirmed once, at the first sync after the update.
+Freshness attestations need a server that reports `features.freshness`; with an older server nothing is uploaded, and a new device shows its databases as unconfirmed until "Understood". Confirmations by another device need a server that reports `features.confirmation`; otherwise they are not offered. Strict mode applies with any server. Devices that synced before this version count their state as confirmed once, at the first sync after the update.
 
 Signed roles need a server that reports `features.roles`; with an older server the earlier rules stay. Accounts registered before add their signing key after their next unlock (after a sign-in with a second factor, at the unlock that follows). Contacts verified before are marked "outdated" and count as not verified until their fingerprint is compared once more; until then new keys from them wait for that comparison.
 
 ### Security
 
+- Confirmation by another device: a device whose state is unconfirmed asks the other unlocked devices of the account, with a random nonce that never leaves its memory. Another device shows "Another device wants to take over your state" with the device name the server reports and confirms only after a click; it then signs its high-water marks, confirmation times only for databases it would attest itself, and its comparison points, bound to that nonce. The asking device accepts the answer only with its own derived signing key, its own account and its own nonce, so the server cannot forge, replay or redirect one. "That wasn't me" deletes the request and opens the sessions with the asking session marked. A fork the other device's owner list reveals is kept as a comparison point.
+- Strict mode "New devices only after confirmation": attestations of other devices no longer confirm a device whose own confirmation is missing or older than the period; they stay floors. It is switched on at once and off on a device only after that device confirmed the account data itself; account data that is unconfirmed, rolled back or damaged never switches it off and makes attestations not count either. It protects new devices reliably once every existing device has loaded the setting and 7 days have passed.
+- An invitation confirms the new member's state only while the account data is confirmed.
 - State code: each database shows a short code of its checked owner list (version and 26 characters, also as a QR code that names the database) for members to compare over a second channel. A member's code is checked against the statement of the same version only; above the own head the whole list is loaded again. If a code contradicts the list, or names a newer list the server does not deliver, and the user confirms the input, the account keeps it, in the account data and on the device: the database warns about the owner list and stays read-only until "Understood". A server that hides a rotation from a whole account, or a former owner who forks the list to invite someone into an old state, is found this way from either side.
 - Every warning about the owner list now makes the database read-only, and nothing is signed on such a list; leaving and deleting the account wait for "Understood".
 - Accepting an invitation opens a dialog with the owners of the list the invitation names and the future state code, with the advice to compare it with a member other than the inviter. Accepting is bound to the list the dialog showed and refused when a member's code contradicts it, the invitation does not fit the signed list, or its sender is not an owner of the list it names.
@@ -25,8 +28,8 @@ Signed roles need a server that reports `features.roles`; with an older server t
 
 ### Added
 
-- Pair devices: a device shows a 24-character code (also as a QR code), and another device of the account takes over its high-water marks and confirmations with it, typed or from an image. Afterwards it recognises every older state the server delivers. New devices are offered pairing after the first unlock.
-- The confirmation period in the settings.
+- Have this device confirmed: the account page, the banner of an unconfirmed state and the notice at a database ask the other devices; the page waits with the remaining time and reports how many databases were confirmed. Afterwards the device recognises every older state the server delivers. New devices are offered it after the first unlock.
+- The confirmation period and strict mode in the settings; the settings say whether this device is strict.
 - Vault manifest: every database carries an encrypted list of all its objects with a hash of each. After every sync the web client checks what the server delivered against it, also on a new device. If objects are missing, differ or are not listed, the database becomes read-only with the warning "The server is withholding data", the counts and a list on the database page.
 - "Understood" at that warning asks first, then syncs in full, accepts the delivered state and writes the manifest anew.
 - New databases get their manifest at once, existing ones after their first full sync; a database without one is marked "unverified".
@@ -37,7 +40,7 @@ Signed roles need a server that reports `features.roles`; with an older server t
 
 - The main view no longer cancels a navigation started while the first database was still loading.
 - Every save also writes the manifest. Saves of two devices at the same time therefore always meet; the second is planned again without a notice, and only real conflicts count towards the three attempts.
-- Reading a QR code from an image (pairing, state code) uses one input for text, file, drop and paste.
+- Reading a QR code from an image (state code) uses one input for text, file, drop and paste.
 
 ### Fixed
 

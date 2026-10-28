@@ -747,7 +747,7 @@ const en: typeof de = {
     settings: "Settings",
     about: "About KeeMan",
     contacts: "Contacts",
-    pairing: "Pair device",
+    confirm: "Have this device confirmed",
     delete: "Delete account",
   },
   password: {
@@ -899,10 +899,18 @@ const en: typeof de = {
     title: "Settings",
     autoLock: "Lock automatically after inactivity (minutes)",
     freshness: "Period for confirming the state (days)",
+    requireConfirmation: "New devices only after confirmation (strict mode)",
+    requireConfirmationHint:
+      "A device that is new or was not used for longer than the period then counts as confirmed only when another device of your account confirms it or you choose “Understood”; attestations of other devices are not enough. Switching it off takes effect on each device only after it confirmed the account data itself.",
+    requireConfirmationReliable:
+      "The mode reliably protects new devices once each of your existing devices has loaded the setting (unlock each once) and 7 days have passed since.",
+    strictHere: "On this device: strict",
+    strictNotHere: "On this device: not strict",
+    sessionsLink: "Your devices (sessions)",
     freshnessHint:
       "Within this period a device of your account must have confirmed the state, otherwise it stays read-only. A longer value applies on each device only after it confirmed it once.",
     stale:
-      "No device of your account confirmed your account data in time. It is read-only until you confirm the state or pair the device.",
+      "No device of your account confirmed your account data in time. It is read-only until you confirm the state or have another device confirm it.",
     lockOnHidden: "Lock when the tab is hidden",
     lockOnHiddenOff: "never",
     lockOnHiddenNow: "immediately",
@@ -1069,25 +1077,64 @@ const en: typeof de = {
     rotationRequired: "A member left “{name}”. Renew the key.",
     rotationAction: "Go to database",
   },
+  confirmation: {
+    title: "Have this device confirmed",
+    intro:
+      "Another unlocked device of your account passes its high-water marks on to this device. Afterwards it detects every older state the server delivers, also the one before a member was removed.",
+    request: "Ask for confirmation",
+    requestAgain: "Ask again",
+    waiting:
+      "Waiting for another device … Open KeeMan on another device of your account and confirm the request there.",
+    expiresIn: "Valid for {time}",
+    cancel: "Cancel",
+    done: "Confirmed: {confirmed} of {vaults} database(s).",
+    partly:
+      "For the others the other device confirmed no state, as it has not confirmed them itself.",
+    missing:
+      "The other device knows {count} database(s) that the server does not deliver to this device.",
+    incomingTitle: "Another device wants to take over your state",
+    incomingDevice: "Device according to the server: {name} ({type})",
+    incomingTime: "Requested at {time}, valid for {left}",
+    incomingHint:
+      "Confirm only if you just asked for a confirmation on that device yourself. If you do not know the device, someone logged in with your master password and your second factor.",
+    incomingUnconfirmed:
+      "This device has not confirmed {count} database(s) itself; for them it passes on floors only.",
+    accept: "Confirm",
+    decline: "That wasn't me",
+    later: "Later",
+    accepted: "Confirmed. The other device now takes over your state.",
+    declined:
+      "A device you do not know asked for a confirmation. Log out the marked session and change your master password.",
+    changePassword: "Change master password",
+    requesting: "Asked for a confirmation",
+    client: {
+      web: "browser",
+      desktop: "desktop app",
+      mobile: "mobile app",
+      cli: "command line",
+    },
+  },
   freshness: {
     vaultSince:
       "No device of your account has confirmed the state of this database since {date}.",
     vaultNever:
       "No device of your account has confirmed the state of this database yet.",
     vaultReadOnly:
-      "The server might deliver an older state. The database stays read-only until you pair this device with another one or confirm the state.",
+      "The server might deliver an older state. The database stays read-only until another device of your account confirms this one or you confirm the state.",
     bannerSince:
       "This device cannot confirm that the server delivers the current state: no device of your account has confirmed it since {date}.",
     bannerNever:
       "This device cannot confirm that the server delivers the current state: no device of your account has confirmed it yet.",
     bannerReadOnly:
-      "The affected databases and account data stay read-only until you pair this device with another one or confirm the state.",
-    pair: "Pair device",
+      "The affected databases and account data stay read-only until another device of your account confirms this one or you confirm the state.",
+    confirm: "Have another device confirm it …",
     ackTitle: "Take the state as current",
     ackText:
-      "Takes the delivered state as current. Compare with another device or pair this device first; otherwise an older state from the server could count as current.",
+      "Takes the delivered state as current. Have another device confirm it first; otherwise an older state from the server could count as current.",
+    ackTextStrict:
+      "In strict mode this also takes over the settings of the delivered account data, a switched-off strict mode included.",
     newDevice:
-      "New device: pair it with another device of your account, then it detects older states from the server at once.",
+      "New device: have another device of your account confirm it, then it detects older states from the server at once.",
     later: "Later",
     tree: "State not confirmed",
   },
@@ -1163,24 +1210,6 @@ const en: typeof de = {
     changed: "The owner list has changed meanwhile. Check the new state.",
     accept: "Accept",
     decline: "Decline",
-  },
-  pairing: {
-    title: "Pair device",
-    intro:
-      "When pairing, a device takes over the high-water marks of another device of your account. Afterwards it detects every older state the server delivers, including the one before a member was removed.",
-    showTitle: "Code for another device",
-    showHint:
-      "Shows a code you enter on the other device. It is valid for 10 minutes; a new one replaces the old one.",
-    show: "Show code",
-    showAgain: "Show new code",
-    expiresIn: "Valid for {time}",
-    expired: "The code has expired.",
-    enterTitle: "Enter the code of another device",
-    enterHint:
-      "Enter the code the other device shows, or read it as a QR code from an image.",
-    code: "Pairing code",
-    submit: "Pair",
-    done: "Paired. Took over the high-water marks of {count} database(s).",
   },
   banner: {
     clockSkew: "The clock of this device is off; TOTP codes are corrected.",
@@ -1333,13 +1362,18 @@ const en: typeof de = {
     roles_required:
       "The owner list of this database must be signed along. Reload the page and try again.",
     sync_stale:
-      "No device of your account confirmed the state of this database in time. Pair the device or confirm the state first.",
-    sync_pairing_invalid: "The code has 24 characters (A to Z, 2 to 7).",
-    sync_pairing_missing:
-      "No pairing found. Let the other device show a new code.",
-    sync_pairing_wrong:
-      "The code does not match. Check it for typos or let the other device show a new one.",
-    sync_pairing_unsupported: "This server does not support pairing devices.",
+      "No device of your account confirmed the state of this database in time. Have another device confirm this one or confirm the state first.",
+    sync_confirmation_unsupported:
+      "This server does not support confirmations by another device.",
+    sync_confirmation_invalid:
+      "The answer could not be verified. The device stays unconfirmed; ask for a confirmation again.",
+    sync_confirmation_missing:
+      "The request is no longer open: declined or expired.",
+    sync_confirmation_answered: "Another device has already confirmed.",
+    sync_confirmation_expired:
+      "The request expired without a device confirming it.",
+    sync_confirmation_too_large:
+      "This device knows too many databases for one confirmation.",
     sync_state_code_invalid:
       "This is no valid state code: the version, such as v7, and 26 characters from A to Z and 2 to 7.",
     sync_state_mismatch:

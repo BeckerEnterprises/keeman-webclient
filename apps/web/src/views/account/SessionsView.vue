@@ -5,10 +5,12 @@ import { useI18n } from "vue-i18n";
 import ErrorNotice from "../../components/ErrorNotice.vue";
 import { toUiError, type UiError } from "../../errors";
 import { useServices } from "../../services";
+import { useConfirmationStore } from "../../stores/confirmation";
 import { useSessionStore } from "../../stores/session";
 
 const { t, locale } = useI18n();
 const session = useSessionStore();
+const confirmation = useConfirmationStore();
 const sessions = ref<SessionInfo[]>([]);
 const busy = ref(false);
 const error = ref<UiError>();
@@ -53,14 +55,36 @@ onMounted(() => {
   <section data-test="sessions">
     <h2>{{ t("sessions.title") }}</h2>
     <p>{{ t("sessions.intro") }}</p>
+    <div
+      v-if="confirmation.declinedSession"
+      class="notice notice-error"
+      role="alert"
+      data-test="sessions-declined"
+    >
+      <p>{{ t("confirmation.declined") }}</p>
+      <RouterLink to="/account/password">{{
+        t("confirmation.changePassword")
+      }}</RouterLink>
+    </div>
     <ErrorNotice :error="error" />
     <ul class="session-list">
-      <li v-for="item in sessions" :key="item.id" data-test="session">
+      <li
+        v-for="item in sessions"
+        :key="item.id"
+        :class="{ 'session-flagged': item.id === confirmation.declinedSession }"
+        data-test="session"
+      >
         <div>
           <strong>{{ item.device_name }}</strong>
           <span v-if="item.current" class="tag">{{
             t("sessions.current")
           }}</span>
+          <span
+            v-if="item.id === confirmation.declinedSession"
+            class="tag tag-danger"
+            data-test="session-requesting"
+            >{{ t("confirmation.requesting") }}</span
+          >
         </div>
         <dl class="session-meta">
           <dt>{{ t("sessions.created") }}</dt>

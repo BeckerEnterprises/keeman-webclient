@@ -24,6 +24,7 @@ import { clearPendingClipboard } from "../clipboard";
 import { kdfMemory, viewState } from "../storage";
 import { getPasskey } from "../webauthn";
 import { useBrowseStore } from "./browse";
+import { useConfirmationStore } from "./confirmation";
 import { useVaultsStore } from "./vaults";
 
 export type Phase = "starting" | "fatal" | "loggedOut" | "locked" | "unlocked";
@@ -47,7 +48,7 @@ export interface Banners {
   userDataStale: boolean;
   /** The last confirmation of the account data known (Unix ms). */
   userDataConfirmedSince: number | undefined;
-  /** This device had no marks for the account: offer pairing. */
+  /** This device had no marks for the account: offer a confirmation. */
   newDevice: boolean;
   /** After a login with a backup code: how many are left. */
   backupCodesRemaining: number | undefined;
@@ -83,6 +84,7 @@ function endSession(): void {
   session.contacts = [];
   session.ownFingerprint = undefined;
   session.contactsWritable = false;
+  useConfirmationStore().reset();
 }
 
 let autoLock: AutoLock | undefined;
@@ -124,8 +126,12 @@ interface SessionState {
   secondFactor: { methods: SecondFactorMethod[] } | undefined;
   /** `features.favicon` of the server. */
   favicon: boolean;
-  /** `features.freshness` of the server: attestations and pairing. */
+  /** `features.freshness` of the server: attestations. */
   freshness: boolean;
+  /** `features.confirmation`: confirmations by another device. */
+  confirmation: boolean;
+  /** Strict mode applies on this device. */
+  strictMode: boolean;
 }
 
 export const useSessionStore = defineStore("session", {
@@ -147,6 +153,8 @@ export const useSessionStore = defineStore("session", {
     secondFactor: undefined,
     favicon: false,
     freshness: false,
+    confirmation: false,
+    strictMode: false,
   }),
   actions: {
     /** Startup: server config, then refresh with the cookie. */
@@ -163,6 +171,7 @@ export const useSessionStore = defineStore("session", {
         }
         this.favicon = config.features.favicon;
         this.freshness = config.features.freshness === true;
+        this.confirmation = config.features.confirmation === true;
         await api.refresh();
         const me = await api.me();
         this.email = me.email;
@@ -356,8 +365,12 @@ export const useSessionStore = defineStore("session", {
         onUserDataChanged: () => {
           this.refreshFromAccount();
         },
+        onConfirmationsChanged: () => {
+          void useConfirmationStore().changed();
+        },
       });
       useVaultsStore().attach(engine);
+      void useConfirmationStore().refreshIncoming();
     },
 
     /** The last seen parameters stay stored until the user acknowledges. */
@@ -386,6 +399,7 @@ export const useSessionStore = defineStore("session", {
       this.banners.userDataRollback = account.userDataRollback;
       this.banners.userDataStale = account.userDataStale;
       this.banners.userDataConfirmedSince = account.userDataConfirmedSince;
+      this.strictMode = account.strictMode;
       if (!account.isNewDevice) this.banners.newDevice = false;
       this.contacts = account.contacts;
       this.ownFingerprint = account.ownFingerprint;
@@ -431,16 +445,6 @@ export const useSessionStore = defineStore("session", {
       await useVaultsStore().engine().acknowledgeFreshness();
       stillCurrent(started);
       this.refreshFromAccount();
-    },
-
-    /** Takes over the marks of another device of this account. */
-    async pair(code: string): Promise<number> {
-      const started = generation;
-      const { vaults } = await useServices().account.pair(code);
-      stillCurrent(started);
-      this.banners.newDevice = false;
-      this.refreshFromAccount();
-      return vaults;
     },
 
     acknowledgeKdf(): void {
