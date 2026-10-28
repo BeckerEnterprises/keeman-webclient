@@ -22,6 +22,17 @@ const error = ref<UiError>();
 
 const deleted = computed(() => vaults.vaults.filter((v) => v.memberCount <= 1));
 const left = computed(() => vaults.vaults.filter((v) => v.memberCount > 1));
+/** Owner of a list with an open warning: nothing is signed there, no step-down. */
+const warned = computed(() =>
+  vaults.vaults.filter(
+    (v) =>
+      v.role === "owner" &&
+      v.memberCount > 1 &&
+      (v.roles.status === "rollback" ||
+        v.roles.status === "fork" ||
+        v.roles.status === "invalid"),
+  ),
+);
 const matches = computed(
   () =>
     email.value.trim().toLowerCase() ===
@@ -62,6 +73,21 @@ async function submit(): Promise<void> {
         </li>
       </ul>
     </template>
+    <div
+      v-if="warned.length > 0"
+      class="notice notice-error"
+      role="alert"
+      data-test="delete-account-roles-warning"
+    >
+      <p>{{ t("deleteAccount.rolesWarning") }}</p>
+      <ul>
+        <li v-for="vault in warned" :key="vault.id">
+          <RouterLink :to="`/databases/${vault.id}`">{{
+            vault.name ?? t("vaults.unnamed")
+          }}</RouterLink>
+        </li>
+      </ul>
+    </div>
     <form class="form" @submit.prevent="submit">
       <div class="field">
         <label for="delete-account-email">{{ t("deleteAccount.email") }}</label>
@@ -83,7 +109,7 @@ async function submit(): Promise<void> {
       <button
         type="submit"
         class="danger"
-        :disabled="busy || !matches"
+        :disabled="busy || !matches || warned.length > 0"
         data-test="delete-account-submit"
       >
         {{ busy ? t("common.working") : t("deleteAccount.submit") }}

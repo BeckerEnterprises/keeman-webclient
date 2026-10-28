@@ -201,7 +201,7 @@ export default {
       fork: "Die Eigentümerliste ist widersprüchlich.",
       invalid: "Die Eigentümerliste ist widersprüchlich.",
       blocked:
-        "Bis du bestätigst, nimmt dieses Gerät keine neuen Schlüssel an und ändert keine Rollen. Das kann ein Fehler, die Wiederherstellung des Servers aus einem Backup oder ein Angriff sein; frage einen anderen Eigentümer.",
+        "Bis du bestätigst, ist die Datenbank schreibgeschützt, und dieses Gerät nimmt keine neuen Schlüssel an und ändert keine Rollen. Das kann ein Fehler, die Wiederherstellung des Servers aus einem Backup oder ein Angriff sein; frage einen anderen Eigentümer.",
       owners: "Eigentümer laut Server: {names}",
       newOwners: "Neu gegenüber deinem letzten Stand: {names}",
       ackTitle: "Eigentümerliste übernehmen",
@@ -215,6 +215,15 @@ export default {
       mismatch:
         "Der Server nennt andere Eigentümer als die signierte Liste. Maßgeblich ist die signierte Liste.",
       unknown: "(unbekannt)",
+      missingCode:
+        "Ein Mitglied kennt eine neuere Eigentümerliste, die der Server diesem Gerät nicht liefert (Code {code}).",
+      mismatchCode:
+        "Die Eigentümerliste ist widersprüchlich: Ein Mitglied hat einen anderen Stand-Code ({code}).",
+      otherDevices:
+        "Prüfe auch deine anderen Geräte; der Server könnte ihnen die Warnung vorenthalten.",
+      ackCompare:
+        "Übergeht den Code des Mitglieds und übernimmt die gelieferte Eigentümerliste. Tu das nur, wenn ihr geklärt habt, dass der Code falsch eingegeben war oder die Liste stimmt.",
+      tree: "Warnung zur Eigentümerliste",
     },
     status: {
       loading: "Lädt…",
@@ -743,6 +752,8 @@ export default {
     password: "Master-Passwort",
     submit: "Konto endgültig löschen",
     done: "Dein Konto wurde gelöscht.",
+    rolesWarning:
+      "Für diese Datenbanken ist eine Warnung zur Eigentümerliste offen. Als Eigentümer stufst du dich vor dem Löschen signiert herab; übernimm die Warnung dort zuerst mit „Verstanden“:",
   },
   account: {
     title: "Konto",
@@ -1036,6 +1047,11 @@ export default {
     rotationRequired:
       "Ein Mitglied ist ausgetreten. Erneuere den Schlüssel, damit es neue Änderungen nicht mehr lesen kann.",
     loading: "Lädt…",
+    invitedCode:
+      "Gib dem eingeladenen Konto deinen Stand-Code über einen zweiten Kanal, damit es ihn vergleichen kann:",
+    leaveWarning:
+      "Für diese Datenbank ist eine Warnung zur Eigentümerliste offen. Als Eigentümer stufst du dich vor dem Austritt signiert herab; dafür übernimmst du zuerst die gelieferte Eigentümerliste.",
+    leaveUnderstood: "Verstanden und austreten",
   },
   rotation: {
     title: "Schlüssel erneuern",
@@ -1105,6 +1121,83 @@ export default {
     later: "Später",
     tree: "Stand nicht bestätigt",
   },
+  qrInput: {
+    file: "QR-Code aus Bild",
+    hint: "Bilddatei wählen, hierher ziehen oder mit Strg+V einfügen.",
+    reading: "Lese Bild…",
+    noQr: "Im Bild wurde kein QR-Code gefunden.",
+    badImage: "Das Bild lässt sich nicht lesen.",
+  },
+  stateCode: {
+    title: "Stand-Code",
+    intro:
+      "Vergleicht diesen Code mit einem anderen Mitglied über einen zweiten Kanal, etwa persönlich oder am Telefon. Stimmen eure Codes überein, zeigt der Server euch dieselbe Eigentümerliste. Der Code ist nicht geheim.",
+    qr: "Stand-Code als QR-Code",
+    lastMatch:
+      "Zuletzt übereinstimmend verglichen am {date} mit {name} (Version {version}).",
+    lastMatchAnon:
+      "Zuletzt übereinstimmend verglichen am {date} (Version {version}).",
+    changedSince:
+      "Seitdem hat sich die Eigentümerliste geändert; vergleicht erneut.",
+    never: "Noch nicht mit einem anderen Mitglied verglichen.",
+    check: "Code eines Mitglieds prüfen",
+    compareTitle: "Stand-Code prüfen",
+    compareIntro:
+      "Gib den Stand-Code ein, den das andere Mitglied für diese Datenbank sieht, oder lies ihn als QR-Code aus einem Bild.",
+    input: "Stand-Code des Mitglieds",
+    submit: "Prüfen",
+    partner: "Von wem ist der Code?",
+    partnerNone: "nicht angeben",
+    match: "Die Eigentümerliste stimmt überein.",
+    behind:
+      "Die Eigentümerliste stimmt bis Version {version} überein. Das Gerät des Mitglieds kennt die neueste Fassung noch nicht: Lass es umgekehrt deinen Code prüfen.",
+    withheld:
+      "Der Server liefert die ältere Fassung dieser Version nicht. Lass das Mitglied umgekehrt deinen Code prüfen.",
+    otherVault: "Dieser Code gehört zu einer anderen Datenbank.",
+    otherVaultNamed: "Dieser Code gehört zur Datenbank „{name}“.",
+    unavailable: "Ohne geprüfte Eigentümerliste lässt sich nicht vergleichen.",
+    mismatch: "Die Codes von Version {version} stimmen nicht überein.",
+    missing:
+      "Das Mitglied kennt eine neuere Eigentümerliste (Version {version}), die der Server diesem Gerät nicht liefert.",
+    own: "Dein Code",
+    entered: "Eingegebener Code",
+    checkTypo:
+      "Prüfe Zeichen für Zeichen, ob du dich vertippt hast und ob ihr dieselbe Datenbank vergleicht. Stimmt beides, zeigt der Server euch verschiedene Stände: Die Datenbank wird dann schreibgeschützt, bis ihr das geklärt habt.",
+    confirm: "Eingabe stimmt",
+    correct: "Korrigieren",
+    unsaved:
+      "Der Widerspruch gilt auf diesem Gerät. In deinen Kontodaten wird er gespeichert, sobald sie wieder schreibbar sind.",
+    none: "Diese Datenbank hat noch keine signierte Eigentümerliste, deshalb gibt es keinen Stand-Code.",
+    unanchored:
+      "Übernimm zuerst die signierte Eigentümerliste dieser Datenbank.",
+    unsupported: "Dieser Server führt keine signierten Eigentümerlisten.",
+    warning:
+      "Solange die Warnung zur Eigentümerliste offen ist, gibt es keinen Stand-Code.",
+  },
+  invitationDialog: {
+    title: "Einladung annehmen",
+    loading: "Lädt…",
+    owners: "Eigentümer laut der Einladung",
+    verified: "geprüft",
+    unverified: "Angabe des Servers, nicht geprüft",
+    keysDiffer: "Der Server nennt andere Schlüssel",
+    sender: "Absender",
+    code: "Dein Stand-Code nach dem Annehmen",
+    advice:
+      "Vergleiche ihn vor dem Annehmen mit einem anderen Mitglied als dem Einladenden. Ein früherer Eigentümer könnte zusammen mit dem Server in einen alten Stand einladen.",
+    check: "Code eines Mitglieds prüfen",
+    noChain: "Diese Datenbank hat noch keine signierte Eigentümerliste.",
+    rejected:
+      "Die Einladung passt nicht zur signierten Eigentümerliste und lässt sich nicht annehmen. Das kann ein Angriff auf den Server sein.",
+    contradicted:
+      "Ein Mitglied hat einen anderen Stand-Code. Nimm die Einladung nicht an, bevor ihr das geklärt habt.",
+    senderNotOwner:
+      "Der Absender ist kein Eigentümer der Eigentümerliste, die seine Einladung nennt. Echte Einladungen erfüllen das immer; nimm diese nicht an.",
+    changed:
+      "Die Eigentümerliste hat sich inzwischen geändert. Prüfe den neuen Stand.",
+    accept: "Annehmen",
+    decline: "Ablehnen",
+  },
   pairing: {
     title: "Gerät koppeln",
     intro:
@@ -1121,11 +1214,6 @@ export default {
       "Gib den Code ein, den das andere Gerät zeigt, oder lies ihn als QR-Code aus einem Bild.",
     code: "Kopplungscode",
     submit: "Koppeln",
-    qrFile: "QR-Code aus Bild",
-    qrHint: "Bilddatei wählen, hierher ziehen oder mit Strg+V einfügen.",
-    reading: "Lese Bild…",
-    noQr: "Im Bild wurde kein QR-Code gefunden.",
-    badImage: "Das Bild lässt sich nicht lesen.",
     done: "Gekoppelt. Höchststände von {count} Datenbank(en) übernommen.",
   },
   banner: {
@@ -1281,6 +1369,16 @@ export default {
       "Der Code passt nicht. Prüfe ihn auf Tippfehler oder lass einen neuen anzeigen.",
     sync_pairing_unsupported:
       "Dieser Server unterstützt das Koppeln von Geräten nicht.",
+    sync_state_code_invalid:
+      "Das ist kein gültiger Stand-Code: die Version, etwa v7, und 26 Zeichen aus A bis Z und 2 bis 7.",
+    sync_state_mismatch:
+      "Ein Mitglied hat einen anderen Stand-Code für diese Datenbank. Klärt das zuerst.",
+    sync_roles_changed:
+      "Die Eigentümerliste hat sich inzwischen geändert. Prüfe den neuen Stand.",
+    sync_sender_not_owner:
+      "Der Absender ist kein Eigentümer der Eigentümerliste, die seine Einladung nennt.",
+    sync_roles_warning_open:
+      "Für eine Datenbank ist eine Warnung zur Eigentümerliste offen. Übernimm sie zuerst mit „Verstanden“.",
     sync_unknown_owner:
       "Der Absender ist auf diesem Gerät nicht als Eigentümer bekannt. Bestätige den neuen Schlüssel zuerst.",
     sync_self: "Dich selbst kannst du nicht einladen.",

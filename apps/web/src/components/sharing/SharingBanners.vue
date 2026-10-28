@@ -5,7 +5,7 @@
  * the sender really is an owner), invalid keys and the owner's prompt to
  * renew the key after a member left.
  */
-import { SyncError, type Candidate } from "@keeman/core";
+import { SyncError, type Candidate, type InvitationView } from "@keeman/core";
 import { computed, ref, shallowRef } from "vue";
 import { useI18n } from "vue-i18n";
 import { toUiError, type UiError } from "../../errors";
@@ -13,6 +13,7 @@ import { useVaultsStore } from "../../stores/vaults";
 import ErrorNotice from "../ErrorNotice.vue";
 import ConfirmDialog from "../dialogs/ConfirmDialog.vue";
 import FingerprintDialog from "./FingerprintDialog.vue";
+import InvitationDialog from "./InvitationDialog.vue";
 
 const { t } = useI18n();
 const vaults = useVaultsStore();
@@ -23,6 +24,8 @@ const checking = shallowRef<{
   purpose: "accept" | "key";
   then: () => Promise<void>;
 }>();
+/** The accept dialog of an invitation whose sender is verified. */
+const accepting = shallowRef<InvitationView>();
 /** A pending key whose sender is not a known owner: the user decides. */
 const owner = shallowRef<{ vaultId: string; name: string; email: string }>();
 
@@ -63,10 +66,19 @@ async function run(action: () => Promise<void>): Promise<void> {
   }
 }
 
-function accept(vaultId: string, sender: Candidate | undefined): void {
-  const then = () => vaults.engine().acceptInvitation(vaultId);
-  if (!sender || sender.status === "verified") void run(then);
-  else checking.value = { candidate: sender, purpose: "accept", then };
+/** The fingerprint dialog first if needed, then the accept dialog. */
+function accept(invitation: InvitationView): void {
+  const open = () => {
+    // The sender's status is current again once the snapshot is.
+    accepting.value =
+      vaults.snapshot?.invitations.find(
+        (i) => i.vaultId === invitation.vaultId,
+      ) ?? invitation;
+    return Promise.resolve();
+  };
+  const sender = invitation.sender;
+  if (!sender || sender.status === "verified") void open();
+  else checking.value = { candidate: sender, purpose: "accept", then: open };
 }
 
 async function acceptKey(
@@ -127,7 +139,7 @@ function verified(): void {
         class="small"
         :disabled="busy"
         data-test="invitation-accept"
-        @click="accept(invitation.vaultId, invitation.sender)"
+        @click="accept(invitation)"
       >
         {{ t("invitation.accept") }}
       </button>
@@ -227,6 +239,11 @@ function verified(): void {
     :purpose="checking.purpose"
     @verified="verified"
     @close="checking = undefined"
+  />
+  <InvitationDialog
+    v-if="accepting"
+    :invitation="accepting"
+    @close="accepting = undefined"
   />
   <ConfirmDialog
     v-if="owner"

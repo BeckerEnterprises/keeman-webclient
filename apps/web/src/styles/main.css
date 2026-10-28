@@ -1593,3 +1593,20 @@ img.icon-custom {
 .facts dd {
   margin: 0;
 }
+
+/* State codes side by side; differing characters stand out. */
+.state-codes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 1rem;
+}
+
+.code-diff {
+  color: var(--error);
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.state-code {
+  margin-top: var(--gap);
+}

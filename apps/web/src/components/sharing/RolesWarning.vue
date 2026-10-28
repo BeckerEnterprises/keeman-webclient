@@ -74,8 +74,19 @@ function take(): Promise<void> {
     role="alert"
     data-test="vault-roles-warning"
   >
-    <p>{{ t(`vaults.roles.${warning}`) }}</p>
+    <p v-if="roles.compared" data-test="vault-roles-compared">
+      {{
+        t(
+          roles.compared.kind === "missing"
+            ? "vaults.roles.missingCode"
+            : "vaults.roles.mismatchCode",
+          { code: roles.compared.code.display },
+        )
+      }}
+    </p>
+    <p v-else>{{ t(`vaults.roles.${warning}`) }}</p>
     <p>{{ t("vaults.roles.blocked") }}</p>
+    <p v-if="roles.compared">{{ t("vaults.roles.otherDevices") }}</p>
     <p v-if="roles.owners.length > 0" data-test="vault-roles-owners">
       {{ t("vaults.roles.owners", { names: names(roles.owners) }) }}
     </p>
@@ -128,7 +139,9 @@ function take(): Promise<void> {
   <ConfirmDialog
     v-if="asking"
     :title="t('vaults.roles.ackTitle')"
-    :text="t('vaults.roles.ackText')"
+    :text="
+      roles.compared ? t('vaults.roles.ackCompare') : t('vaults.roles.ackText')
+    "
     :confirm="t('common.understood')"
     danger
     :busy="busy"

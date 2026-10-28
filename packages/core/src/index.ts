@@ -123,6 +123,8 @@ export {
 export type {
   CorruptObjectView,
   DeletePlan,
+  InvitationDetails,
+  InvitationOwnerView,
   InvitationView,
   EntryBase,
   EntryDetail,
@@ -144,6 +146,8 @@ export type {
   ResolvedValues,
   SyncEngine,
   SyncEngineOptions,
+  StateCodeView,
+  StateComparisonView,
   SyncSnapshot,
   TreeNode,
   TreeNodeProblem,

@@ -196,7 +196,7 @@ const en: typeof de = {
       fork: "The owner list is contradictory.",
       invalid: "The owner list is contradictory.",
       blocked:
-        "Until you confirm, this device accepts no new keys and changes no roles. This may be an error, a restore of the server from a backup, or an attack; ask another owner.",
+        "Until you confirm, the database is read-only, and this device accepts no new keys and changes no roles. This may be an error, a restore of the server from a backup, or an attack; ask another owner.",
       owners: "Owners according to the server: {names}",
       newOwners: "New since your last state: {names}",
       ackTitle: "Take over the owner list",
@@ -210,6 +210,15 @@ const en: typeof de = {
       mismatch:
         "The server names other owners than the signed list. The signed list counts.",
       unknown: "(unknown)",
+      missingCode:
+        "A member knows a newer owner list that the server does not deliver to this device (code {code}).",
+      mismatchCode:
+        "The owner list is contradictory: a member has a different state code ({code}).",
+      otherDevices:
+        "Check your other devices too; the server might keep the warning from them.",
+      ackCompare:
+        "Overrules the member's code and takes over the delivered owner list. Do that only once you have made sure the code was mistyped or the list is right.",
+      tree: "Warning about the owner list",
     },
     status: {
       loading: "Loading…",
@@ -724,6 +733,8 @@ const en: typeof de = {
     password: "Master password",
     submit: "Delete account for good",
     done: "Your account was deleted.",
+    rolesWarning:
+      "A warning about the owner list is open for these databases. As an owner you step down, signed, before the deletion; take the warning over there with “Understood” first:",
   },
   account: {
     title: "Account",
@@ -1008,6 +1019,11 @@ const en: typeof de = {
     rotationRequired:
       "A member left. Renew the key so they can no longer read new changes.",
     loading: "Loading…",
+    invitedCode:
+      "Give the invited account your state code over a second channel so it can compare it:",
+    leaveWarning:
+      "A warning about the owner list of this database is open. As an owner you step down, signed, before leaving; for that you first take over the delivered owner list.",
+    leaveUnderstood: "Understood, leave",
   },
   rotation: {
     title: "Renew key",
@@ -1075,6 +1091,79 @@ const en: typeof de = {
     later: "Later",
     tree: "State not confirmed",
   },
+  qrInput: {
+    file: "QR code from image",
+    hint: "Choose an image file, drag it here or paste it with Ctrl+V.",
+    reading: "Reading image…",
+    noQr: "No QR code was found in the image.",
+    badImage: "The image cannot be read.",
+  },
+  stateCode: {
+    title: "State code",
+    intro:
+      "Compare this code with another member over a second channel, such as in person or by phone. If your codes match, the server shows you both the same owner list. The code is not secret.",
+    qr: "State code as QR code",
+    lastMatch:
+      "Last compared with a match on {date} with {name} (version {version}).",
+    lastMatchAnon: "Last compared with a match on {date} (version {version}).",
+    changedSince: "The owner list has changed since; compare again.",
+    never: "Not compared with another member yet.",
+    check: "Check a member's code",
+    compareTitle: "Check a state code",
+    compareIntro:
+      "Enter the state code the other member sees for this database, or read it as a QR code from an image.",
+    input: "The member's state code",
+    submit: "Check",
+    partner: "Whose code is it?",
+    partnerNone: "not stated",
+    match: "The owner list matches.",
+    behind:
+      "The owner list matches up to version {version}. The member's device does not know the newest statement yet: let it check your code the other way round.",
+    withheld:
+      "The server does not deliver the older statement of this version. Let the member check your code the other way round.",
+    otherVault: "This code belongs to another database.",
+    otherVaultNamed: "This code belongs to the database “{name}”.",
+    unavailable: "Without a checked owner list there is nothing to compare.",
+    mismatch: "The codes of version {version} do not match.",
+    missing:
+      "The member knows a newer owner list (version {version}) that the server does not deliver to this device.",
+    own: "Your code",
+    entered: "Code entered",
+    checkTypo:
+      "Check character by character whether you mistyped and whether you compare the same database. If both are right, the server shows you different states: the database then becomes read-only until you have sorted it out.",
+    confirm: "Matches as entered",
+    correct: "Correct",
+    unsaved:
+      "The contradiction applies on this device. It is stored in your account data as soon as that can be written again.",
+    none: "This database has no signed owner list yet, so there is no state code.",
+    unanchored: "Take over the signed owner list of this database first.",
+    unsupported: "This server keeps no signed owner lists.",
+    warning:
+      "While the warning about the owner list is open, there is no state code.",
+  },
+  invitationDialog: {
+    title: "Accept invitation",
+    loading: "Loading…",
+    owners: "Owners according to the invitation",
+    verified: "verified",
+    unverified: "the server's information, not verified",
+    keysDiffer: "The server names other keys",
+    sender: "sender",
+    code: "Your state code after accepting",
+    advice:
+      "Compare it with a member other than the inviter before you accept. A former owner could invite you into an old state together with the server.",
+    check: "Check a member's code",
+    noChain: "This database has no signed owner list yet.",
+    rejected:
+      "The invitation does not fit the signed owner list and cannot be accepted. This may be an attack on the server.",
+    contradicted:
+      "A member has a different state code. Do not accept the invitation before you have sorted that out.",
+    senderNotOwner:
+      "The sender is no owner of the owner list the invitation names. Genuine invitations always are; do not accept this one.",
+    changed: "The owner list has changed meanwhile. Check the new state.",
+    accept: "Accept",
+    decline: "Decline",
+  },
   pairing: {
     title: "Pair device",
     intro:
@@ -1091,11 +1180,6 @@ const en: typeof de = {
       "Enter the code the other device shows, or read it as a QR code from an image.",
     code: "Pairing code",
     submit: "Pair",
-    qrFile: "QR code from image",
-    qrHint: "Choose an image file, drag it here or paste it with Ctrl+V.",
-    reading: "Reading image…",
-    noQr: "No QR code was found in the image.",
-    badImage: "The image cannot be read.",
     done: "Paired. Took over the high-water marks of {count} database(s).",
   },
   banner: {
@@ -1256,6 +1340,16 @@ const en: typeof de = {
     sync_pairing_wrong:
       "The code does not match. Check it for typos or let the other device show a new one.",
     sync_pairing_unsupported: "This server does not support pairing devices.",
+    sync_state_code_invalid:
+      "This is no valid state code: the version, such as v7, and 26 characters from A to Z and 2 to 7.",
+    sync_state_mismatch:
+      "A member has a different state code for this database. Sort that out first.",
+    sync_roles_changed:
+      "The owner list has changed meanwhile. Check the new state.",
+    sync_sender_not_owner:
+      "The sender is no owner of the owner list the invitation names.",
+    sync_roles_warning_open:
+      "A warning about the owner list of a database is open. Take it over with “Understood” first.",
     sync_unknown_owner:
       "The sender is not known as an owner on this device. Confirm the new key first.",
     sync_self: "You cannot invite yourself.",

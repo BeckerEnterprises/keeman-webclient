@@ -551,6 +551,9 @@ defineExpose({
           (row.vault.rollback ||
             row.vault.manifest === 'mismatch' ||
             row.vault.freshness === 'stale' ||
+            row.vault.roles.status === 'rollback' ||
+            row.vault.roles.status === 'fork' ||
+            row.vault.roles.status === 'invalid' ||
             row.vault.corrupt.length > 0)
         "
         class="tag text-error"
@@ -562,7 +565,9 @@ defineExpose({
               ? t('vaults.rollback')
               : row.vault.freshness === 'stale'
                 ? t('freshness.tree')
-                : t('vaults.corrupt', { count: row.vault.corrupt.length })
+                : row.vault.corrupt.length > 0
+                  ? t('vaults.corrupt', { count: row.vault.corrupt.length })
+                  : t('vaults.roles.tree')
         "
       >
         <AppIcon ui="warning" :size="14" />

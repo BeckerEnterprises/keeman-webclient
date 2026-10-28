@@ -58,7 +58,10 @@ async function shareNode(
   )?.sender;
   if (!sender) throw new Error("invitation missing");
   if (sender.status !== "verified") await guest.account.verifyContact(sender);
-  await guest.engine.acceptInvitation(vaultId);
+  await guest.engine.acceptInvitation(
+    vaultId,
+    await guest.engine.invitationDetails(vaultId),
+  );
 }
 
 function view(engine: SyncEngine, vaultId: string) {

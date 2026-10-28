@@ -19,6 +19,7 @@ import ErrorNotice from "../ErrorNotice.vue";
 import ConfirmDialog from "../dialogs/ConfirmDialog.vue";
 import FingerprintDialog from "./FingerprintDialog.vue";
 import RotationDialog from "./RotationDialog.vue";
+import StateCodeSection from "./StateCodeSection.vue";
 
 const props = defineProps<{ vault: VaultView }>();
 const { t } = useI18n();
@@ -156,6 +157,17 @@ const keyWait = computed(() =>
 );
 /** Unconfirmed state: no invitation, promotion or new key until confirmed. */
 const stale = computed(() => props.vault.freshness === "stale");
+/**
+ * A warning about the owner list is open: an owner steps down signed before
+ * leaving, and nothing is signed on such a list until it is understood.
+ */
+const rolesWarning = computed(
+  () =>
+    owner.value &&
+    (props.vault.roles.status === "rollback" ||
+      props.vault.roles.status === "fork" ||
+      props.vault.roles.status === "invalid"),
+);
 
 function withdraw(member: MemberView): Promise<void> {
   return run(() =>
@@ -167,6 +179,8 @@ async function leave(): Promise<void> {
   busy.value = true;
   error.value = undefined;
   try {
+    if (rolesWarning.value)
+      await vaults.engine().acknowledgeRoles(props.vault.id);
     await vaults.engine().leaveVault(props.vault.id);
     dialog.value = undefined;
     await router.push("/databases");
@@ -256,9 +270,13 @@ onMounted(() => void load());
       {{ t("members.stale") }}
     </p>
     <ErrorNotice :error="error" />
-    <p v-if="invited" class="notice notice-info" data-test="members-invited">
-      {{ t("members.invited", { email: invited }) }}
-    </p>
+    <div v-if="invited" class="notice notice-info" data-test="members-invited">
+      <p>{{ t("members.invited", { email: invited }) }}</p>
+      <p v-if="vault.roles.code" data-test="members-invited-code">
+        {{ t("members.invitedCode") }}
+        <span class="mono">{{ vault.roles.code.display }}</span>
+      </p>
+    </div>
     <p v-if="loading" class="muted">{{ t("members.loading") }}</p>
     <ul v-else class="member-list">
       <li v-for="member in members" :key="member.userId" data-test="member">
@@ -378,6 +396,8 @@ onMounted(() => void load());
       </button>
     </div>
 
+    <StateCodeSection :vault="vault" :members="members" />
+
     <FingerprintDialog
       v-if="dialog?.kind === 'fingerprint'"
       :candidate="dialog.candidate"
@@ -410,8 +430,14 @@ onMounted(() => void load());
     <ConfirmDialog
       v-if="dialog?.kind === 'leave'"
       :title="t('members.leaveTitle')"
-      :text="t('members.leaveText', { name: vault.name ?? '' })"
-      :confirm="t('members.leave')"
+      :text="
+        rolesWarning
+          ? `${t('members.leaveText', { name: vault.name ?? '' })} ${t('members.leaveWarning')}`
+          : t('members.leaveText', { name: vault.name ?? '' })
+      "
+      :confirm="
+        rolesWarning ? t('members.leaveUnderstood') : t('members.leave')
+      "
       danger
       :busy="busy"
       @confirm="leave"
