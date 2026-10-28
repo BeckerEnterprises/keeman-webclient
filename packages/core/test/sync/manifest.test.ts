@@ -13,7 +13,10 @@ import {
   stored,
   vault,
 } from "./devices";
+import type { ChangedObject } from "../../src/api/schemas";
+import type { Keys } from "../../src/crypto/keystore";
 import type { SyncEngine } from "../../src/sync/engine";
+import { decode } from "../../src/sync/vault";
 
 function draft(title: string) {
   return { ...emptyDraft(), title };
@@ -101,6 +104,29 @@ describe("vault manifest: detection", () => {
       writable: false,
     });
     expect(a.server.batchSizes).toHaveLength(sent);
+  });
+
+  it("tells a relabelled older key version from a key not held yet", () => {
+    const keys = { hasVaultKey: () => false } as unknown as Keys;
+    const vaultId = "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a30";
+    const object = {
+      id: manifestIds(vaultId).root,
+      type: "manifest",
+      key_version: 1,
+      revision: 4,
+      deleted: false,
+      data: "AQ",
+    } as unknown as ChangedObject;
+    // Below the current version: honest objects never are, so the root
+    // counts as corrupt (a mismatch), not as unknown.
+    expect(decode(keys, vaultId, object, 2)).toMatchObject({
+      kind: "corrupt",
+      entry: { reason: "old_key" },
+    });
+    expect(decode(keys, vaultId, object, 1)).toMatchObject({
+      kind: "corrupt",
+      entry: { reason: "no_key" },
+    });
   });
 
   it("a deleted object played back is not in the manifest", async () => {

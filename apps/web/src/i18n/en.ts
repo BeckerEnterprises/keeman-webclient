@@ -276,6 +276,7 @@ const en: typeof de = {
     },
     reasons: {
       no_key: "key missing",
+      old_key: "older key version, no key",
       no_data: "no data",
       dropped: "dropped by a rotation",
       format: "invalid format",

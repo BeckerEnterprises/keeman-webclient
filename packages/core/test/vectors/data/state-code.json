@@ -678,14 +678,8 @@
         }
       ],
       "points": [
-        [
-          2,
-          "47FAKWJHVKMU4UN45AEKELOUBA"
-        ],
-        [
-          4,
-          "N2RZ4ED26IELPZM4BCIZEOI5CE"
-        ]
+        [2, "47FAKWJHVKMU4UN45AEKELOUBA"],
+        [4, "N2RZ4ED26IELPZM4BCIZEOI5CE"]
       ],
       "expected": {
         "status": "ok"
@@ -713,21 +707,12 @@
         }
       ],
       "points": [
-        [
-          6,
-          "K3QF6XMA2PLRTB6WQH4N7ZDEXA"
-        ],
-        [
-          5,
-          "K3QF6XMA2PLRTB6WQH4N7ZDEXA"
-        ]
+        [6, "K3QF6XMA2PLRTB6WQH4N7ZDEXA"],
+        [5, "K3QF6XMA2PLRTB6WQH4N7ZDEXA"]
       ],
       "expected": {
         "status": "rollback",
-        "point": [
-          5,
-          "K3QF6XMA2PLRTB6WQH4N7ZDEXA"
-        ]
+        "point": [5, "K3QF6XMA2PLRTB6WQH4N7ZDEXA"]
       }
     },
     {
@@ -752,25 +737,13 @@
         }
       ],
       "points": [
-        [
-          6,
-          "K3QF6XMA2PLRTB6WQH4N7ZDEXA"
-        ],
-        [
-          3,
-          "K3QF6XMA2PLRTB6WQH4N7ZDEXA"
-        ],
-        [
-          2,
-          "K3QF6XMA2PLRTB6WQH4N7ZDEXA"
-        ]
+        [6, "K3QF6XMA2PLRTB6WQH4N7ZDEXA"],
+        [3, "K3QF6XMA2PLRTB6WQH4N7ZDEXA"],
+        [2, "K3QF6XMA2PLRTB6WQH4N7ZDEXA"]
       ],
       "expected": {
         "status": "fork",
-        "point": [
-          2,
-          "K3QF6XMA2PLRTB6WQH4N7ZDEXA"
-        ]
+        "point": [2, "K3QF6XMA2PLRTB6WQH4N7ZDEXA"]
       }
     },
     {
@@ -794,18 +767,10 @@
           "hash": "YDTX3BayB3Zg5_M_1SX8zweotiMXoD6f2QRcv5IFg4Y"
         }
       ],
-      "points": [
-        [
-          4,
-          "GRWLEHD6UWHONCSJ4NQUV74GLI"
-        ]
-      ],
+      "points": [[4, "GRWLEHD6UWHONCSJ4NQUV74GLI"]],
       "expected": {
         "status": "fork",
-        "point": [
-          4,
-          "GRWLEHD6UWHONCSJ4NQUV74GLI"
-        ]
+        "point": [4, "GRWLEHD6UWHONCSJ4NQUV74GLI"]
       }
     },
     {
@@ -821,36 +786,20 @@
           "hash": "YDTX3BayB3Zg5_M_1SX8zweotiMXoD6f2QRcv5IFg4Y"
         }
       ],
-      "points": [
-        [
-          2,
-          "47FAKWJHVKMU4UN45AEKELOUBA"
-        ]
-      ],
+      "points": [[2, "47FAKWJHVKMU4UN45AEKELOUBA"]],
       "expected": {
         "status": "fork",
-        "point": [
-          2,
-          "47FAKWJHVKMU4UN45AEKELOUBA"
-        ]
+        "point": [2, "47FAKWJHVKMU4UN45AEKELOUBA"]
       }
     },
     {
       "id": "points-no-chain",
       "kind": "points",
       "statements": [],
-      "points": [
-        [
-          1,
-          "CQWUG63TZA2MWU4C72EABJLEXY"
-        ]
-      ],
+      "points": [[1, "CQWUG63TZA2MWU4C72EABJLEXY"]],
       "expected": {
         "status": "rollback",
-        "point": [
-          1,
-          "CQWUG63TZA2MWU4C72EABJLEXY"
-        ]
+        "point": [1, "CQWUG63TZA2MWU4C72EABJLEXY"]
       }
     }
   ]

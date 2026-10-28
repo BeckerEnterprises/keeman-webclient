@@ -190,11 +190,15 @@ function inspect(
   }
 }
 
-/** Decryption and validation, in this order. */
+/**
+ * Decryption and validation, in this order. `keyVersion` is the vault's
+ * current one: a missing key below it means a relabelled object.
+ */
 export function decode(
   keys: Keys,
   vaultId: string,
   object: ChangedObject,
+  keyVersion: number,
 ): Decoded {
   const corrupt = (reason: CorruptReason): Decoded => ({
     kind: "corrupt",
@@ -205,7 +209,8 @@ export function decode(
       reason,
     },
   });
-  if (!keys.hasVaultKey(vaultId, object.key_version)) return corrupt("no_key");
+  if (!keys.hasVaultKey(vaultId, object.key_version))
+    return corrupt(object.key_version < keyVersion ? "old_key" : "no_key");
   if (object.data === null)
     return corrupt(object.deleted ? "dropped" : "no_data");
   const data = object.data;
@@ -372,7 +377,9 @@ export async function pullVault(
     // since=0 has no tombstones: a delta from the first page brings deletions.
     const delta = await collect(context, state, snapshot.first, marks);
     for (const object of [...snapshot.objects, ...delta.objects]) {
-      applier.apply(decode(context.keys, state.id, object));
+      applier.apply(
+        decode(context.keys, state.id, object, state.summary.vault_key_version),
+      );
       serve(served, state.id, object);
     }
     state.objects = objects;
@@ -386,7 +393,9 @@ export async function pullVault(
     const applier = new Applier(state, marks, state.objects, state.corrupt);
     const changes = await collect(context, state, state.since, marks);
     for (const object of changes.objects) {
-      applier.apply(decode(context.keys, state.id, object));
+      applier.apply(
+        decode(context.keys, state.id, object, state.summary.vault_key_version),
+      );
       serve(state.served, state.id, object);
     }
     state.since = changes.last;

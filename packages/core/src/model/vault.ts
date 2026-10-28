@@ -47,6 +47,11 @@ export interface Group {
 
 export type CorruptReason =
   | "no_key"
+  /**
+   * Labelled with a key version below the current one that this device
+   * does not hold: honest objects always carry the current one.
+   */
+  | "old_key"
   | "no_data"
   | "dropped"
   | "format"

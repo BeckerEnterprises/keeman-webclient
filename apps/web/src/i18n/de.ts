@@ -282,6 +282,7 @@ export default {
     },
     reasons: {
       no_key: "Schlüssel fehlt",
+      old_key: "ältere Schlüsselversion, ohne Schlüssel",
       no_data: "keine Daten",
       dropped: "bei einer Rotation verworfen",
       format: "ungültiges Format",

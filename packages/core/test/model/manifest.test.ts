@@ -299,6 +299,15 @@ describe("checking a delivered state", () => {
     expect(checkManifest(newer.input).status).toBe("mismatch");
   });
 
+  it("is a mismatch for a root relabelled with an older key version", () => {
+    const relabelled = state();
+    relabelled.reads.set(ids.root, { kind: "corrupt", reason: "old_key" });
+    expect(checkManifest(relabelled.input)).toMatchObject({
+      status: "mismatch",
+      issues: [{ id: ids.root, type: "manifest", reason: "corrupt" }],
+    });
+  });
+
   it("ignores manifest objects under other IDs", () => {
     const { input, served } = state();
     served.set(inBucket(5), {

@@ -152,7 +152,7 @@ describe("budget of the projection", () => {
       state.synced = true;
       const start = performance.now();
       for (const change of changes) {
-        const decoded = decode(keys, vaultId, change);
+        const decoded = decode(keys, vaultId, change, 1);
         if (decoded.kind === "object")
           state.objects.set(decoded.entry.id, decoded.entry);
       }
