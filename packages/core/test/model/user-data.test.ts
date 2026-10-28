@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   applyUserDataChange,
+  COMPARISON_POINTS_MAX,
+  comparisonsOf,
   contactsOf,
   effectiveSettings,
   initialUserData,
@@ -593,5 +595,133 @@ describe("roles anchors", () => {
     expect(contactsOf(mergeUserData(start, mine, other))[0]?.conflict).toBe(
       true,
     );
+  });
+});
+
+describe("comparisons", () => {
+  const VAULT = "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5b01";
+  const A = "K3QF6XMA2PLRTB6WQH4N7ZDEXA";
+  const B = "LTI7RYKS2VIW4CMGXO2UE2YJZA";
+  const AT = "2026-10-28T09:00:00.000Z";
+  const LATER = "2026-10-28T10:00:00.000Z";
+  const base = { schema: 1, seq: 1 };
+  const point = (version: number, code: string, at = AT) => ({
+    version,
+    code,
+    at,
+  });
+
+  it("adds each point once, removes by version and code, keeps a match", () => {
+    const one = applyUserDataChange(base, {
+      compared: {
+        [VAULT]: {
+          add: [point(3, A), point(3, A), point(4, B)],
+          match: { version: 2, at: AT, partner: ALICE },
+        },
+      },
+    });
+    expect(comparisonsOf(one, VAULT)).toEqual({
+      points: [point(3, A), point(4, B)],
+      match: { version: 2, at: AT, partner: ALICE },
+    });
+    const two = applyUserDataChange(one, {
+      compared: { [VAULT]: { remove: [{ version: 3, code: A }] } },
+    });
+    expect(comparisonsOf(two, VAULT).points).toEqual([point(4, B)]);
+    expect(comparisonsOf(two, VAULT).match?.version).toBe(2);
+    expect(comparisonsOf(base, VAULT)).toEqual({
+      points: [],
+      match: undefined,
+    });
+  });
+
+  it("skips invalid elements, keeps them and unknown fields when writing", () => {
+    const raw = {
+      ...base,
+      compared: {
+        [VAULT]: {
+          points: [
+            [3, A, AT],
+            [0, A, AT],
+            [3, "a".repeat(26), AT],
+            [3, `${A.slice(0, -1)}B`, AT],
+            [3, A, "yesterday"],
+            "x",
+          ],
+          match: [1, AT, "nope"],
+          note: "kept",
+        },
+      },
+    };
+    expect(comparisonsOf(raw, VAULT)).toEqual({
+      points: [point(3, A)],
+      match: undefined,
+    });
+    const next = applyUserDataChange(raw, {
+      compared: { [VAULT]: { add: [point(4, B)] } },
+    });
+    const entry = (next.compared as Record<string, Record<string, unknown>>)[
+      VAULT
+    ];
+    expect(entry?.note).toBe("kept");
+    expect((entry?.points as unknown[]).length).toBe(7);
+    expect(
+      comparisonsOf({ ...base, compared: { [VAULT]: [] } }, VAULT).points,
+    ).toEqual([]);
+  });
+
+  it("refuses invalid points, vaults and too many points", () => {
+    for (const change of [
+      { [VAULT]: { add: [point(0, A)] } },
+      { [VAULT]: { add: [point(1, "A".repeat(26).slice(1))] } },
+      { [VAULT]: { match: { version: 1, at: AT, partner: "x" } } },
+      { nope: { add: [point(1, A)] } },
+    ])
+      expect(() => applyUserDataChange(base, { compared: change })).toThrow();
+    const many = Array.from({ length: COMPARISON_POINTS_MAX + 1 }, (_, i) =>
+      point(i + 1, A),
+    );
+    expect(() =>
+      applyUserDataChange(base, { compared: { [VAULT]: { add: many } } }),
+    ).toThrow();
+  });
+
+  it("merges points as a set and keeps a point added elsewhere", () => {
+    const start = applyUserDataChange(base, {
+      compared: { [VAULT]: { add: [point(3, A)] } },
+    });
+    // This device understood the warning; another one added a point.
+    const local = applyUserDataChange(start, {
+      compared: { [VAULT]: { remove: [{ version: 3, code: A }] } },
+    });
+    const server = applyUserDataChange(start, {
+      compared: { [VAULT]: { add: [point(5, B, LATER)] } },
+    });
+    expect(
+      comparisonsOf(mergeUserData(start, local, server), VAULT).points,
+    ).toEqual([point(5, B, LATER)]);
+    // A point added on both sides counts once, with the server's time.
+    const mine = applyUserDataChange(start, {
+      compared: { [VAULT]: { add: [point(5, B)] } },
+    });
+    expect(
+      comparisonsOf(mergeUserData(start, mine, server), VAULT).points,
+    ).toEqual([point(3, A), point(5, B, LATER)]);
+    // The later match wins.
+    const early = applyUserDataChange(start, {
+      compared: { [VAULT]: { match: { version: 3, at: AT, partner: null } } },
+    });
+    const late = applyUserDataChange(start, {
+      compared: {
+        [VAULT]: { match: { version: 4, at: LATER, partner: null } },
+      },
+    });
+    expect(
+      comparisonsOf(mergeUserData(start, early, late), VAULT).match?.version,
+    ).toBe(4);
+    expect(
+      comparisonsOf(mergeUserData(start, late, early), VAULT).match?.version,
+    ).toBe(4);
+    expect(mergeUserData(base, base, base).compared).toBeUndefined();
   });
 });

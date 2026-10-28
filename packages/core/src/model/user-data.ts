@@ -5,6 +5,7 @@
  */
 import * as v from "valibot";
 import { fromBase64Url, isJsonObject, type JsonObject } from "../crypto/bytes";
+import { isTimestamp } from "../crypto/time";
 import { UUID_PATTERN } from "../crypto/uuid";
 import {
   GENERATOR_DEFAULTS,
@@ -78,6 +79,38 @@ export interface RoleAnchor {
   owners: readonly string[];
 }
 
+/** A state code of a member that contradicted this account's chain. */
+export interface ComparisonPoint {
+  version: number;
+  /** 26 characters of Base32. */
+  code: string;
+  /** When it was stored. */
+  at: string;
+}
+
+/** The last state code that matched, for display only. */
+export interface ComparisonMatch {
+  version: number;
+  at: string;
+  /** The member the user named as the other side. */
+  partner: string | null;
+}
+
+export interface Comparisons {
+  points: readonly ComparisonPoint[];
+  match: ComparisonMatch | undefined;
+}
+
+export interface ComparisonChange {
+  add?: readonly ComparisonPoint[];
+  /** Points by version and code. */
+  remove?: readonly { version: number; code: string }[];
+  match?: ComparisonMatch;
+}
+
+/** At most this many comparison points per vault. */
+export const COMPARISON_POINTS_MAX = 16;
+
 export interface UserDataChange {
   settings?: SettingsChange;
   recoveryKeyConfirmed?: boolean;
@@ -86,6 +119,8 @@ export interface UserDataChange {
   contacts?: ContactChange[];
   /** New anchors by vault ID; `null` removes one. */
   roles?: Record<string, RoleAnchor | null>;
+  /** Comparison results by vault ID. */
+  compared?: Record<string, ComparisonChange>;
 }
 
 export type UserDataState =
@@ -283,6 +318,99 @@ export function roleAnchorOf(
   return anchorOf(own(rolesOfRaw(raw), vaultId));
 }
 
+const STATE_CODE = /^[A-Z2-7]{25}[AEIMQUY4]$/;
+
+function isVersion(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
+}
+
+function pointOf(value: unknown): ComparisonPoint | undefined {
+  if (!Array.isArray(value) || value.length !== 3) return undefined;
+  const [version, code, at] = value as unknown[];
+  if (
+    !isVersion(version) ||
+    typeof code !== "string" ||
+    !STATE_CODE.test(code) ||
+    !isTimestamp(at)
+  )
+    return undefined;
+  return { version, code, at };
+}
+
+function matchOf(value: unknown): ComparisonMatch | undefined {
+  if (!Array.isArray(value) || value.length !== 3) return undefined;
+  const [version, at, partner] = value as unknown[];
+  if (
+    !isVersion(version) ||
+    !isTimestamp(at) ||
+    !(
+      partner === null ||
+      (typeof partner === "string" && UUID_PATTERN.test(partner))
+    )
+  )
+    return undefined;
+  return { version, at, partner };
+}
+
+function pointKey(point: { version: number; code: string }): string {
+  return `${String(point.version)}:${point.code}`;
+}
+
+function comparedOfRaw(raw: JsonObject): JsonObject {
+  const compared = own(raw, "compared");
+  return isJsonObject(compared) ? compared : {};
+}
+
+/** The comparison results of a vault; invalid elements count as missing. */
+export function comparisonsOf(raw: JsonObject, vaultId: string): Comparisons {
+  const entry = own(comparedOfRaw(raw), vaultId);
+  if (!isJsonObject(entry)) return { points: [], match: undefined };
+  const list = own(entry, "points");
+  const points = (Array.isArray(list) ? list : [])
+    .map(pointOf)
+    .filter((p): p is ComparisonPoint => p !== undefined);
+  return { points, match: matchOf(own(entry, "match")) };
+}
+
+/**
+ * Applies a change to the comparisons of one vault in place. Invalid
+ * stored elements stay as they are; a point is kept once.
+ */
+function applyComparison(
+  compared: JsonObject,
+  vaultId: string,
+  change: ComparisonChange,
+  limit: boolean,
+): void {
+  if (!UUID_PATTERN.test(vaultId)) throw new Error("Invalid comparison");
+  const current = own(compared, vaultId);
+  const entry = isJsonObject(current) ? clone(current) : {};
+  const list = own(entry, "points");
+  const removed = new Set((change.remove ?? []).map(pointKey));
+  const points = (Array.isArray(list) ? list : []).filter((item) => {
+    const point = pointOf(item);
+    return !point || !removed.has(pointKey(point));
+  });
+  for (const added of change.add ?? []) {
+    const item = [added.version, added.code, added.at];
+    if (!pointOf(item)) throw new Error("Invalid comparison point");
+    const known = points.some((p) => {
+      const point = pointOf(p);
+      return point !== undefined && pointKey(point) === pointKey(added);
+    });
+    if (!known) points.push(item);
+  }
+  if (limit && points.filter((p) => pointOf(p)).length > COMPARISON_POINTS_MAX)
+    throw new Error("Too many comparison points");
+  setOwn(entry, "points", points);
+  if (change.match) {
+    const item = [change.match.version, change.match.at, change.match.partner];
+    if (!matchOf(item)) throw new Error("Invalid comparison match");
+    setOwn(entry, "match", item);
+  }
+  setOwn(compared, vaultId, entry);
+}
+
 /** A missing or invalid flag counts as confirmed. */
 export function isRecoveryKeyConfirmed(raw: JsonObject): boolean {
   return own(raw, "recoveryKeyConfirmed") !== false;
@@ -337,6 +465,12 @@ export function applyUserDataChange(
       setOwn(roles, vaultId, entry);
     }
     setOwn(next, "roles", roles);
+  }
+  if (change.compared !== undefined) {
+    const compared = clone(comparedOfRaw(next));
+    for (const [vaultId, entry] of Object.entries(change.compared))
+      applyComparison(compared, vaultId, entry, true);
+    setOwn(next, "compared", compared);
   }
   setOwn(next, "seq", seqOf(raw) + 1);
   return next;
@@ -415,6 +549,41 @@ function mergeRoles(
 }
 
 /**
+ * Comparison points as a set: the server's, plus those added locally,
+ * minus those removed locally (an "understood" removes only the points
+ * this device knew). The later match wins.
+ */
+function mergeComparisons(
+  base: JsonObject,
+  local: JsonObject,
+  server: JsonObject,
+): JsonObject {
+  const merged = clone(comparedOfRaw(server));
+  const ids = new Set([
+    ...Object.keys(comparedOfRaw(base)),
+    ...Object.keys(comparedOfRaw(local)),
+  ]);
+  for (const vaultId of ids) {
+    if (!UUID_PATTERN.test(vaultId)) continue;
+    const before = comparisonsOf(base, vaultId);
+    const mine = comparisonsOf(local, vaultId);
+    const theirs = comparisonsOf(server, vaultId);
+    const had = new Set(before.points.map(pointKey));
+    const has = new Set(mine.points.map(pointKey));
+    const add = mine.points.filter((p) => !had.has(pointKey(p)));
+    const remove = before.points.filter((p) => !has.has(pointKey(p)));
+    const match =
+      mine.match &&
+      (!theirs.match || Date.parse(mine.match.at) > Date.parse(theirs.match.at))
+        ? mine.match
+        : undefined;
+    if (add.length === 0 && remove.length === 0 && !match) continue;
+    applyComparison(merged, vaultId, { add, remove, match }, false);
+  }
+  return merged;
+}
+
+/**
  * Three-way merge: the server copy plus the local changes against
  * the base; settings, the recovery key flag and the vault order: the local
  * change wins; contacts are merged per contact, roles anchors per vault.
@@ -459,6 +628,11 @@ export function mergeUserData(
   setOwn(merged, "contacts", mergeContacts(base, local, server));
   if (own(local, "roles") !== undefined || own(server, "roles") !== undefined)
     setOwn(merged, "roles", mergeRoles(base, local, server));
+  if (
+    own(local, "compared") !== undefined ||
+    own(server, "compared") !== undefined
+  )
+    setOwn(merged, "compared", mergeComparisons(base, local, server));
 
   setOwn(merged, "seq", Math.max(seqOf(base), seqOf(server)) + 1);
   return merged;
