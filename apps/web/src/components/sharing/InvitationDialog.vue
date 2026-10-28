@@ -4,7 +4,8 @@
  * names, the state code the account would have, and the advice to compare
  * it with a member other than the inviter, which can be done right here.
  * Accepting is blocked when a code contradicts, the box does not fit the
- * signed list, or the sender owns no part of it.
+ * signed list, or the sender owns no part of it. A list that contradicts
+ * what the account knew of the database before is accepted only anyway.
  */
 import {
   SyncError,
@@ -14,9 +15,9 @@ import {
 import { computed, onMounted, ref, shallowRef } from "vue";
 import { useI18n } from "vue-i18n";
 import { toUiError, type UiError } from "../../errors";
-import { useServices } from "../../services";
 import { useVaultsStore } from "../../stores/vaults";
 import ErrorNotice from "../ErrorNotice.vue";
+import ConfirmDialog from "../dialogs/ConfirmDialog.vue";
 import AppDialog from "../ui/AppDialog.vue";
 import StateComparePanel from "./StateComparePanel.vue";
 
@@ -29,6 +30,7 @@ const busy = ref(false);
 const error = ref<UiError>();
 const changed = ref(false);
 const comparing = ref(false);
+const asking = ref(false);
 const panel = ref<InstanceType<typeof StateComparePanel>>();
 
 const acceptable = computed(
@@ -47,12 +49,9 @@ const problem = computed(() => {
   }
 });
 
+/** The core names a contact only if verified with the keys of the list. */
 function ownerName(owner: InvitationDetails["owners"][number]): string {
-  return (
-    useServices().account.contactEmail(owner.userId) ??
-    owner.email ??
-    t("entry.member", { id: owner.userId.slice(0, 8) })
-  );
+  return owner.email ?? t("entry.member", { id: owner.userId.slice(0, 8) });
 }
 
 async function load(): Promise<void> {
@@ -81,12 +80,20 @@ async function run(action: () => Promise<void>): Promise<void> {
   }
 }
 
-function accept(): Promise<void> {
+/**
+ * Accepts the head shown; a contradiction with what the account knew
+ * before only after "accept anyway".
+ */
+function accept(anyway = false): Promise<void> {
   const shown = details.value;
   if (!shown) return Promise.resolve();
   changed.value = false;
+  asking.value = false;
   return run(() =>
-    vaults.engine().acceptInvitation(props.invitation.vaultId, shown),
+    vaults.engine().acceptInvitation(props.invitation.vaultId, {
+      head: shown.head,
+      formerConflict: anyway,
+    }),
   );
 }
 
@@ -135,6 +142,14 @@ onMounted(() => void load());
         data-test="invitation-dialog-problem"
       >
         {{ problem }}
+      </p>
+      <p
+        v-if="details.formerConflict"
+        class="notice notice-error"
+        role="alert"
+        data-test="invitation-dialog-former-conflict"
+      >
+        {{ t("invitationDialog.formerConflict") }}
       </p>
       <p
         v-if="details.status === 'no_chain'"
@@ -202,10 +217,21 @@ onMounted(() => void load());
     </template>
     <template #actions>
       <button
+        v-if="details?.formerConflict"
+        type="button"
+        class="danger"
+        :disabled="busy || !acceptable"
+        data-test="invitation-dialog-accept-anyway"
+        @click="asking = true"
+      >
+        {{ t("invitationDialog.acceptAnyway") }}
+      </button>
+      <button
+        v-else
         type="button"
         :disabled="busy || !acceptable"
         data-test="invitation-dialog-accept"
-        @click="accept"
+        @click="accept()"
       >
         {{ t("invitationDialog.accept") }}
       </button>
@@ -228,4 +254,14 @@ onMounted(() => void load());
       </button>
     </template>
   </AppDialog>
+  <ConfirmDialog
+    v-if="asking"
+    :title="t('invitationDialog.acceptAnywayTitle')"
+    :text="t('invitationDialog.acceptAnywayText')"
+    :confirm="t('invitationDialog.acceptAnyway')"
+    danger
+    :busy="busy"
+    @confirm="accept(true)"
+    @close="asking = false"
+  />
 </template>

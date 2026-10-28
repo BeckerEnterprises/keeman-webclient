@@ -219,6 +219,9 @@ const en: typeof de = {
       ackCompare:
         "Overrules the member's code and takes over the delivered owner list. Do that only once you have made sure the code was mistyped or the list is right.",
       tree: "Warning about the owner list",
+      ownerUnverified: "{name} (the server's information, not verified)",
+      ownerKeysDiffer:
+        "{name} (the server's information, not verified; the server names other keys)",
       unavailable:
         "The owner list could not be loaded. The database is read-only until it loads; until then this device accepts no new keys and changes no roles.",
     },
@@ -1218,6 +1221,12 @@ const en: typeof de = {
     changed: "The owner list has changed meanwhile. Check the new state.",
     accept: "Accept",
     decline: "Decline",
+    formerConflict:
+      "The owner list of this invitation contradicts what your account knew of this database before. That may be a restore of the server from a backup, but also a former owner inviting you into an old state together with the server. Compare the state code with a member other than the inviter.",
+    acceptAnyway: "Accept anyway",
+    acceptAnywayTitle: "Accept anyway?",
+    acceptAnywayText:
+      "The owner list of this invitation replaces what your account knew of this database before. Do that only once another member has confirmed the state code.",
   },
   banner: {
     clockSkew: "The clock of this device is off; TOTP codes are corrected.",

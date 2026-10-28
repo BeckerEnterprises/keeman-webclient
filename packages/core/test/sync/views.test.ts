@@ -5,7 +5,9 @@ import { VaultState, type ObjectEntry } from "../../src/sync/vault";
 import { toBase64Url } from "../../src/crypto/bytes";
 import { iconDataUrl, iconHash } from "../../src/model/icon";
 import { VaultProjection } from "../../src/sync/views";
-import { iconPng } from "../helpers";
+import { fingerprint2Hex, fingerprintHex } from "../../src/crypto/fingerprint";
+import { roleOwner } from "../../src/crypto/roles";
+import { iconPng, tv } from "../helpers";
 
 const VAULT = "0192b3a4-5c6d-7e8f-9a0b-000000000001";
 const ROOT = "0192b3a4-5c6d-7e8f-9a0b-000000000002";
@@ -81,6 +83,65 @@ function state(): VaultState {
   for (const o of objects) s.objects.set(o.id, o);
   return s;
 }
+
+describe("owners of a roles warning", () => {
+  it("names a contact only when it is verified with the keys of the chain", () => {
+    const s = state();
+    const bob = "0192b3a4-5c6d-7e8f-9a0b-000000000010";
+    const carol = "0192b3a4-5c6d-7e8f-9a0b-000000000011";
+    const key = (label: string) => tv(`views-owner-${label}`, 32);
+    // The delivered head names Bob with his keys and Carol with keys the
+    // server made up; both are verified contacts.
+    s.roles = {
+      version: 2,
+      status: "fork",
+      statements: [],
+      head: undefined,
+      anchor: undefined,
+      deliveredOwners: [
+        roleOwner(bob, key("bob"), key("bob-sign")),
+        roleOwner(carol, key("forged"), key("forged-sign")),
+      ],
+      deliveredHead: undefined,
+      verifyOwners: false,
+    };
+    const contact = (userId: string, email: string, label: string) => ({
+      userId,
+      email,
+      fingerprint: fingerprintHex(key(label)),
+      fingerprint2: fingerprint2Hex(key(label), key(`${label}-sign`)),
+      verifiedAt: "2026-10-23T08:00:00.000Z",
+    });
+    s.members = [
+      {
+        user_id: carol,
+        email: "carol@server.example",
+        role: "owner",
+        state: "active",
+        public_key: toBase64Url(key("carol")),
+        signing_public_key: toBase64Url(key("carol-sign")),
+      } as never,
+    ];
+    const view = new VaultProjection(VAULT).view(s, collator, [
+      contact(bob, "bob@example.org", "bob"),
+      contact(carol, "carol@example.org", "carol"),
+    ]);
+    expect(view.roles.owners).toEqual([
+      {
+        userId: bob,
+        email: "bob@example.org",
+        verified: true,
+        keysDiffer: false,
+      },
+      {
+        userId: carol,
+        email: "carol@server.example",
+        verified: false,
+        keysDiffer: true,
+      },
+    ]);
+  });
+});
 
 describe("projection", () => {
   it("has summaries without secrets and details on request", () => {

@@ -10,7 +10,6 @@ import type { VaultView } from "@keeman/core";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { toUiError, type UiError } from "../../errors";
-import { useServices } from "../../services";
 import { useVaultsStore } from "../../stores/vaults";
 import ErrorNotice from "../ErrorNotice.vue";
 import ConfirmDialog from "../dialogs/ConfirmDialog.vue";
@@ -31,18 +30,23 @@ const warning = computed(() =>
     : undefined,
 );
 
-/** A contact's address, else the server's, else a short form of the ID. */
-function names(
-  owners: readonly { userId: string; email: string | undefined }[],
-): string {
-  const { account } = useServices();
+/**
+ * The contact's address where the core found it verified with the keys of
+ * the list, else the server's marked as unchecked, else a short form of
+ * the ID.
+ */
+function names(owners: VaultView["roles"]["owners"]): string {
   return owners
-    .map(
-      (o) =>
-        account.contactEmail(o.userId) ??
-        o.email ??
-        t("entry.member", { id: o.userId.slice(0, 8) }),
-    )
+    .map((o) => {
+      const name = o.email ?? t("entry.member", { id: o.userId.slice(0, 8) });
+      if (o.verified) return name;
+      return t(
+        o.keysDiffer
+          ? "vaults.roles.ownerKeysDiffer"
+          : "vaults.roles.ownerUnverified",
+        { name },
+      );
+    })
     .join(", ");
 }
 

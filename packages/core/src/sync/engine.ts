@@ -1114,6 +1114,7 @@ export class SyncEngine {
         chain ?? [],
         this.#comparisons.points(vaultId, marks),
       ).status !== "ok";
+    const formerConflict = this.#formerConflict(vaultId, chain, marks);
     const status: InvitationDetails["status"] = !opened
       ? "rejected"
       : contradicted
@@ -1142,7 +1143,32 @@ export class SyncEngine {
       head: head
         ? { version: head.statement.version, hash: head.hash }
         : undefined,
+      formerConflict,
     };
+  }
+
+  /**
+   * Whether an invitation's chain contradicts what the account knew of the
+   * vault from an earlier membership: its old anchor and this device's
+   * floor must hold like comparison points. A former owner could otherwise
+   * invite the account, with the server, into a fork below its old anchor.
+   */
+  #formerConflict(
+    vaultId: string,
+    chain: readonly VerifiedRoles[] | undefined,
+    marks: UserMarks,
+  ): boolean {
+    const known: RolePoint[] = [];
+    const anchor = this.#access.roleAnchor(vaultId);
+    if (anchor) known.push(anchor);
+    const floor = marks.vaults[vaultId]?.rl;
+    if (floor) known.push({ version: floor[0], hash: floor[1] });
+    return (
+      comparisonPointsStatus(
+        chain ?? [],
+        known.map((p) => ({ version: p.version, code: stateCodeOf(p.hash) })),
+      ).status !== "ok"
+    );
   }
 
   /**
@@ -1213,7 +1239,13 @@ export class SyncEngine {
   }
 
   #vaultName(state: VaultState): string {
-    return this.#projection(state).view(state, this.#collator).name ?? "";
+    return (
+      this.#projection(state).view(
+        state,
+        this.#collator,
+        this.#access.contacts(),
+      ).name ?? ""
+    );
   }
 
   /** Invites a verified contact; the box vouches for the checked roles. */
@@ -1318,7 +1350,7 @@ export class SyncEngine {
    */
   async acceptInvitation(
     vaultId: string,
-    expected: { head: RolePoint | undefined },
+    expected: { head: RolePoint | undefined; formerConflict?: boolean },
   ): Promise<void> {
     const invitation = this.#invitations.find(
       (i) => i.summary.vault_id === vaultId,
@@ -1351,6 +1383,11 @@ export class SyncEngine {
       ).status !== "ok"
     )
       throw new SyncError("state_mismatch");
+    // Contradicting what the account knew before: only when the dialog said
+    // so and the user chose to accept anyway; then the chain replaces it.
+    const conflict = this.#formerConflict(vaultId, chain, marks);
+    if (conflict && expected.formerConflict !== true)
+      throw new SyncError("former_conflict");
     const known =
       access.roleAnchor(vaultId) !== undefined ||
       marks.vaults[vaultId] !== undefined;
@@ -1399,7 +1436,7 @@ export class SyncEngine {
           s.hash === named.hash,
       )?.statement,
     });
-    if (chain) await this.#roles.anchorInvitation(vaultId, chain);
+    if (chain) await this.#roles.anchorInvitation(vaultId, chain, conflict);
     await this.refresh();
   }
 
@@ -3635,7 +3672,11 @@ export class SyncEngine {
         a.id.localeCompare(b.id),
     );
     const vaults: VaultView[] = states.map((state) =>
-      this.#projection(state).view(state, this.#collator),
+      this.#projection(state).view(
+        state,
+        this.#collator,
+        this.#access.contacts(),
+      ),
     );
     const invitations = this.#invitations.map(
       ({ summary, sender, vaultName }) => ({

@@ -67,8 +67,11 @@ export interface VaultRoles {
   readonly head: VerifiedRoles | undefined;
   /** The anchor the check started from. */
   readonly anchor: RoleAnchor | undefined;
-  /** Owners of the delivered head (also for warnings), if it can be read. */
-  readonly deliveredOwners: readonly string[];
+  /**
+   * Owners of the delivered head with the keys it names (also for
+   * warnings), if it can be read.
+   */
+  readonly deliveredOwners: readonly RoleOwner[];
   /**
    * The delivered head as "understood" or "take over" would adopt it;
    * `null` for an empty chain, `undefined` if it cannot be read.
@@ -130,10 +133,6 @@ function effectiveAnchor(
   if (!fromFloor || fromFloor.version <= stored.version)
     return { anchor: stored, lower: fromFloor };
   return { anchor: fromFloor, lower: stored };
-}
-
-function ownerIds(statement: VerifiedRoles | undefined): string[] {
-  return statement?.statement.owners.map((o) => o.userId) ?? [];
 }
 
 /** Whether a checked chain has the statement of a point. */
@@ -380,13 +379,13 @@ export class RolesKeeper {
     // Even with a warning the delivered head and its owners are shown.
     const plain = checkRoleChain({ vaultId, statements: delivered });
     const deliveredOwners =
-      plain.status === "ok" ? ownerIds(plain.head) : ([] as string[]);
+      plain.status === "ok" ? plain.head.statement.owners : ([] as RoleOwner[]);
     const base = {
       version,
       statements: [] as VerifiedRoles[],
       head: undefined,
       anchor,
-      deliveredOwners: [] as string[],
+      deliveredOwners: [] as RoleOwner[],
       deliveredHead:
         plain.status === "ok"
           ? pointOf(plain.head)
@@ -422,7 +421,7 @@ export class RolesKeeper {
         status: anchor ? "ok" : "unanchored",
         statements: result.statements,
         head: result.head,
-        deliveredOwners: ownerIds(result.head),
+        deliveredOwners: result.head.statement.owners,
         ...(anchor ? { code: headCode(result.head) } : {}),
       },
       result.statements,
@@ -599,13 +598,30 @@ export class RolesKeeper {
     return result.statements;
   }
 
-  /** After an accepted invitation: the vouched chain's head is the anchor. */
+  /**
+   * After an accepted invitation: the vouched chain's head becomes the
+   * anchor. It replaces what the account knew before only where the user
+   * accepted a contradiction; otherwise anchor and floor only rise.
+   */
   async anchorInvitation(
     vaultId: string,
     statements: readonly VerifiedRoles[],
+    replace: boolean,
   ): Promise<void> {
     const head = statements[statements.length - 1];
-    if (head) await this.#adopt(vaultId, head);
+    if (!head) return;
+    if (replace) {
+      await this.#adopt(vaultId, head);
+      return;
+    }
+    const marks = await this.#port.marks.read(this.#port.userId);
+    this.#raise(
+      vaultId,
+      head,
+      this.#port.anchor(vaultId),
+      marks.vaults[vaultId]?.rl,
+    );
+    await this.flush();
   }
 
   /** The point a box names: the checked head. */

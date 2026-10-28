@@ -224,6 +224,9 @@ export default {
       ackCompare:
         "Übergeht den Code des Mitglieds und übernimmt die gelieferte Eigentümerliste. Tu das nur, wenn ihr geklärt habt, dass der Code falsch eingegeben war oder die Liste stimmt.",
       tree: "Warnung zur Eigentümerliste",
+      ownerUnverified: "{name} (Angabe des Servers, nicht geprüft)",
+      ownerKeysDiffer:
+        "{name} (Angabe des Servers, nicht geprüft; der Server nennt andere Schlüssel)",
       unavailable:
         "Die Eigentümerliste ließ sich nicht laden. Die Datenbank ist schreibgeschützt, bis sie sich laden lässt; bis dahin nimmt dieses Gerät keine neuen Schlüssel an und ändert keine Rollen.",
     },
@@ -1252,6 +1255,12 @@ export default {
       "Die Eigentümerliste hat sich inzwischen geändert. Prüfe den neuen Stand.",
     accept: "Annehmen",
     decline: "Ablehnen",
+    formerConflict:
+      "Die Eigentümerliste dieser Einladung widerspricht dem, was dein Konto früher von dieser Datenbank kannte. Das kann eine Wiederherstellung des Servers aus einem Backup sein, aber auch ein früherer Eigentümer, der dich zusammen mit dem Server in einen alten Stand einlädt. Vergleiche den Stand-Code mit einem anderen Mitglied als dem Einladenden.",
+    acceptAnyway: "Trotzdem annehmen",
+    acceptAnywayTitle: "Trotzdem annehmen?",
+    acceptAnywayText:
+      "Die Eigentümerliste dieser Einladung ersetzt, was dein Konto früher von dieser Datenbank kannte. Tu das nur, wenn ein anderes Mitglied den Stand-Code bestätigt hat.",
   },
   banner: {
     clockSkew:

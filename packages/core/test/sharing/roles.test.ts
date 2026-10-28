@@ -303,6 +303,48 @@ describe("signed roles", () => {
     expect(posts(server, "/accept")).toBe(2);
   });
 
+  it("asks before an invitation contradicts what the account knew of the vault", async () => {
+    const { alice, bob, carol, vaultId } = await team();
+    await alice.engine.setMemberRole(vaultId, id(carol), "owner");
+    await bob.engine.refresh();
+    await bob.engine.leaveVault(vaultId);
+    // A plain re-invitation: what Bob knew still holds, nothing is asked.
+    await alice.engine.invite(
+      vaultId,
+      await alice.engine.lookupUser(bob.email),
+    );
+    await bob.engine.refresh();
+    expect((await bob.engine.invitationDetails(vaultId)).formerConflict).toBe(
+      false,
+    );
+    await bob.engine.declineInvitation(vaultId);
+    // Bob's device knew another version 2 than the chain has now.
+    await bob.marks.replaceRoles(id(bob), vaultId, [
+      2,
+      toBase64Url(tv("roles-sync-other-second", 32)),
+    ]);
+    await alice.engine.invite(
+      vaultId,
+      await alice.engine.lookupUser(bob.email),
+    );
+    await bob.engine.refresh();
+    const details = await bob.engine.invitationDetails(vaultId);
+    expect(details.formerConflict).toBe(true);
+    await expect(
+      bob.engine.acceptInvitation(vaultId, { head: details.head }),
+    ).rejects.toMatchObject({ code: "former_conflict" });
+    // Accepted on purpose, the invitation's chain replaces it.
+    await bob.engine.acceptInvitation(vaultId, {
+      head: details.head,
+      formerConflict: true,
+    });
+    expect((await bob.marks.read(id(bob))).vaults[vaultId]?.rl).toEqual([
+      details.head?.version,
+      details.head?.hash,
+    ]);
+    expect(vault(bob.engine, vaultId).roles.status).toBe("ok");
+  });
+
   it("loads the chain page by page", async () => {
     const { server, alice, bob, carol, vaultId } = await team();
     await alice.engine.setMemberRole(vaultId, id(carol), "owner");

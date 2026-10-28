@@ -4,8 +4,11 @@
  * Unchanged objects and vaults keep their identity between projections.
  */
 import type { ObjectType } from "../crypto/aad";
-import type { RolePoint } from "../crypto/roles";
-import type { JsonObject } from "../crypto/bytes";
+import type { RoleOwner, RolePoint } from "../crypto/roles";
+import { fromBase64Url, type JsonObject } from "../crypto/bytes";
+import { fingerprint2Hex, fingerprintHex } from "../crypto/fingerprint";
+import type { Contact } from "../model/user-data";
+import { contactStatus } from "../sharing/contacts";
 import {
   formatStateCode,
   stateCodeUri,
@@ -243,8 +246,14 @@ export interface VaultView {
 /** An owner in the roles view. */
 export interface RoleOwnerView {
   readonly userId: string;
-  /** The contact's address, else the server's; `undefined` if unknown. */
+  /**
+   * The contact's address if the contact is verified with the keys the
+   * chain names, else the server's; `undefined` if unknown.
+   */
   readonly email: string | undefined;
+  readonly verified: boolean;
+  /** The server names other keys for the account than the chain. */
+  readonly keysDiffer: boolean;
 }
 
 /** A state code for display. */
@@ -310,6 +319,11 @@ export interface InvitationDetails {
   /** The head the dialog shows; accepting needs the same one. */
   readonly head:
     { readonly version: number; readonly hash: string } | undefined;
+  /**
+   * The chain contradicts what the account knew of the vault before (its
+   * old anchor or this device's floor): accepted only explicitly.
+   */
+  readonly formerConflict: boolean;
 }
 
 /** The roles chain of a vault as this device checked it. */
@@ -435,6 +449,7 @@ export class VaultProjection {
   #layoutMeta: JsonObject | undefined;
   #view: VaultView | undefined;
   #collator: Intl.Collator | undefined;
+  #contacts: readonly Contact[] = [];
 
   constructor(readonly vaultId: string) {}
 
@@ -590,7 +605,13 @@ export class VaultProjection {
     return new Map([...this.#icons].map(([id, { value }]) => [id, value]));
   }
 
-  view(state: VaultState, collator: Intl.Collator): VaultView {
+  /** `contacts` name the owners; without them the last ones given count. */
+  view(
+    state: VaultState,
+    collator: Intl.Collator,
+    contacts?: readonly Contact[],
+  ): VaultView {
+    if (contacts) this.#contacts = contacts;
     const meta = this.#parseMeta(state);
     const layout = this.layoutOf(state, collator);
     const writable = vaultWritable(state);
@@ -708,7 +729,7 @@ export class VaultProjection {
       state.rollback ||
       state.rollbackDeletes.size > 0 ||
       [...state.objects.values()].some((o) => o.rollback);
-    const roles = rolesView(state);
+    const roles = rolesView(state, this.#contacts);
     let status: VaultView["status"] = "ready";
     if (!state.keyOk) status = "corrupt";
     else if (state.error !== undefined) status = "error";
@@ -933,8 +954,12 @@ export function usedIcons(state: VaultState): Set<string> {
   return used;
 }
 
-/** The roles chain for display; owners are named by contact or server. */
-function rolesView(state: VaultState): RolesView {
+/**
+ * The roles chain for display. An owner is named by the contact only if the
+ * contact is verified with the keys the chain names; a contact's address
+ * next to a forged head would otherwise look trustworthy.
+ */
+function rolesView(state: VaultState, contacts: readonly Contact[]): RolesView {
   const roles = state.roles;
   if (!roles)
     return {
@@ -949,13 +974,42 @@ function rolesView(state: VaultState): RolesView {
       head: null,
     };
   const members = state.members ?? [];
-  const named = (userId: string): RoleOwnerView => ({
-    userId,
-    email: members.find((m) => m.user_id === userId)?.email,
-  });
-  const ids = roles.head
-    ? roles.head.statement.owners.map((o) => o.userId)
-    : [...roles.deliveredOwners];
+  const entries: readonly RoleOwner[] = roles.head
+    ? roles.head.statement.owners
+    : roles.deliveredOwners;
+  const named = (userId: string): RoleOwnerView => {
+    const member = members.find((m) => m.user_id === userId);
+    const entry = entries.find((o) => o.userId === userId);
+    if (!entry)
+      return {
+        userId,
+        email: member?.email,
+        verified: false,
+        keysDiffer: false,
+      };
+    const publicKey = fromBase64Url(entry.publicKey, 32);
+    const status = contactStatus(contacts, userId, {
+      v1: fingerprintHex(publicKey),
+      v2: fingerprint2Hex(publicKey, fromBase64Url(entry.signingKey, 32)),
+    });
+    if (status === "verified")
+      return {
+        userId,
+        email: contacts.find((c) => c.userId === userId)?.email,
+        verified: true,
+        keysDiffer: false,
+      };
+    return {
+      userId,
+      email: member?.email,
+      verified: false,
+      keysDiffer:
+        member !== undefined &&
+        (member.public_key !== entry.publicKey ||
+          (member.signing_public_key ?? undefined) !== entry.signingKey),
+    };
+  };
+  const ids = entries.map((o) => o.userId);
   const known = new Set(roles.anchor?.owners ?? []);
   const active = members.filter((m) => m.state === "active");
   const serverOwners = new Set(
@@ -974,7 +1028,10 @@ function rolesView(state: VaultState): RolesView {
     newOwners:
       roles.status === "ok" || roles.anchor === undefined
         ? []
-        : roles.deliveredOwners.filter((id) => !known.has(id)).map(named),
+        : roles.deliveredOwners
+            .map((o) => o.userId)
+            .filter((id) => !known.has(id))
+            .map(named),
     verifyOwners: roles.verifyOwners,
     ownersMismatch,
     code: roles.code

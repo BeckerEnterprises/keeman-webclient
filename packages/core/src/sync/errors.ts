@@ -81,6 +81,8 @@ export type SyncErrorCode =
   | "state_mismatch"
   /** The owner list changed since it was shown; look again. */
   | "roles_changed"
+  /** An invitation's owner list contradicts what the account knew before; accept explicitly. */
+  | "former_conflict"
   /** The sender of the invitation owns no part of the list its box names. */
   | "sender_not_owner"
   /** A warning about the owner list is open; nothing is signed until understood. */
