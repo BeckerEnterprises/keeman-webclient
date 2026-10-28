@@ -277,7 +277,20 @@ export class RolesKeeper {
     });
     let result = roles;
     if (roles.status === "unanchored" && roles.head) {
-      if (this.#adoptable(roles.head, roles.statements, owners ?? [])) {
+      const adoptable = this.#adoptable(
+        roles.head,
+        roles.statements,
+        owners ?? [],
+      );
+      if (adoptable === "invalid")
+        result = {
+          ...roles,
+          status: "invalid",
+          statements: [],
+          head: undefined,
+          code: undefined,
+        };
+      else if (adoptable) {
         this.#raise(vaultId, roles.head, stored);
         result = {
           ...roles,
@@ -419,22 +432,30 @@ export class RolesKeeper {
 
   /**
    * Transition of a chain without anchor: taken over when its head was
-   * signed by this account, or by a remembered owner who is a contact
-   * (verified, or checked before fingerprint version 2).
+   * signed by this account with its own keys, or by a remembered owner who
+   * is a contact (verified, or checked before fingerprint version 2).
+   * `invalid` when the head names this account with keys that are not its
+   * own: a server could forge a chain in its name otherwise.
    */
   #adoptable(
     head: VerifiedRoles,
     statements: readonly VerifiedRoles[],
     owners: readonly string[],
-  ): boolean {
+  ): boolean | "invalid" {
     const { signer } = head.statement;
-    if (signer === this.#port.userId) return true;
-    if (!owners.includes(signer)) return false;
     const before =
       statements.find(
         (s) => s.statement.version === head.statement.version - 1,
       ) ?? head;
     const entry = before.statement.owners.find((o) => o.userId === signer);
+    if (signer === this.#port.userId) {
+      const own = this.#ownEntry();
+      return entry?.publicKey === own.publicKey &&
+        entry.signingKey === own.signingKey
+        ? true
+        : "invalid";
+    }
+    if (!owners.includes(signer)) return false;
     if (!entry) return false;
     const publicKey = fromBase64Url(entry.publicKey, 32);
     const status = contactStatus(this.#port.contacts(), signer, {

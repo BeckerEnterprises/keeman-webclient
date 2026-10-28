@@ -5,7 +5,16 @@
 import { describe, expect, it } from "vitest";
 import { toBase64Url } from "../../src/crypto/bytes";
 import type { Keys } from "../../src/crypto/keystore";
-import { readSignedRoles, type RolePoint } from "../../src/crypto/roles";
+import type { ApiClient } from "../../src/api/client";
+import { derivePublicKey } from "../../src/crypto/keypair";
+import {
+  genesisStatement,
+  readSignedRoles,
+  roleOwner,
+  signRoleStatement,
+  type RolePoint,
+} from "../../src/crypto/roles";
+import { deriveSigningKeyPair } from "../../src/crypto/signing";
 import type { RoleAnchor } from "../../src/model/user-data";
 import { inMemorySyncMarks } from "../../src/sync/marks";
 import { RolesKeeper } from "../../src/sync/roles";
@@ -60,7 +69,67 @@ function keeper(
   return { roles, marks, saved, anchors, points };
 }
 
+/** A keeper over one delivered chain, with the account's real keys. */
+function ownKeeper(chain: ReturnType<typeof signRoleStatement>[]) {
+  const userId = "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a10";
+  const privateKey = tv("roles-keeper-own-private", 32);
+  const signing = deriveSigningKeyPair(tv("roles-keeper-own-user-key", 32));
+  const keys = {
+    usePrivateKey: <T>(use: (key: Uint8Array) => T) => use(privateKey),
+    signingPublicKey: () => signing.publicKey,
+  } as unknown as Keys;
+  const api = {
+    roles: () =>
+      Promise.resolve(
+        chain.map((signed, i) => ({ ...signed, version: i + 1 })),
+      ),
+  } as unknown as ApiClient;
+  const roles = new RolesKeeper({
+    api,
+    keys,
+    userId,
+    marks: inMemorySyncMarks(),
+    anchor: () => undefined,
+    saveAnchors: () => Promise.resolve(),
+    contacts: () => [],
+  });
+  return { roles, userId, privateKey, signing };
+}
+
 describe("roles keeper", () => {
+  it("takes over a chain signed by this account only with its own keys", async () => {
+    const vaultId = "0192b3a4-5c6d-7e8f-9a0b-1c2d3e4f5a20";
+    const start = (
+      userId: string,
+      publicKey: Uint8Array,
+      signing: { publicKey: Uint8Array; secretKey: Uint8Array },
+    ) =>
+      signRoleStatement(
+        genesisStatement({
+          vaultId,
+          owners: [roleOwner(userId, publicKey, signing.publicKey)],
+          signer: userId,
+          keyVersion: 1,
+          vaultKey: tv("roles-keeper-vault-key", 32),
+          created: "2026-10-28T08:00:00.000Z",
+        }),
+        signing.secretKey,
+      );
+    // The server forges a first statement in this account's name, with
+    // keys of its own.
+    const forged = ownKeeper([]);
+    const other = deriveSigningKeyPair(tv("roles-keeper-server-user-key", 32));
+    const otherKey = derivePublicKey(tv("roles-keeper-server-private", 32));
+    const evil = ownKeeper([start(forged.userId, otherKey, other)]);
+    expect((await evil.roles.update(vaultId, 1, [])).status).toBe("invalid");
+    expect(evil.roles.point(vaultId)).toBeUndefined();
+    // Signed with the own keys, it is taken over.
+    const honest = ownKeeper([
+      start(forged.userId, derivePublicKey(forged.privateKey), forged.signing),
+    ]);
+    expect((await honest.roles.update(vaultId, 1, [])).status).toBe("ok");
+  });
+
   it("prefers the higher of anchor and floor and reports a fork between them", async () => {
     const { bob, vaultId, points } = await setup();
     const [first, second] = points;
