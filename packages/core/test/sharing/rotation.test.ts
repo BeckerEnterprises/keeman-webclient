@@ -9,6 +9,7 @@ import { manifestIds } from "../../src/model/manifest";
 import type { SyncEngine } from "../../src/sync/engine";
 import { FakeServer } from "../account/fake-server";
 import { flipped, rootOf, vault } from "../sync/devices";
+import { tv } from "../helpers";
 import {
   acceptShown,
   owner,
@@ -514,6 +515,20 @@ describe("rotation details", () => {
     expect(posts(server, "/commit")).toBe(2);
     expect(vault(alice.engine, vaultId).keyStatus).toBe("ok");
     server.onRequest = () => undefined;
+  });
+
+  it("stops when a recipient's key changes between review and commit", async () => {
+    const { server, alice, bob, vaultId } = await team();
+    const review = await alice.engine.prepareRotation(vaultId);
+    // The server names another key for Bob right before the commit.
+    const user = server.users.get(bob.account.userId ?? "");
+    if (!user) throw new Error("no bob");
+    user.public_key = toBase64Url(tv("rotation-swapped-key", 32));
+    const commits = posts(server, "/commit");
+    await expect(
+      alice.engine.runRotation(review, { remove: [], dropCorrupt: false }),
+    ).rejects.toMatchObject({ code: "unverified" });
+    expect(posts(server, "/commit")).toBe(commits);
   });
 
   it("asks again for an invitation the review did not show", async () => {
