@@ -823,6 +823,7 @@ export class Account {
       // before confirmation times.
       if (marks.uf === undefined)
         await this.#marks.raise(userId, { uf: 0, vaults: {} });
+      this.#current(epoch);
       return { rollback: true, stale: false };
     }
     // With "never" until a confirmation follows: interrupted before it, the
@@ -852,13 +853,14 @@ export class Account {
       marks.fd,
     );
     if (basis > 0 && basis >= now - days * DAY_MS) {
-      await this.#confirmUserData(userId, slot);
+      await this.#confirmUserData(epoch, userId, slot);
       return { rollback: false, stale: false };
     }
     slot.confirmedSince = basis > 0 ? basis : undefined;
     this.#markStale(slot, true);
     if (marks.uf === undefined)
       await this.#marks.raise(userId, { uf: 0, vaults: {} });
+    this.#current(epoch);
     return { rollback: false, stale: true };
   }
 
@@ -900,6 +902,8 @@ export class Account {
     if (me.user_id !== userId) throw new AccountError("integrity");
     const next = this.#delivered(me, userId);
     const { rollback, stale } = await this.#applyUserDataMarks(epoch, next);
+    // A lock meanwhile: nothing decrypted goes back in.
+    this.#current(epoch);
     this.#userData = next;
     this.#engine?.userDataStateChanged();
     if (!rollback && !stale) void this.#attestUserData().catch(() => undefined);
@@ -1248,7 +1252,7 @@ export class Account {
     this.#userData = next;
     await this.#marks.raise(userId, { ud: [revision, seq], vaults: {} });
     // Written on this device: current, like after any own write.
-    await this.#confirmUserData(userId, next);
+    await this.#confirmUserData(epoch, userId, next);
     this.#current(epoch);
     this.#engine?.contactsChanged();
     this.#engine?.userDataStateChanged();
@@ -1313,6 +1317,7 @@ export class Account {
       const { rollback, stale } = delivered.rollback
         ? { rollback: true, stale: false }
         : await this.#applyUserDataMarks(epoch, delivered);
+      this.#current(epoch);
       if (rollback || stale) {
         this.#userData = delivered;
         this.#engine?.contactsChanged();
@@ -1515,7 +1520,11 @@ export class Account {
   }
 
   /** Confirms the delivered user_data now; the period goes with it. */
-  async #confirmUserData(userId: string, slot: UserDataSlot): Promise<void> {
+  async #confirmUserData(
+    epoch: number,
+    userId: string,
+    slot: UserDataSlot,
+  ): Promise<void> {
     if (slot.state.status !== "ok") return;
     const now = this.#now();
     const settings = effectiveSettings(slot.state.raw);
@@ -1527,6 +1536,7 @@ export class Account {
       fs: strict,
       vaults: {},
     });
+    this.#current(epoch);
     this.#periodFloor = days;
     this.#strictFloor = strict;
     slot.confirmedSince = now;
@@ -1539,7 +1549,7 @@ export class Account {
     const userId = this.#requireUnlocked();
     const slot = this.#userData;
     if (!slot?.stale) return;
-    await this.#confirmUserData(userId, slot);
+    await this.#confirmUserData(epoch, userId, slot);
     this.#current(epoch);
     this.#engine?.contactsChanged();
     this.#engine?.userDataStateChanged();
@@ -1588,7 +1598,7 @@ export class Account {
       return;
     }
     this.#current(epoch);
-    await this.#confirmUserData(userId, slot);
+    await this.#confirmUserData(epoch, userId, slot);
   }
 
   // ------------------------------------------------------------ confirmation

@@ -56,6 +56,43 @@ function lockOn(server: FakeServer, account: Account, path: string): void {
   };
 }
 
+/** Lets the attestation that follows an unlock or a confirmation finish. */
+async function settled(): Promise<void> {
+  for (let i = 0; i < 20; i++)
+    await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/**
+ * An account whose marks lock it once, when a confirmation of user_data
+ * raises them after `GET /v1/me` (another tab holds the marks lock, and
+ * the confirmation waits for it).
+ */
+function lockingOnConfirmation(server: FakeServer) {
+  const marks = inMemorySyncMarks();
+  let armed = false;
+  const state = { locked: false };
+  const account: Account = newAccount(server, {
+    ...marks,
+    raise: async (userId, change) => {
+      const done = await marks.raise(userId, change);
+      if (armed && (change.uf ?? 0) > 0) {
+        armed = false;
+        state.locked = true;
+        account.lock();
+      }
+      return done;
+    },
+  });
+  const arm = () => {
+    server.onRequest = (method, path) => {
+      if (method !== "GET" || path !== "/v1/me") return;
+      server.onRequest = () => undefined;
+      armed = true;
+    };
+  };
+  return { account, arm, state };
+}
+
 async function expectLocked(promise: Promise<unknown>): Promise<void> {
   const error = await promise.then(
     () => {
@@ -194,6 +231,35 @@ describe("a lock overtakes a write", () => {
     expect(account.userDataState?.status).toBe("corrupt");
     lockOn(server, account, "/v1/me/user-data");
     await expectLocked(account.resetUserData("de"));
+    expect(account.userDataState).toBeUndefined();
+  });
+
+  it("of a reloaded user_data while it is confirmed", async () => {
+    const { server } = await registered();
+    const { account, arm, state } = lockingOnConfirmation(server);
+    await account.login(EMAIL, PASSWORD);
+    if (account.userDataStale) await account.acknowledgeUserDataFreshness();
+    await settled();
+    arm();
+    await expectLocked(account.reloadUserData());
+    expect(state.locked).toBe(true);
+    expect(account.userDataState).toBeUndefined();
+    expect(account.contacts).toEqual([]);
+  });
+
+  it("while merging after a conflict, when the reload is confirmed", async () => {
+    const { server, account: first } = await registered();
+    const { account, arm, state } = lockingOnConfirmation(server);
+    await account.login(EMAIL, PASSWORD);
+    if (account.userDataStale) await account.acknowledgeUserDataFreshness();
+    // The registering device writes meanwhile: the next write conflicts
+    // and merges into its newer user_data.
+    await first.unlock(PASSWORD);
+    await first.updateSettings({ language: "en" });
+    await settled();
+    arm();
+    await expectLocked(account.updateSettings({ autoLockMinutes: 5 }));
+    expect(state.locked).toBe(true);
     expect(account.userDataState).toBeUndefined();
   });
 
