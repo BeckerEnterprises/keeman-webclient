@@ -83,10 +83,10 @@ async function add(
   iconName: string,
   source: IconSource,
 ): Promise<void> {
+  // The engine of this unlock: a lock while encoding ends it.
+  const engine = vaults.engine();
   const png = await encodeIcon(image);
-  chooseCustom(
-    await vaults.engine().addIcon(props.vaultId, png, iconName, source),
-  );
+  chooseCustom(await engine.addIcon(props.vaultId, png, iconName, source));
 }
 
 async function run(task: () => Promise<void>): Promise<void> {

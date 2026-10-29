@@ -58,8 +58,10 @@ function report(): void {
 async function upload(file: File, item: Upload): Promise<void> {
   try {
     if (item.controller.signal.aborted) return;
+    // The engine of this unlock: a lock while reading the file ends it.
+    const engine = vaults.engine();
     const data = new Uint8Array(await file.arrayBuffer());
-    const info = await vaults.engine().stageAttachment(
+    const info = await engine.stageAttachment(
       props.vaultId,
       props.entryId,
       { name: file.name, mime: file.type, data },

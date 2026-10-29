@@ -72,6 +72,13 @@ const importedVault = ref<string>();
 let file: KdbxFile | undefined;
 let job: KdbxImportJob | undefined;
 let controller: AbortController | undefined;
+// Locking unmounts the dialog; what is still awaited then must not go on,
+// least of all into an account unlocked meanwhile.
+let disposed = false;
+
+function ensureOpen(): void {
+  if (disposed) throw new KdbxError("cancelled");
+}
 
 const intoGroup = computed(() => props.vaultId !== undefined);
 const vault = computed(() =>
@@ -115,12 +122,16 @@ function target(): KdbxImportTarget {
 }
 
 async function prepare(source: KdbxFile): Promise<KdbxImportJob> {
+  // The engine of this unlock, before anything is awaited.
+  const engine = vaults.engine();
   // The app re-encodes the custom icons; the core gets PNG bytes.
   const icons = await encodeIcons(source.customIcons);
-  const next = await vaults.engine().prepareKdbxImport(source, target(), {
+  ensureOpen();
+  const next = await engine.prepareKdbxImport(source, target(), {
     emptyFieldName: t("kdbx.field"),
     icons,
   });
+  ensureOpen();
   report.value = markRaw(next.report);
   return next;
 }
@@ -173,7 +184,7 @@ async function open(): Promise<void> {
 }
 
 async function run(): Promise<void> {
-  if (!job) return;
+  if (!job || disposed) return;
   error.value = undefined;
   controller = new AbortController();
   step.value = "importing";
@@ -211,7 +222,7 @@ async function start(): Promise<void> {
     // The name or target group may have changed since the preview.
     job = await prepare(file);
   } catch (caught) {
-    error.value = toUiError(caught);
+    if (!disposed) error.value = toUiError(caught);
     return;
   }
   await run();
@@ -232,6 +243,7 @@ function close(): void {
 
 onBeforeUnmount(() => {
   // Locking unmounts the dialog: the worker or import stops.
+  disposed = true;
   controller?.abort();
   file = undefined;
   job = undefined;
