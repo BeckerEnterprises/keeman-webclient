@@ -95,4 +95,32 @@ describe("clipboard", () => {
     clearPendingClipboard();
     expect(writeText).not.toHaveBeenCalled();
   });
+
+  it("clears a copy that a lock overtook while it was written", async () => {
+    let written!: () => void;
+    writeText.mockReturnValueOnce(
+      new Promise<void>((resolve) => (written = resolve)),
+    );
+    const copying = copySecret("geheim", 30);
+    clearPendingClipboard();
+    written();
+    expect(await copying).toBe(false);
+    expect(writeText).toHaveBeenLastCalledWith("");
+    // Nothing is left to clear later.
+    writeText.mockClear();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it("leaves a copy alone that a lock overtook when clearing is off", async () => {
+    let written!: () => void;
+    writeText.mockReturnValueOnce(
+      new Promise<void>((resolve) => (written = resolve)),
+    );
+    const copying = copySecret("geheim", null);
+    clearPendingClipboard();
+    written();
+    expect(await copying).toBe(true);
+    expect(writeText).toHaveBeenCalledTimes(1);
+  });
 });

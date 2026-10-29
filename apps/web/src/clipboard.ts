@@ -8,6 +8,9 @@ import { useToastStore } from "./stores/toast";
 
 let timer: ReturnType<typeof setTimeout> | undefined;
 let waiting = false;
+// Raised by every lock and logout: a copy still being written then gets
+// no timer but is cleared at once.
+let generation = 0;
 
 function stopWaiting(): void {
   if (!waiting) return;
@@ -45,6 +48,11 @@ async function clearNow(): Promise<void> {
   }
 }
 
+/** On lock: as far as allowed now, else on the next key or click. */
+function clearRightAway(): void {
+  void navigator.clipboard.writeText("").then(stopWaiting, clearOnNextAction);
+}
+
 function schedule(seconds: number | null): void {
   if (timer !== undefined) clearTimeout(timer);
   stopWaiting();
@@ -62,10 +70,15 @@ export async function copySecret(
   text: string,
   clearSeconds: number | null,
 ): Promise<boolean> {
+  const started = generation;
   try {
     await navigator.clipboard.writeText(text);
   } catch {
     useToastStore().show("clipboard.failed");
+    return false;
+  }
+  if (started !== generation && clearSeconds !== null) {
+    clearRightAway();
     return false;
   }
   schedule(clearSeconds);
@@ -90,8 +103,9 @@ export function copyInEvent(
  * the lock or sign-in screen.
  */
 export function clearPendingClipboard(): void {
+  generation += 1;
   if (timer === undefined && !waiting) return;
   if (timer !== undefined) clearTimeout(timer);
   timer = undefined;
-  void navigator.clipboard.writeText("").then(stopWaiting, clearOnNextAction);
+  clearRightAway();
 }
