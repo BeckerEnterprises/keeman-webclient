@@ -14,6 +14,9 @@ Signed roles need a server that reports `features.roles`; with an older server t
 
 ### Security
 
+- A lock while the account data was being confirmed no longer lets the decrypted data back into the locked account when it was reloaded or merged after a conflict.
+- A KDBX import whose "Import" was still preparing when the tab locked stops instead of running afterwards, possibly into an account unlocked meanwhile in the tab. Adding an icon and uploading an attachment also stay with the unlock they started in.
+- A copy that a lock overtook while it was being written is cleared at once instead of staying in the clipboard until its timer ran out.
 - A statement this device made becomes its anchor as soon as the server takes it, and every check compares the list's commitments with the database keys this device holds: a server that drops an owner's rotation and puts the statement of the co-owner it should remove in its place is a contradiction, also on the rotating device. A statement that names this account with keys that are not its own makes the list invalid, whoever signed it. Loading a list stops at 10 000 statements or 64 MiB.
 - Owners in warnings and in "Take over" are listed one per line with their own status; the server's addresses with whitespace, commas, control or format characters are not shown. The last comparison partner of a state code is named with a status too.
 - Resetting damaged account data keeps the device's comparison points; a rollback found while saving shows at once; a rotation checks the owner list again before it starts and always sends a statement where the database has a list.
